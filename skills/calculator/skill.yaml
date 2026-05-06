@@ -1,0 +1,20 @@
+name: calculator
+version: 0.1.0
+description: Perform mathematical calculations
+author: cognix-team
+tags: [math, calculation]
+
+runtime:
+  python: ">=3.11"
+  entrypoint: handler.py
+
+tools:
+  - name: calculate
+    description: Evaluate a mathematical expression
+    parameters:
+      type: object
+      properties:
+        expression:
+          type: string
+          description: Math expression to evaluate (e.g. "2 + 3 * 4")
+      required: [expression]

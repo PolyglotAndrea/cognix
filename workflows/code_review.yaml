@@ -1,0 +1,28 @@
+name: code_review
+description: Automated code review pipeline
+
+variables:
+  max_retries: 3
+
+steps:
+  - id: analyze
+    agent: code_analyzer
+    input: "{{ input }}"
+    output: analysis
+
+  - id: review
+    agent: reviewer
+    input: "{{ analysis }}"
+    output: review_result
+
+  - id: fix
+    agent: coder
+    input: "Fix the following issues: {{ review_result }}"
+    output: fixed_code
+    on_error: notify_team
+
+  - id: test
+    agent: tester
+    input: "Test this code: {{ fixed_code }}"
+    output: test_result
+    pattern: sequential

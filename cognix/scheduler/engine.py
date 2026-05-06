@@ -1,0 +1,187 @@
+"""Scheduler engine using APScheduler."""
+
+from __future__ import annotations
+
+import logging
+import uuid
+from datetime import datetime, timezone
+from typing import Any
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.date import DateTrigger
+from apscheduler.triggers.interval import IntervalTrigger
+
+logger = logging.getLogger(__name__)
+
+
+class SchedulerEngine:
+    """Manages scheduled tasks using APScheduler."""
+
+    def __init__(self) -> None:
+        self._scheduler = AsyncIOScheduler()
+        self._jobs: dict[str, dict[str, Any]] = {}  # task_id -> job metadata
+        self._executor: Any = None  # Set by set_executor
+
+    def set_executor(self, executor: Any) -> None:
+        """Set the task executor."""
+        self._executor = executor
+
+    def start(self) -> None:
+        """Start the scheduler."""
+        if not self._scheduler.running:
+            self._scheduler.start()
+            logger.info("Scheduler started")
+
+    def shutdown(self, wait: bool = True) -> None:
+        """Shutdown the scheduler."""
+        if self._scheduler.running:
+            self._scheduler.shutdown(wait=wait)
+            logger.info("Scheduler shutdown")
+
+    @property
+    def running(self) -> bool:
+        return self._scheduler.running
+
+    def add_cron(
+        self,
+        task_id: str,
+        cron_expr: str,
+        payload: dict[str, Any],
+        name: str = "",
+    ) -> str:
+        """Add a cron-scheduled task.
+
+        Args:
+            task_id: Unique task identifier
+            cron_expr: Cron expression (5-field: minute hour day month day_of_week)
+            payload: Task execution payload
+            name: Human-readable task name
+
+        Returns:
+            The task ID
+        """
+        parts = cron_expr.strip().split()
+        if len(parts) != 5:
+            raise ValueError(f"Invalid cron expression (expected 5 fields): {cron_expr}")
+
+        trigger = CronTrigger(
+            minute=parts[0],
+            hour=parts[1],
+            day=parts[2],
+            month=parts[3],
+            day_of_week=parts[4],
+        )
+
+        return self._add_job(task_id, trigger, payload, name)
+
+    def add_interval(
+        self,
+        task_id: str,
+        seconds: int,
+        payload: dict[str, Any],
+        name: str = "",
+    ) -> str:
+        """Add an interval-scheduled task."""
+        trigger = IntervalTrigger(seconds=seconds)
+        return self._add_job(task_id, trigger, payload, name)
+
+    def add_once(
+        self,
+        task_id: str,
+        run_at: datetime,
+        payload: dict[str, Any],
+        name: str = "",
+    ) -> str:
+        """Add a one-shot task to run at a specific time."""
+        trigger = DateTrigger(run_date=run_at)
+        return self._add_job(task_id, trigger, payload, name)
+
+    def _add_job(self, task_id: str, trigger: Any, payload: dict[str, Any], name: str) -> str:
+        """Internal: add a job to the scheduler."""
+        job = self._scheduler.add_job(
+            self._execute_task,
+            trigger=trigger,
+            id=task_id,
+            kwargs={"task_id": task_id, "payload": payload},
+            name=name or task_id,
+            replace_existing=True,
+        )
+
+        self._jobs[task_id] = {
+            "id": task_id,
+            "name": name or task_id,
+            "next_run": job.next_run_time,
+            "trigger": str(trigger),
+        }
+
+        logger.info("Added job %s (next_run=%s)", task_id, job.next_run_time)
+        return task_id
+
+    def remove(self, task_id: str) -> bool:
+        """Remove a scheduled task."""
+        try:
+            self._scheduler.remove_job(task_id)
+            self._jobs.pop(task_id, None)
+            logger.info("Removed job %s", task_id)
+            return True
+        except Exception:
+            return False
+
+    def pause(self, task_id: str) -> bool:
+        """Pause a scheduled task."""
+        try:
+            self._scheduler.pause_job(task_id)
+            logger.info("Paused job %s", task_id)
+            return True
+        except Exception:
+            return False
+
+    def resume(self, task_id: str) -> bool:
+        """Resume a paused task."""
+        try:
+            self._scheduler.resume_job(task_id)
+            logger.info("Resumed job %s", task_id)
+            return True
+        except Exception:
+            return False
+
+    def get_job_info(self, task_id: str) -> dict[str, Any] | None:
+        """Get info about a scheduled job."""
+        job = self._scheduler.get_job(task_id)
+        if not job:
+            return None
+
+        return {
+            "id": task_id,
+            "name": job.name,
+            "next_run": job.next_run_time,
+            "trigger": str(job.trigger),
+            "pending": job.pending,
+        }
+
+    def list_jobs(self) -> list[dict[str, Any]]:
+        """List all scheduled jobs."""
+        jobs = []
+        for job in self._scheduler.get_jobs():
+            jobs.append({
+                "id": job.id,
+                "name": job.name,
+                "next_run": job.next_run_time,
+                "trigger": str(job.trigger),
+                "pending": job.pending,
+            })
+        return jobs
+
+    async def _execute_task(self, task_id: str, payload: dict[str, Any]) -> None:
+        """Execute a scheduled task."""
+        logger.info("Executing task %s", task_id)
+
+        if not self._executor:
+            logger.error("No executor set for task %s", task_id)
+            return
+
+        try:
+            await self._executor.execute(task_id, payload)
+        except Exception as e:
+            logger.exception("Task %s failed: %s", task_id, e)
