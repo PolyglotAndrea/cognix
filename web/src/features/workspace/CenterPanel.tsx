@@ -10,6 +10,12 @@ interface Agent {
   id: string
   name: string
   model: string
+  system_prompt?: string
+}
+
+interface WorkspaceInfo {
+  id: string
+  name: string
 }
 
 interface Message {
@@ -22,6 +28,8 @@ export function CenterPanel() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
+  const [chatId, setChatId] = useState<string | null>(null)
+  const ensuredWorkspaceRef = useRef(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   const { data: agent } = useQuery<Agent>({
@@ -30,17 +38,71 @@ export function CenterPanel() {
     enabled: !!selectedAgentId,
   })
 
+  const {
+    data: workspaces = [],
+    isLoading: workspacesLoading,
+    refetch: refetchWorkspaces,
+  } = useQuery<WorkspaceInfo[]>({
+    queryKey: ['workspaces'],
+    queryFn: () => api.get('/workspaces').then((r) => r.data),
+  })
+
+  const workspaceId = workspaces[0]?.id || null
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  // Reset messages when agent changes
   useEffect(() => {
+    if (workspacesLoading || ensuredWorkspaceRef.current || workspaces.length > 0) return
+    ensuredWorkspaceRef.current = true
+    api
+      .post('/workspaces', { name: 'Default Workspace' })
+      .then(() => refetchWorkspaces())
+      .catch((err) => {
+        addLog({
+          id: '',
+          level: 'error',
+          message: `Workspace init error: ${err instanceof Error ? err.message : 'Unknown'}`,
+          timestamp: Date.now(),
+        })
+      })
+  }, [addLog, refetchWorkspaces, workspaces.length, workspacesLoading])
+
+  // Reset and create a local-first chat when agent changes.
+  useEffect(() => {
+    let cancelled = false
     setMessages([])
-  }, [selectedAgentId])
+    setChatId(null)
+
+    if (!selectedAgentId || !agent || !workspaceId) return
+
+    api
+      .post(`/workspaces/${workspaceId}/chats`, {
+        title: `${agent.name} Session`,
+        system_prompt: agent.system_prompt || '',
+        model_profiles: [agent.model],
+        metadata: { agent_id: agent.id },
+      })
+      .then((response) => {
+        if (!cancelled) setChatId(response.data.id)
+      })
+      .catch((err) => {
+        addLog({
+          id: '',
+          level: 'error',
+          message: `Chat init error: ${err instanceof Error ? err.message : 'Unknown'}`,
+          timestamp: Date.now(),
+        })
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [addLog, agent, selectedAgentId, workspaceId])
 
   const sendMessage = async () => {
-    if (!input.trim() || !selectedAgentId || isStreaming) return
+    if (!input.trim() || !selectedAgentId || !workspaceId || !chatId || isStreaming) return
 
     const userMsg: Message = { role: 'user', content: input.trim() }
     setMessages((prev) => [...prev, userMsg])
@@ -50,14 +112,20 @@ export function CenterPanel() {
     const token = useAuthStore.getState().token
 
     try {
-      const response = await fetch(`/api/v1/agents/${selectedAgentId}/chat/stream`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ message: userMsg.content }),
-      })
+      const response = await fetch(
+        `/api/v1/workspaces/${workspaceId}/chats/${chatId}/messages/stream`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            content: userMsg.content,
+            models: [agent?.model || 'echo'],
+          }),
+        }
+      )
 
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
 
@@ -250,7 +318,7 @@ export function CenterPanel() {
           />
           <button
             onClick={sendMessage}
-            disabled={!input.trim() || isStreaming}
+            disabled={!input.trim() || isStreaming || !chatId}
             className="w-11 h-11 bg-primary text-white rounded-xl flex items-center justify-center hover:bg-primary/90 disabled:opacity-30 disabled:grayscale transition-all shadow-lg shadow-primary/20 active:scale-95"
           >
             {isStreaming ? <Spinner size="sm" className="text-white" /> : <Send className="h-5 w-5" />}
