@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -13,6 +12,7 @@ from starlette.responses import StreamingResponse
 from cognix.auth.dependencies import CurrentUser, get_current_user
 from cognix.core.agent import Agent
 from cognix.core.context import Context
+from cognix.local.attachments import AttachmentStore, ParsedAttachment
 from cognix.local.chat import AttachmentRef, ChatMessage, ChatStore
 from cognix.local.workspace import WorkspaceManager
 
@@ -38,6 +38,7 @@ class AttachmentRequest(BaseModel):
     mime_type: str = "application/octet-stream"
     size: int = 0
     kind: str = "file"
+    content: str | None = None
     metadata: dict = {}
 
 
@@ -123,7 +124,8 @@ async def send_chat_message(
     if not chat:
         raise HTTPException(404, "Chat not found")
 
-    attachments = [_attachment_from_request(item) for item in body.attachments]
+    attachments = _attachments_from_requests(workspace_id, body.attachments)
+    attachment_context = _attachment_context(attachments)
     history = store.list_messages(chat_id, limit=20)
     user_message = store.append_message(
         chat_id,
@@ -142,6 +144,7 @@ async def send_chat_message(
                 system_prompt=chat.system_prompt,
                 parent_id=user_message.id,
                 history=history,
+                attachment_context=attachment_context,
             )
             for model in models
         ]
@@ -165,7 +168,8 @@ async def stream_chat_message(
         raise HTTPException(404, "Chat not found")
 
     model = (body.models or chat.model_profiles or ["echo"])[0]
-    attachments = [_attachment_from_request(item) for item in body.attachments]
+    attachments = _attachments_from_requests(workspace_id, body.attachments)
+    attachment_context = _attachment_context(attachments)
     history = store.list_messages(chat_id, limit=20)
     user_message = store.append_message(
         chat_id,
@@ -182,7 +186,10 @@ async def stream_chat_message(
             workspace_id=workspace_id,
         )
         assistant_content = ""
-        async for event in agent.stream_events(body.content, context=_history_context(history)):
+        async for event in agent.stream_events(
+            body.content,
+            context=_history_context(history, attachment_context=attachment_context),
+        ):
             if event.type == "delta":
                 assistant_content += event.data.get("delta", "")
             payload = {"type": event.type, "model": model, **event.data}
@@ -222,6 +229,7 @@ async def _run_model_response(
     system_prompt: str,
     parent_id: str,
     history: list[ChatMessage],
+    attachment_context: str = "",
 ) -> dict:
     store = ChatStore(workspace_id)
     agent = Agent(
@@ -230,7 +238,10 @@ async def _run_model_response(
         system_prompt=system_prompt or "You are a helpful assistant.",
         workspace_id=workspace_id,
     )
-    response = await agent.run(user_content, context=_history_context(history))
+    response = await agent.run(
+        user_content,
+        context=_history_context(history, attachment_context=attachment_context),
+    )
     assistant = store.append_message(
         chat_id,
         role="assistant",
@@ -242,24 +253,54 @@ async def _run_model_response(
     return _message_to_dict(assistant)
 
 
-def _history_context(messages: list[ChatMessage]) -> Context:
+def _history_context(messages: list[ChatMessage], *, attachment_context: str = "") -> Context:
     ctx = Context()
+    if attachment_context:
+        ctx.add_message("system", attachment_context)
     for message in messages:
         if message.role in ("user", "assistant", "system", "tool"):
             ctx.add_message(message.role, message.content)
     return ctx
 
 
-def _attachment_from_request(item: AttachmentRequest) -> AttachmentRef:
-    return AttachmentRef(
-        id=item.id or uuid.uuid4().hex,
-        name=item.name,
-        path=item.path,
-        mime_type=item.mime_type,
-        size=item.size,
-        kind=item.kind,
-        metadata=item.metadata,
-    )
+def _attachments_from_requests(
+    workspace_id: str,
+    items: list[AttachmentRequest],
+) -> list[AttachmentRef]:
+    store = AttachmentStore(workspace_id)
+    attachments = []
+    for item in items:
+        parsed = _parse_attachment_request(store, item)
+        attachments.append(parsed.to_ref())
+    return attachments
+
+
+def _parse_attachment_request(
+    store: AttachmentStore,
+    item: AttachmentRequest,
+) -> ParsedAttachment:
+    metadata = {"client_id": item.id, **item.metadata}
+    if item.content is not None:
+        return store.ingest_inline(
+            name=item.name,
+            content=item.content,
+            mime_type=item.mime_type,
+            kind=item.kind,
+            metadata=metadata,
+        )
+    return store.ingest_path(item.path, metadata=metadata)
+
+
+def _attachment_context(attachments: list[AttachmentRef]) -> str:
+    snippets = []
+    for attachment in attachments:
+        text = str(attachment.metadata.get("extracted_text", "")).strip()
+        if not text:
+            continue
+        snippets.append(f"## {attachment.name}\n{text[:4000]}")
+    if not snippets:
+        return ""
+    return "Attached file excerpts:\n\n" + "\n\n".join(snippets)
 
 
 def _message_to_dict(message) -> dict:
