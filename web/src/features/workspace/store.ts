@@ -17,12 +17,12 @@ export interface LogEntry {
 
 interface WorkspaceState {
   selectedAgentId: string | null
-  rightPanelTab: 'results' | 'logs' | 'json'
+  rightPanelTab: 'tasks' | 'results' | 'logs' | 'json'
   rightPanelOpen: boolean
   toolResults: ToolResult[]
   executionLogs: LogEntry[]
   setSelectedAgent: (id: string | null) => void
-  setRightPanelTab: (tab: 'results' | 'logs' | 'json') => void
+  setRightPanelTab: (tab: 'tasks' | 'results' | 'logs' | 'json') => void
   addToolResult: (result: ToolResult) => void
   addLog: (log: LogEntry) => void
   clearResults: () => void
@@ -34,7 +34,7 @@ const uid = () => String(++_id)
 
 export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   selectedAgentId: null,
-  rightPanelTab: 'results',
+  rightPanelTab: 'tasks',
   rightPanelOpen: true,
   toolResults: [],
   executionLogs: [],

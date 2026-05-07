@@ -1,24 +1,68 @@
 import { useRef, useEffect } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import {
+  AlertCircle,
+  CheckCircle2,
+  Clock,
   Terminal,
   FileJson,
+  PlayCircle,
   Wrench,
   ChevronRight,
   ChevronLeft,
 } from 'lucide-react'
+import { api } from '@/shared/api/client'
 import { useWorkspaceStore } from './store'
 import { Panel, PanelHeader, PanelBody, Badge } from '@/shared/ui'
 
 const TABS = [
+  { key: 'tasks' as const, label: 'Tasks', icon: Clock },
   { key: 'results' as const, label: 'Results', icon: Wrench },
   { key: 'logs' as const, label: 'Logs', icon: Terminal },
   { key: 'json' as const, label: 'JSON', icon: FileJson },
 ]
 
+interface TaskSummary {
+  id: string
+  name: string
+  task_type: string
+  schedule: string
+  state: string
+  run_count: number
+  last_run?: string | null
+  runs: TaskRun[]
+}
+
+interface TaskRun {
+  id: number
+  status: string
+  result: string
+  error?: string
+  duration_ms?: number
+  started_at?: string | null
+}
+
 export function RightPanel() {
   const { rightPanelTab, setRightPanelTab, rightPanelOpen, toggleRightPanel, toolResults, executionLogs } =
     useWorkspaceStore()
   const logsEndRef = useRef<HTMLDivElement>(null)
+  const { data: tasks = [], isLoading: tasksLoading } = useQuery<TaskSummary[]>({
+    queryKey: ['workspace-task-status'],
+    queryFn: async () => {
+      const response = await api.get('/tasks')
+      const taskRows = response.data as Omit<TaskSummary, 'runs'>[]
+      return Promise.all(
+        taskRows.slice(0, 8).map(async (task) => {
+          const runs = await api
+            .get(`/tasks/${task.id}/runs`, { params: { limit: 3 } })
+            .then((r) => r.data as TaskRun[])
+            .catch(() => [])
+          return { ...task, runs }
+        })
+      )
+    },
+    refetchInterval: 5000,
+  })
 
   useEffect(() => {
     if (rightPanelTab === 'logs') {
@@ -35,6 +79,7 @@ export function RightPanel() {
       >
         <ChevronLeft className="h-5 w-5 text-muted-foreground group-hover:text-foreground transition-colors" />
         <div className="flex flex-col gap-6">
+           <Clock className="h-4 w-4 text-muted-foreground/30" />
            <Wrench className="h-4 w-4 text-muted-foreground/30" />
            <Terminal className="h-4 w-4 text-muted-foreground/30" />
            <FileJson className="h-4 w-4 text-muted-foreground/30" />
@@ -68,6 +113,29 @@ export function RightPanel() {
       </PanelHeader>
 
       <PanelBody className="p-0 scrollbar-hide bg-card">
+        {/* Tasks Tab */}
+        {rightPanelTab === 'tasks' && (
+          <div className="p-4 space-y-3">
+            {tasksLoading ? (
+              <div className="py-20 text-center">
+                <div className="w-16 h-16 bg-muted rounded-2xl flex items-center justify-center mx-auto mb-4 border border-border">
+                  <Clock className="h-8 w-8 text-muted-foreground/20 animate-pulse" />
+                </div>
+                <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Loading Tasks</p>
+              </div>
+            ) : tasks.length === 0 ? (
+              <div className="py-20 text-center">
+                <div className="w-16 h-16 bg-muted rounded-2xl flex items-center justify-center mx-auto mb-4 border border-border">
+                  <Clock className="h-8 w-8 text-muted-foreground/20" />
+                </div>
+                <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">No Tasks</p>
+              </div>
+            ) : (
+              tasks.map((task) => <TaskStatusCard key={task.id} task={task} />)
+            )}
+          </div>
+        )}
+
         {/* Results Tab */}
         {rightPanelTab === 'results' && (
           <div className="p-4 space-y-3">
@@ -147,6 +215,55 @@ export function RightPanel() {
         )}
       </PanelBody>
     </Panel>
+  )
+}
+
+function TaskStatusCard({ task }: { task: TaskSummary }) {
+  const latestRun = task.runs[0]
+  const hasError = latestRun?.status === 'failure' || !!latestRun?.error || task.state === 'failed'
+
+  return (
+    <div className="bg-muted/30 rounded-2xl p-4 border border-border hover:border-primary/20 transition-all overflow-hidden">
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div className="min-w-0">
+          <div className="text-xs font-bold text-foreground truncate">{task.name}</div>
+          <div className="mt-1 flex items-center gap-2 text-[10px] text-muted-foreground font-bold uppercase tracking-wider">
+            <span>{task.task_type}</span>
+            <span className="w-1 h-1 rounded-full bg-muted-foreground/30" />
+            <span>{task.schedule}</span>
+          </div>
+        </div>
+        <Badge variant={task.state === 'active' ? 'success' : task.state === 'paused' ? 'warning' : 'default'}>
+          {task.state}
+        </Badge>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 mb-3">
+        <div className="rounded-xl border border-border bg-background/50 p-3">
+          <div className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground mb-1">Runs</div>
+          <div className="text-lg font-bold text-foreground">{task.run_count}</div>
+        </div>
+        <div className="rounded-xl border border-border bg-background/50 p-3">
+          <div className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground mb-1">Latest</div>
+          <div className="flex items-center gap-1.5 text-xs font-bold text-foreground">
+            {hasError ? (
+              <AlertCircle className="h-3.5 w-3.5 text-rose-500" />
+            ) : latestRun ? (
+              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+            ) : (
+              <PlayCircle className="h-3.5 w-3.5 text-muted-foreground" />
+            )}
+            {latestRun?.status || 'waiting'}
+          </div>
+        </div>
+      </div>
+
+      {latestRun && (
+        <pre className="text-[11px] text-muted-foreground bg-background/50 rounded-xl p-3 overflow-auto max-h-36 font-mono border border-border leading-relaxed">
+          {(latestRun.error || latestRun.result || 'No output.').slice(0, 500)}
+        </pre>
+      )}
+    </div>
   )
 }
 
