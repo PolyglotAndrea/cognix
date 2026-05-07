@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Bot, Send, User, Zap } from 'lucide-react'
+import { Bot, FileText, Paperclip, Send, User, X, Zap } from 'lucide-react'
 import { api } from '@/shared/api/client'
 import { useAuthStore } from '@/features/auth/store'
 import { useWorkspaceStore } from './store'
@@ -23,14 +23,25 @@ interface Message {
   content: string
 }
 
+interface PendingAttachment {
+  id: string
+  name: string
+  mime_type: string
+  size: number
+  kind: string
+  content: string
+}
+
 export function CenterPanel() {
   const { selectedAgentId, addToolResult, addLog } = useWorkspaceStore()
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
   const [chatId, setChatId] = useState<string | null>(null)
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([])
   const ensuredWorkspaceRef = useRef(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const { data: agent } = useQuery<Agent>({
     queryKey: ['agent', selectedAgentId],
@@ -74,6 +85,7 @@ export function CenterPanel() {
     let cancelled = false
     setMessages([])
     setChatId(null)
+    setAttachments([])
 
     if (!selectedAgentId || !agent || !workspaceId) return
 
@@ -107,6 +119,8 @@ export function CenterPanel() {
     const userMsg: Message = { role: 'user', content: input.trim() }
     setMessages((prev) => [...prev, userMsg])
     setInput('')
+    const outgoingAttachments = attachments
+    setAttachments([])
     setIsStreaming(true)
 
     const token = useAuthStore.getState().token
@@ -123,6 +137,15 @@ export function CenterPanel() {
           body: JSON.stringify({
             content: userMsg.content,
             models: [agent?.model || 'echo'],
+            attachments: outgoingAttachments.map((attachment) => ({
+              id: attachment.id,
+              name: attachment.name,
+              path: `browser://${attachment.name}`,
+              mime_type: attachment.mime_type,
+              size: attachment.size,
+              kind: attachment.kind,
+              content: attachment.content,
+            })),
           }),
         }
       )
@@ -209,6 +232,37 @@ export function CenterPanel() {
     } finally {
       setIsStreaming(false)
     }
+  }
+
+  const attachFiles = async (files: FileList | null) => {
+    if (!files?.length) return
+    const next: PendingAttachment[] = []
+    for (const file of Array.from(files)) {
+      if (!isTextLike(file)) {
+        addLog({
+          id: '',
+          level: 'warn',
+          message: `Skipped unsupported attachment: ${file.name}`,
+          timestamp: Date.now(),
+        })
+        continue
+      }
+      const content = await file.text()
+      next.push({
+        id: crypto.randomUUID(),
+        name: file.name,
+        mime_type: file.type || 'text/plain',
+        size: file.size,
+        kind: 'file',
+        content,
+      })
+    }
+    setAttachments((prev) => [...prev, ...next])
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  const removeAttachment = (id: string) => {
+    setAttachments((prev) => prev.filter((attachment) => attachment.id !== id))
   }
 
   if (!selectedAgentId) {
@@ -306,7 +360,42 @@ export function CenterPanel() {
 
       {/* Input */}
       <div className="p-6 bg-gradient-to-t from-background via-background to-transparent shrink-0 z-20">
+        {attachments.length > 0 && (
+          <div className="max-w-4xl mx-auto mb-3 flex flex-wrap gap-2">
+            {attachments.map((attachment) => (
+              <div
+                key={attachment.id}
+                className="flex items-center gap-2 px-3 py-2 bg-card border border-border rounded-xl text-xs text-muted-foreground shadow-sm"
+              >
+                <FileText className="h-3.5 w-3.5 text-primary" />
+                <span className="max-w-[180px] truncate font-medium">{attachment.name}</span>
+                <button
+                  onClick={() => removeAttachment(attachment.id)}
+                  className="p-0.5 hover:text-destructive transition-colors"
+                  aria-label={`Remove ${attachment.name}`}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         <div className="max-w-4xl mx-auto flex gap-3 p-2 bg-card border border-border rounded-2xl shadow-2xl focus-within:border-primary/40 focus-within:ring-4 focus-within:ring-primary/10 transition-all">
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(event) => attachFiles(event.target.files)}
+          />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isStreaming}
+            className="w-11 h-11 text-muted-foreground rounded-xl flex items-center justify-center hover:bg-muted hover:text-foreground disabled:opacity-30 transition-all"
+            aria-label="Attach files"
+          >
+            <Paperclip className="h-5 w-5" />
+          </button>
           <input
             type="text"
             value={input}
@@ -329,5 +418,12 @@ export function CenterPanel() {
         </p>
       </div>
     </div>
+  )
+}
+
+function isTextLike(file: File) {
+  if (file.type.startsWith('text/')) return true
+  return /\.(md|txt|json|csv|ya?ml|toml|py|ts|tsx|js|jsx|css|html|xml|sql|sh|log)$/i.test(
+    file.name
   )
 }
