@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Bot, FileText, Paperclip, Send, User, X, Zap } from 'lucide-react'
+import { Bot, Columns3, FileText, Paperclip, Send, User, X, Zap } from 'lucide-react'
 import { api } from '@/shared/api/client'
 import { useAuthStore } from '@/features/auth/store'
 import { useWorkspaceStore } from './store'
@@ -18,9 +18,16 @@ interface WorkspaceInfo {
   name: string
 }
 
+interface ChatResponse {
+  model: string
+  content: string
+}
+
 interface Message {
   role: 'user' | 'assistant'
   content: string
+  model?: string
+  responses?: ChatResponse[]
 }
 
 interface PendingAttachment {
@@ -39,6 +46,7 @@ export function CenterPanel() {
   const [isStreaming, setIsStreaming] = useState(false)
   const [chatId, setChatId] = useState<string | null>(null)
   const [attachments, setAttachments] = useState<PendingAttachment[]>([])
+  const [selectedModels, setSelectedModels] = useState<string[]>([])
   const ensuredWorkspaceRef = useRef(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -59,6 +67,10 @@ export function CenterPanel() {
   })
 
   const workspaceId = workspaces[0]?.id || null
+  const availableModels = Array.from(
+    new Set([agent?.model || 'echo', 'echo', 'gpt-4o-mini', 'gpt-4o', 'claude-3.5-sonnet'])
+  )
+  const activeModels = selectedModels.length > 0 ? selectedModels : [agent?.model || 'echo']
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -86,6 +98,7 @@ export function CenterPanel() {
     setMessages([])
     setChatId(null)
     setAttachments([])
+    setSelectedModels(agent ? [agent.model] : [])
 
     if (!selectedAgentId || !agent || !workspaceId) return
 
@@ -124,8 +137,49 @@ export function CenterPanel() {
     setIsStreaming(true)
 
     const token = useAuthStore.getState().token
+    const requestBody = {
+      content: userMsg.content,
+      models: activeModels,
+      attachments: outgoingAttachments.map((attachment) => ({
+        id: attachment.id,
+        name: attachment.name,
+        path: `browser://${attachment.name}`,
+        mime_type: attachment.mime_type,
+        size: attachment.size,
+        kind: attachment.kind,
+        content: attachment.content,
+      })),
+    }
 
     try {
+      if (activeModels.length > 1) {
+        const response = await fetch(
+          `/api/v1/workspaces/${workspaceId}/chats/${chatId}/messages`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify(requestBody),
+          }
+        )
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        const data = await response.json()
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: 'assistant',
+            content: '',
+            responses: data.assistant_messages.map((message: { model: string; content: string }) => ({
+              model: message.model,
+              content: message.content,
+            })),
+          },
+        ])
+        return
+      }
+
       const response = await fetch(
         `/api/v1/workspaces/${workspaceId}/chats/${chatId}/messages/stream`,
         {
@@ -134,19 +188,7 @@ export function CenterPanel() {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({
-            content: userMsg.content,
-            models: [agent?.model || 'echo'],
-            attachments: outgoingAttachments.map((attachment) => ({
-              id: attachment.id,
-              name: attachment.name,
-              path: `browser://${attachment.name}`,
-              mime_type: attachment.mime_type,
-              size: attachment.size,
-              kind: attachment.kind,
-              content: attachment.content,
-            })),
-          }),
+          body: JSON.stringify(requestBody),
         }
       )
 
@@ -234,6 +276,15 @@ export function CenterPanel() {
     }
   }
 
+  const toggleModel = (model: string) => {
+    setSelectedModels((current) => {
+      if (current.includes(model)) {
+        return current.length === 1 ? current : current.filter((item) => item !== model)
+      }
+      return [...current, model]
+    })
+  }
+
   const attachFiles = async (files: FileList | null) => {
     if (!files?.length) return
     const next: PendingAttachment[] = []
@@ -299,7 +350,34 @@ export function CenterPanel() {
           </div>
         </div>
         <div className="flex items-center gap-4">
-           <Badge variant="primary" className="h-6">Session Active</Badge>
+          {activeModels.length > 1 && (
+            <Badge variant="primary" className="h-6">
+              Compare {activeModels.length}
+            </Badge>
+          )}
+          <Badge variant="primary" className="h-6">Session Active</Badge>
+        </div>
+      </div>
+
+      <div className="px-6 py-3 border-b border-border bg-card/30 flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 mr-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+          <Columns3 className="h-3.5 w-3.5 text-primary" />
+          Models
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {availableModels.map((model) => (
+            <button
+              key={model}
+              onClick={() => toggleModel(model)}
+              className={`px-3 py-1.5 rounded-lg border text-[11px] font-bold transition-all ${
+                activeModels.includes(model)
+                  ? 'bg-primary/10 border-primary/30 text-primary'
+                  : 'bg-background border-border text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {model}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -337,7 +415,9 @@ export function CenterPanel() {
               )}
             </div>
             <div
-              className={`max-w-[75%] px-5 py-3.5 rounded-[1.5rem] text-sm leading-relaxed shadow-xl ${
+              className={`${
+                msg.responses ? 'max-w-[92%] w-full' : 'max-w-[75%]'
+              } px-5 py-3.5 rounded-[1.5rem] text-sm leading-relaxed shadow-xl ${
                 msg.role === 'user'
                   ? 'bg-primary text-white rounded-tr-sm shadow-primary/10'
                   : 'bg-muted/50 text-foreground border border-border rounded-tl-sm backdrop-blur-sm'
@@ -349,6 +429,22 @@ export function CenterPanel() {
                     <div className="w-2 h-2 bg-primary/40 rounded-full animate-bounce" />
                     <div className="w-2 h-2 bg-primary/40 rounded-full animate-bounce [animation-delay:0.2s]" />
                     <div className="w-2 h-2 bg-primary/40 rounded-full animate-bounce [animation-delay:0.4s]" />
+                  </div>
+                ) : msg.responses ? (
+                  <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                    {msg.responses.map((response) => (
+                      <div
+                        key={response.model}
+                        className="rounded-2xl border border-border bg-background/70 p-4 min-w-0"
+                      >
+                        <div className="mb-3 flex items-center justify-between gap-2">
+                          <span className="text-[10px] font-bold uppercase tracking-widest text-primary">
+                            {response.model}
+                          </span>
+                        </div>
+                        <RichMessage content={response.content} />
+                      </div>
+                    ))}
                   </div>
                 ) : (
                   <RichMessage content={msg.content} compact={msg.role === 'user'} />
@@ -416,7 +512,9 @@ export function CenterPanel() {
           </button>
         </div>
         <p className="text-center mt-4 text-[10px] text-muted-foreground/50 font-bold uppercase tracking-widest">
-          Multi-agent orchestration active • Tool calling enabled
+          {activeModels.length > 1
+            ? 'Multi-model comparison active'
+            : 'Multi-agent orchestration active • Tool calling enabled'}
         </p>
       </div>
     </div>
