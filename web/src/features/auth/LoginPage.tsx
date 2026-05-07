@@ -1,11 +1,19 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuthStore } from './store'
+import { authApi } from '@/shared/api/client'
 
 export default function LoginPage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const { isAuthenticated, setToken } = useAuthStore()
+  const { isAuthenticated, setToken, setUser } = useAuthStore()
+
+  const [mode, setMode] = useState<'login' | 'register'>('login')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [name, setName] = useState('')
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
 
   useEffect(() => {
     const token = searchParams.get('token')
@@ -25,6 +33,37 @@ export default function LoginPage() {
     window.location.href = `/auth/login/${provider}`
   }
 
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setError('')
+    setLoading(true)
+
+    try {
+      const endpoint = mode === 'register' ? '/register' : '/login'
+      const payload =
+        mode === 'register' ? { email, password, name } : { email, password }
+
+      const { data } = await authApi.post(endpoint, payload)
+      setToken(data.token)
+      setUser(data.user)
+      navigate('/')
+    } catch (err: any) {
+      const status = err.response?.status
+      const detail = err.response?.data?.detail
+      if (status === 409) {
+        setError('This email is already registered')
+      } else if (status === 401) {
+        setError('Invalid email or password')
+      } else if (status === 400 && detail) {
+        setError(detail)
+      } else {
+        setError('Something went wrong. Please try again.')
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-indigo-50 to-purple-50">
       <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md">
@@ -33,7 +72,93 @@ export default function LoginPage() {
           <p className="text-gray-500 mt-2">AI Agent Collaboration Platform</p>
         </div>
 
-        <div className="space-y-4">
+        {/* Email / Password Form */}
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {mode === 'register' && (
+            <div>
+              <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-1">
+                Name
+              </label>
+              <input
+                id="name"
+                type="text"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+                placeholder="Your name"
+              />
+            </div>
+          )}
+
+          <div>
+            <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">
+              Email
+            </label>
+            <input
+              id="email"
+              type="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+              placeholder="you@example.com"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="password" className="block text-sm font-medium text-gray-700 mb-1">
+              Password
+            </label>
+            <input
+              id="password"
+              type="password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+              placeholder="At least 8 characters"
+            />
+          </div>
+
+          {error && (
+            <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>
+          )}
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full py-3 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50"
+          >
+            {loading
+              ? 'Please wait...'
+              : mode === 'register'
+                ? 'Create Account'
+                : 'Sign In'}
+          </button>
+        </form>
+
+        <p className="text-center text-sm text-gray-500 mt-4">
+          {mode === 'register' ? 'Already have an account?' : "Don't have an account?"}{' '}
+          <button
+            onClick={() => {
+              setMode(mode === 'register' ? 'login' : 'register')
+              setError('')
+            }}
+            className="text-indigo-600 font-medium hover:underline"
+          >
+            {mode === 'register' ? 'Sign In' : 'Register'}
+          </button>
+        </p>
+
+        {/* Divider */}
+        <div className="flex items-center gap-3 my-6">
+          <div className="flex-1 border-t border-gray-200" />
+          <span className="text-xs text-gray-400 uppercase">or</span>
+          <div className="flex-1 border-t border-gray-200" />
+        </div>
+
+        {/* OAuth Buttons */}
+        <div className="space-y-3">
           <button
             onClick={() => handleOAuthLogin('google')}
             className="w-full flex items-center justify-center gap-3 px-4 py-3 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"

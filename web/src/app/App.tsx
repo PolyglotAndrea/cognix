@@ -2,9 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuthStore } from '@/features/auth/store'
 import Layout from './Layout'
 import LoginPage from '@/features/auth/LoginPage'
-import Dashboard from '@/features/auth/Dashboard'
-import AgentList from '@/features/agents/AgentList'
-import AgentDetail from '@/features/agents/AgentDetail'
+import { Workspace } from '@/features/workspace/Workspace'
 import TaskList from '@/features/tasks/TaskList'
 import SkillList from '@/features/skills/SkillList'
 import BillingPage from '@/features/billing/BillingPage'
@@ -20,6 +18,8 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+
+      {/* All authenticated routes share the Layout */}
       <Route
         path="/"
         element={
@@ -28,9 +28,7 @@ export default function App() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<Dashboard />} />
-        <Route path="agents" element={<AgentList />} />
-        <Route path="agents/:id" element={<AgentDetail />} />
+        <Route index element={<Workspace />} />
         <Route path="tasks" element={<TaskList />} />
         <Route path="skills" element={<SkillList />} />
         <Route path="billing" element={<BillingPage />} />
