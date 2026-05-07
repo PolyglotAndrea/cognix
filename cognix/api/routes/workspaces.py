@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -186,6 +188,7 @@ async def send_chat_message(
                 parent_id=user_message.id,
                 history=history,
                 attachment_context=attachment_context,
+                attachments=attachments,
             )
             for model in models
         ]
@@ -212,6 +215,8 @@ async def stream_chat_message(
     attachments = _attachments_from_requests(workspace_id, body.attachments)
     attachment_context = _attachment_context(attachments)
     history = store.list_messages(chat_id, limit=20)
+    context = _history_context(history, attachment_context=attachment_context)
+    _set_multimodal_user_content(context, body.content, attachments)
     user_message = store.append_message(
         chat_id,
         role="user",
@@ -229,7 +234,7 @@ async def stream_chat_message(
         assistant_content = ""
         async for event in agent.stream_events(
             body.content,
-            context=_history_context(history, attachment_context=attachment_context),
+            context=context,
         ):
             if event.type == "delta":
                 assistant_content += event.data.get("delta", "")
@@ -270,7 +275,8 @@ async def _run_model_response(
     system_prompt: str,
     parent_id: str,
     history: list[ChatMessage],
-    attachment_context: str = "",
+    attachment_context: str,
+    attachments: list[AttachmentRef],
 ) -> dict:
     store = ChatStore(workspace_id)
     agent = Agent(
@@ -279,10 +285,9 @@ async def _run_model_response(
         system_prompt=system_prompt or "You are a helpful assistant.",
         workspace_id=workspace_id,
     )
-    response = await agent.run(
-        user_content,
-        context=_history_context(history, attachment_context=attachment_context),
-    )
+    context = _history_context(history, attachment_context=attachment_context)
+    _set_multimodal_user_content(context, user_content, attachments)
+    response = await agent.run(user_content, context=context)
     assistant = store.append_message(
         chat_id,
         role="assistant",
@@ -322,6 +327,14 @@ def _parse_attachment_request(
 ) -> ParsedAttachment:
     metadata = {"client_id": item.id, **item.metadata}
     if item.content is not None:
+        if item.mime_type.startswith("image/") or item.kind == "image":
+            return store.ingest_inline_bytes(
+                name=item.name,
+                content=_decode_inline_content(item.content),
+                mime_type=item.mime_type,
+                kind="image",
+                metadata=metadata,
+            )
         return store.ingest_inline(
             name=item.name,
             content=item.content,
@@ -330,6 +343,13 @@ def _parse_attachment_request(
             metadata=metadata,
         )
     return store.ingest_path(item.path, metadata=metadata)
+
+
+def _decode_inline_content(content: str) -> bytes:
+    if content.startswith("data:"):
+        _, encoded = content.split(",", 1)
+        return base64.b64decode(encoded)
+    return base64.b64decode(content)
 
 
 def _attachment_context(attachments: list[AttachmentRef]) -> str:
@@ -342,6 +362,33 @@ def _attachment_context(attachments: list[AttachmentRef]) -> str:
     if not snippets:
         return ""
     return "Attached file excerpts:\n\n" + "\n\n".join(snippets)
+
+
+def _set_multimodal_user_content(
+    context: Context,
+    text: str,
+    attachments: list[AttachmentRef],
+) -> None:
+    image_parts = []
+    for attachment in attachments:
+        if not attachment.mime_type.startswith("image/"):
+            continue
+        path = Path(attachment.path)
+        if not path.exists():
+            continue
+        encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+        image_parts.append(
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:{attachment.mime_type};base64,{encoded}"},
+            }
+        )
+
+    if image_parts:
+        context.metadata["next_user_content"] = [
+            {"type": "text", "text": text},
+            *image_parts,
+        ]
 
 
 def _message_to_dict(message) -> dict:

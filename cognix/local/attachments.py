@@ -151,6 +151,32 @@ class AttachmentStore:
         self._write(parsed)
         return parsed
 
+    def ingest_inline_bytes(
+        self,
+        *,
+        name: str,
+        content: bytes,
+        mime_type: str = "application/octet-stream",
+        kind: str = "file",
+        metadata: dict[str, Any] | None = None,
+    ) -> ParsedAttachment:
+        attachment_id = uuid.uuid4().hex
+        stored_path = self.attachments_dir / f"{attachment_id}-{Path(name).name}"
+        stored_path.write_bytes(content)
+        parsed = ParsedAttachment(
+            id=attachment_id,
+            workspace_id=self.workspace_id,
+            name=Path(name).name,
+            path=str(stored_path),
+            mime_type=mime_type,
+            size=len(content),
+            kind=kind,
+            extracted_text=self._extract_text(name, mime_type, content),
+            metadata=metadata or {},
+        )
+        self._write(parsed)
+        return parsed
+
     def get(self, attachment_id: str) -> ParsedAttachment | None:
         path = self.attachments_dir / f"{attachment_id}.json"
         if not path.exists():

@@ -12,7 +12,7 @@ from typing import Any
 @dataclass
 class Message:
     role: str  # "user", "assistant", "system", "tool"
-    content: str
+    content: Any
     name: str | None = None
     tool_call_id: str | None = None
     tool_calls: list[dict[str, Any]] | None = None

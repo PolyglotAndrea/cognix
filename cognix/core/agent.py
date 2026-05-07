@@ -90,7 +90,7 @@ class Agent:
         """Run the agent with a user message. Handles tool-call loops."""
         ctx = context or Context()
         await self._inject_context_pack(ctx, message)
-        ctx.add_message("user", message)
+        ctx.add_message("user", self._next_user_content(ctx, message))
 
         await self._emit(Events.AGENT_STARTED, {"agent_id": self.id, "message": message})
         self.state = AgentState.RUNNING
@@ -138,7 +138,7 @@ class Agent:
         """Stream agent response chunks."""
         ctx = context or Context()
         await self._inject_context_pack(ctx, message)
-        ctx.add_message("user", message)
+        ctx.add_message("user", self._next_user_content(ctx, message))
 
         await self._emit(Events.AGENT_STARTED, {"agent_id": self.id, "message": message})
         self.state = AgentState.RUNNING
@@ -162,7 +162,7 @@ class Agent:
         """Stream a stable event protocol: delta, tool_call, tool_result, error, done."""
         ctx = context or Context()
         await self._inject_context_pack(ctx, message)
-        ctx.add_message("user", message)
+        ctx.add_message("user", self._next_user_content(ctx, message))
 
         await self._emit(Events.AGENT_STARTED, {"agent_id": self.id, "message": message})
         self.state = AgentState.RUNNING
@@ -241,13 +241,15 @@ class Agent:
         """Call the LLM. Override for custom providers."""
         # Fallback for non-LLM models (e.g. "echo" for testing)
         if self.model in ("echo", "noop", "mock"):
-            return AgentResponse(content=f"[{self.name}] Echo: {ctx.messages[-1].content}")
+            text = self._message_text(ctx.messages[-1].content)
+            return AgentResponse(content=f"[{self.name}] Echo: {text}")
 
         try:
             import litellm
         except ImportError:
             logger.warning("litellm not installed, falling back to echo mode")
-            return AgentResponse(content=f"[{self.name}] Echo: {ctx.messages[-1].content}")
+            text = self._message_text(ctx.messages[-1].content)
+            return AgentResponse(content=f"[{self.name}] Echo: {text}")
 
         messages = [{"role": "system", "content": self.system_prompt}]
         messages.extend(ctx.get_history())
@@ -304,7 +306,7 @@ class Agent:
         # Fallback for non-LLM models (e.g. "echo" for testing)
         if self.model in ("echo", "noop", "mock"):
             yield AgentChunk(
-                delta=f"[{self.name}] Echo: {ctx.messages[-1].content}",
+                delta=f"[{self.name}] Echo: {self._message_text(ctx.messages[-1].content)}",
                 finish_reason="stop",
             )
             return
@@ -314,7 +316,7 @@ class Agent:
         except ImportError:
             logger.warning("litellm not installed, falling back to echo mode")
             yield AgentChunk(
-                delta=f"[{self.name}] Echo: {ctx.messages[-1].content}",
+                delta=f"[{self.name}] Echo: {self._message_text(ctx.messages[-1].content)}",
                 finish_reason="stop",
             )
             return
@@ -372,6 +374,21 @@ class Agent:
             error_msg = f"Tool '{name}' error: {e}"
             await self._emit(Events.TOOL_ERROR, {"tool": name, "error": error_msg})
             return error_msg
+
+    def _next_user_content(self, ctx: Context, message: str) -> Any:
+        return ctx.metadata.get("next_user_content", message)
+
+    @staticmethod
+    def _message_text(content: Any) -> str:
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    parts.append(str(item.get("text", "")))
+            return "\n".join(part for part in parts if part).strip()
+        return str(content)
 
     async def _inject_context_pack(self, ctx: Context, message: str) -> None:
         """Inject routed Cognix memory context, falling back to backend search."""

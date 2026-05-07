@@ -36,3 +36,22 @@ def test_attachment_store_ingests_text_path(tmp_path):
     assert parsed.path != str(source)
     assert parsed.mime_type
     assert "print" in parsed.extracted_text
+
+
+def test_attachment_store_ingests_inline_bytes(tmp_path):
+    home = CognixHome(tmp_path / ".cognix").ensure()
+    workspace = WorkspaceManager(home).create("Attachments")
+    store = AttachmentStore(workspace.id, home=home)
+
+    parsed = store.ingest_inline_bytes(
+        name="sample.png",
+        content=b"\x89PNG\r\n",
+        mime_type="image/png",
+        kind="image",
+    )
+
+    assert parsed.kind == "image"
+    assert parsed.mime_type == "image/png"
+    assert parsed.size == 6
+    assert parsed.extracted_text == ""
+    assert store.get(parsed.id) == parsed
