@@ -25,6 +25,16 @@ class CreateAgentRequest(BaseModel):
     api_base: str | None = None
 
 
+class UpdateAgentRequest(BaseModel):
+    name: str | None = None
+    model: str | None = None
+    system_prompt: str | None = None
+    description: str | None = None
+    temperature: float | None = None
+    max_iterations: int | None = None
+    api_base: str | None = None
+
+
 class ChatRequest(BaseModel):
     message: str
 
@@ -80,6 +90,34 @@ async def get_agent(
     agent = await get_agent_runtime(agent_id)
     if not agent:
         raise HTTPException(404, "Agent not found")
+    return agent.to_dict()
+
+
+@router.put("/{agent_id}")
+async def update_agent(
+    agent_id: str,
+    body: UpdateAgentRequest,
+    user: CurrentUser = Depends(require_agents_write),
+) -> dict:
+    from sqlalchemy import update
+
+    from cognix.storage.database import get_session
+    from cognix.storage.models import AgentModel
+
+    agent = await get_agent_runtime(agent_id)
+    if not agent:
+        raise HTTPException(404, "Agent not found")
+
+    changes = body.model_dump(exclude_unset=True)
+    for key, value in changes.items():
+        setattr(agent, key, value)
+
+    if changes:
+        async with get_session() as session:
+            await session.execute(
+                update(AgentModel).where(AgentModel.id == agent.id).values(**changes)
+            )
+
     return agent.to_dict()
 
 
