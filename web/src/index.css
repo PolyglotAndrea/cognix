@@ -76,3 +76,100 @@
   @apply text-transparent bg-clip-text;
   background-image: linear-gradient(135deg, #818cf8 0%, #c084fc 100%);
 }
+
+.rich-message {
+  @apply text-sm leading-7 text-foreground;
+}
+
+.rich-message > *:first-child {
+  margin-top: 0;
+}
+
+.rich-message > *:last-child {
+  margin-bottom: 0;
+}
+
+.rich-message p {
+  @apply my-3;
+}
+
+.rich-message ul,
+.rich-message ol {
+  @apply my-3 pl-5;
+}
+
+.rich-message ul {
+  @apply list-disc;
+}
+
+.rich-message ol {
+  @apply list-decimal;
+}
+
+.rich-message li {
+  @apply my-1;
+}
+
+.rich-message h1,
+.rich-message h2,
+.rich-message h3 {
+  @apply mt-5 mb-2 font-bold text-foreground;
+}
+
+.rich-message h1 {
+  @apply text-lg;
+}
+
+.rich-message h2 {
+  @apply text-base;
+}
+
+.rich-message h3 {
+  @apply text-sm;
+}
+
+.rich-message blockquote {
+  @apply my-4 border-l-2 border-primary/40 pl-4 text-muted-foreground;
+}
+
+.rich-message table {
+  @apply my-4 w-full border-collapse overflow-hidden rounded-lg text-xs;
+}
+
+.rich-message th,
+.rich-message td {
+  @apply border border-border px-3 py-2 text-left align-top;
+}
+
+.rich-message th {
+  @apply bg-muted font-bold;
+}
+
+.rich-message a {
+  @apply text-primary underline underline-offset-4;
+}
+
+.rich-message :not(pre) > code {
+  @apply rounded-md bg-background px-1.5 py-0.5 font-mono text-[0.85em] text-primary;
+}
+
+.rich-message pre {
+  @apply my-4 overflow-x-auto rounded-xl border border-border bg-[#0d1117] p-4 text-xs leading-6 shadow-inner;
+}
+
+.rich-message pre code {
+  @apply bg-transparent p-0 text-inherit;
+}
+
+.rich-message .katex-display {
+  @apply my-4 overflow-x-auto overflow-y-hidden;
+}
+
+.rich-message-compact {
+  @apply text-white;
+}
+
+.rich-message-compact a,
+.rich-message-compact :not(pre) > code {
+  @apply text-white;
+}

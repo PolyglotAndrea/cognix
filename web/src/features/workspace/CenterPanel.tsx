@@ -4,7 +4,7 @@ import { Bot, FileText, Paperclip, Send, User, X, Zap } from 'lucide-react'
 import { api } from '@/shared/api/client'
 import { useAuthStore } from '@/features/auth/store'
 import { useWorkspaceStore } from './store'
-import { Spinner, Badge } from '@/shared/ui'
+import { Spinner, Badge, RichMessage } from '@/shared/ui'
 
 interface Agent {
   id: string
@@ -343,14 +343,16 @@ export function CenterPanel() {
                   : 'bg-muted/50 text-foreground border border-border rounded-tl-sm backdrop-blur-sm'
               }`}
             >
-              <div className="whitespace-pre-wrap font-medium">
+              <div className="font-medium">
                 {msg.content || (isStreaming && i === messages.length - 1 ? (
                   <div className="flex gap-1.5 py-1">
                     <div className="w-2 h-2 bg-primary/40 rounded-full animate-bounce" />
                     <div className="w-2 h-2 bg-primary/40 rounded-full animate-bounce [animation-delay:0.2s]" />
                     <div className="w-2 h-2 bg-primary/40 rounded-full animate-bounce [animation-delay:0.4s]" />
                   </div>
-                ) : null)}
+                ) : (
+                  <RichMessage content={msg.content} compact={msg.role === 'user'} />
+                ))}
               </div>
             </div>
           </div>
