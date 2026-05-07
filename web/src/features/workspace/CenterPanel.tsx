@@ -1,6 +1,20 @@
 import { useState, useRef, useEffect } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { Bot, Columns3, FileText, Paperclip, Send, User, X, Zap } from 'lucide-react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  Bot,
+  Check,
+  Columns3,
+  FileText,
+  History,
+  MessageSquarePlus,
+  Paperclip,
+  Save,
+  Send,
+  Settings,
+  User,
+  X,
+  Zap,
+} from 'lucide-react'
 import { api } from '@/shared/api/client'
 import { useAuthStore } from '@/features/auth/store'
 import { useWorkspaceStore } from './store'
@@ -18,12 +32,32 @@ interface WorkspaceInfo {
   name: string
 }
 
+interface ChatSession {
+  id: string
+  workspace_id: string
+  title: string
+  created_at: string
+  updated_at: string
+  system_prompt: string
+  model_profiles: string[]
+  metadata: Record<string, unknown>
+}
+
+interface StoredMessage {
+  id: string
+  role: 'system' | 'user' | 'assistant' | 'tool'
+  content: string
+  model?: string
+  parent_id?: string
+}
+
 interface ChatResponse {
   model: string
   content: string
 }
 
 interface Message {
+  id?: string
   role: 'user' | 'assistant'
   content: string
   model?: string
@@ -41,13 +75,18 @@ interface PendingAttachment {
 
 export function CenterPanel() {
   const { selectedAgentId, addToolResult, addLog } = useWorkspaceStore()
+  const queryClient = useQueryClient()
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [isStreaming, setIsStreaming] = useState(false)
   const [chatId, setChatId] = useState<string | null>(null)
   const [attachments, setAttachments] = useState<PendingAttachment[]>([])
   const [selectedModels, setSelectedModels] = useState<string[]>([])
+  const [systemPrompt, setSystemPrompt] = useState('')
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [promptSaved, setPromptSaved] = useState(false)
   const ensuredWorkspaceRef = useRef(false)
+  const creatingChatRef = useRef<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -72,6 +111,25 @@ export function CenterPanel() {
   )
   const activeModels = selectedModels.length > 0 ? selectedModels : [agent?.model || 'echo']
 
+  const {
+    data: chats = [],
+    isLoading: chatsLoading,
+    refetch: refetchChats,
+  } = useQuery<ChatSession[]>({
+    queryKey: ['workspace-chats', workspaceId, selectedAgentId],
+    queryFn: () => api.get(`/workspaces/${workspaceId}/chats`).then((r) => r.data),
+    enabled: !!workspaceId && !!selectedAgentId,
+  })
+
+  const agentChats = chats.filter((chat) => chat.metadata?.agent_id === selectedAgentId)
+  const activeChat = agentChats.find((chat) => chat.id === chatId) || null
+
+  const { data: storedMessages = [], isLoading: messagesLoading } = useQuery<StoredMessage[]>({
+    queryKey: ['workspace-chat-messages', workspaceId, chatId],
+    queryFn: () => api.get(`/workspaces/${workspaceId}/chats/${chatId}/messages`).then((r) => r.data),
+    enabled: !!workspaceId && !!chatId && !isStreaming,
+  })
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
@@ -92,39 +150,88 @@ export function CenterPanel() {
       })
   }, [addLog, refetchWorkspaces, workspaces.length, workspacesLoading])
 
-  // Reset and create a local-first chat when agent changes.
   useEffect(() => {
-    let cancelled = false
     setMessages([])
     setChatId(null)
     setAttachments([])
     setSelectedModels(agent ? [agent.model] : [])
+    setSystemPrompt(agent?.system_prompt || '')
+    setSettingsOpen(false)
+  }, [agent, selectedAgentId])
 
-    if (!selectedAgentId || !agent || !workspaceId) return
+  useEffect(() => {
+    if (!agent || !workspaceId || chatsLoading || chatId) return
+    const latest = agentChats[0]
+    if (latest) {
+      activateChat(latest)
+      return
+    }
+    createChat()
+  }, [agent, agentChats, chatId, chatsLoading, workspaceId])
 
-    api
-      .post(`/workspaces/${workspaceId}/chats`, {
+  useEffect(() => {
+    if (isStreaming) return
+    setMessages(storedToMessages(storedMessages))
+  }, [isStreaming, storedMessages])
+
+  useEffect(() => {
+    if (!promptSaved) return
+    const timeout = window.setTimeout(() => setPromptSaved(false), 1400)
+    return () => window.clearTimeout(timeout)
+  }, [promptSaved])
+
+  const activateChat = (chat: ChatSession) => {
+    setChatId(chat.id)
+    setSystemPrompt(chat.system_prompt || agent?.system_prompt || '')
+    setSelectedModels(chat.model_profiles.length > 0 ? chat.model_profiles : [agent?.model || 'echo'])
+    setAttachments([])
+  }
+
+  const createChat = async () => {
+    if (!agent || !workspaceId) return
+    const key = `${workspaceId}:${agent.id}`
+    if (creatingChatRef.current === key) return
+    creatingChatRef.current = key
+
+    try {
+      const response = await api.post(`/workspaces/${workspaceId}/chats`, {
         title: `${agent.name} Session`,
         system_prompt: agent.system_prompt || '',
         model_profiles: [agent.model],
         metadata: { agent_id: agent.id },
       })
-      .then((response) => {
-        if (!cancelled) setChatId(response.data.id)
+      await refetchChats()
+      activateChat(response.data)
+    } catch (err) {
+      addLog({
+        id: '',
+        level: 'error',
+        message: `Chat init error: ${err instanceof Error ? err.message : 'Unknown'}`,
+        timestamp: Date.now(),
       })
-      .catch((err) => {
-        addLog({
-          id: '',
-          level: 'error',
-          message: `Chat init error: ${err instanceof Error ? err.message : 'Unknown'}`,
-          timestamp: Date.now(),
-        })
-      })
-
-    return () => {
-      cancelled = true
+    } finally {
+      creatingChatRef.current = null
     }
-  }, [addLog, agent, selectedAgentId, workspaceId])
+  }
+
+  const saveChatSettings = async () => {
+    if (!workspaceId || !chatId) return
+    try {
+      await api.patch(`/workspaces/${workspaceId}/chats/${chatId}`, {
+        system_prompt: systemPrompt,
+        model_profiles: activeModels,
+      })
+      setPromptSaved(true)
+      await refetchChats()
+    } catch (err) {
+      addLog({
+        id: '',
+        level: 'error',
+        message: `Chat settings error: ${err instanceof Error ? err.message : 'Unknown'}`,
+        timestamp: Date.now(),
+      })
+    }
+  }
 
   const sendMessage = async () => {
     if (!input.trim() || !selectedAgentId || !workspaceId || !chatId || isStreaming) return
@@ -152,6 +259,18 @@ export function CenterPanel() {
     }
 
     try {
+      if (
+        activeChat &&
+        (activeChat.system_prompt !== systemPrompt ||
+          activeChat.model_profiles.join('|') !== activeModels.join('|'))
+      ) {
+        await api.patch(`/workspaces/${workspaceId}/chats/${chatId}`, {
+          system_prompt: systemPrompt,
+          model_profiles: activeModels,
+        })
+        await refetchChats()
+      }
+
       if (activeModels.length > 1) {
         const response = await fetch(
           `/api/v1/workspaces/${workspaceId}/chats/${chatId}/messages`,
@@ -177,6 +296,8 @@ export function CenterPanel() {
             })),
           },
         ])
+        queryClient.invalidateQueries({ queryKey: ['workspace-chat-messages', workspaceId, chatId] })
+        queryClient.invalidateQueries({ queryKey: ['workspace-chats', workspaceId, selectedAgentId] })
         return
       }
 
@@ -260,6 +381,8 @@ export function CenterPanel() {
           }
         }
       }
+      queryClient.invalidateQueries({ queryKey: ['workspace-chat-messages', workspaceId, chatId] })
+      queryClient.invalidateQueries({ queryKey: ['workspace-chats', workspaceId, selectedAgentId] })
     } catch (err) {
       addLog({
         id: '',
@@ -350,12 +473,63 @@ export function CenterPanel() {
           </div>
         </div>
         <div className="flex items-center gap-4">
+          <button
+            onClick={() => createChat()}
+            disabled={!agent || !workspaceId}
+            className="w-8 h-8 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-30 flex items-center justify-center transition-colors"
+            aria-label="New chat"
+            title="New chat"
+          >
+            <MessageSquarePlus className="h-4 w-4" />
+          </button>
+          <button
+            onClick={() => setSettingsOpen((open) => !open)}
+            className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
+              settingsOpen
+                ? 'bg-primary/10 text-primary'
+                : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+            }`}
+            aria-label="Chat settings"
+            title="Chat settings"
+          >
+            <Settings className="h-4 w-4" />
+          </button>
           {activeModels.length > 1 && (
             <Badge variant="primary" className="h-6">
               Compare {activeModels.length}
             </Badge>
           )}
-          <Badge variant="primary" className="h-6">Session Active</Badge>
+          <Badge variant="primary" className="h-6">
+            {activeChat?.title || 'Session Active'}
+          </Badge>
+        </div>
+      </div>
+
+      <div className="px-6 py-3 border-b border-border bg-card/30 flex items-center gap-3 shrink-0 overflow-hidden">
+        <div className="flex items-center gap-2 mr-1 text-[10px] font-bold uppercase tracking-widest text-muted-foreground shrink-0">
+          <History className="h-3.5 w-3.5 text-primary" />
+          Chats
+        </div>
+        <div className="flex gap-2 overflow-x-auto scrollbar-hide min-w-0">
+          {agentChats.map((chat) => (
+            <button
+              key={chat.id}
+              onClick={() => activateChat(chat)}
+              className={`max-w-[180px] px-3 py-1.5 rounded-lg border text-[11px] font-bold truncate transition-all ${
+                chat.id === chatId
+                  ? 'bg-primary/10 border-primary/30 text-primary'
+                  : 'bg-background border-border text-muted-foreground hover:text-foreground'
+              }`}
+              title={chat.title}
+            >
+              {chat.title}
+            </button>
+          ))}
+          {agentChats.length === 0 && (
+            <span className="px-3 py-1.5 rounded-lg border border-dashed border-border text-[11px] font-bold text-muted-foreground">
+              {chatsLoading ? 'Loading...' : 'New session'}
+            </span>
+          )}
         </div>
       </div>
 
@@ -381,6 +555,33 @@ export function CenterPanel() {
         </div>
       </div>
 
+      {settingsOpen && (
+        <div className="px-6 py-4 border-b border-border bg-card/70 shrink-0">
+          <div className="max-w-5xl mx-auto grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-3 items-end">
+            <label className="block min-w-0">
+              <span className="block mb-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                System Prompt
+              </span>
+              <textarea
+                value={systemPrompt}
+                onChange={(event) => setSystemPrompt(event.target.value)}
+                rows={3}
+                className="w-full px-4 py-3 bg-background border border-border rounded-xl text-xs text-foreground resize-none outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 font-mono leading-relaxed"
+                placeholder="Define this chat's behavior and context rules..."
+              />
+            </label>
+            <button
+              onClick={saveChatSettings}
+              disabled={!chatId}
+              className="h-10 px-4 rounded-xl bg-primary text-white hover:bg-primary/90 disabled:opacity-30 transition-all shadow-lg shadow-primary/20 flex items-center justify-center gap-2 text-[11px] font-bold uppercase tracking-wider"
+            >
+              {promptSaved ? <Check className="h-4 w-4" /> : <Save className="h-4 w-4" />}
+              {promptSaved ? 'Saved' : 'Save'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Messages */}
       <div className="flex-1 overflow-auto p-8 space-y-8 scrollbar-hide">
         {messages.length === 0 && (
@@ -391,14 +592,20 @@ export function CenterPanel() {
             </div>
             <h3 className="text-lg font-bold text-foreground mb-2">Awaiting Instructions</h3>
             <p className="text-sm text-muted-foreground max-w-[260px] text-center leading-relaxed font-medium">
-              Start a high-context conversation with <span className="text-primary">{agent?.name || 'the agent'}</span> to begin problem solving.
+              {messagesLoading
+                ? 'Restoring local conversation context...'
+                : (
+                  <>
+                    Start a high-context conversation with <span className="text-primary">{agent?.name || 'the agent'}</span> to begin problem solving.
+                  </>
+                )}
             </p>
           </div>
         )}
 
         {messages.map((msg, i) => (
           <div
-            key={i}
+            key={msg.id || `${msg.role}-${i}`}
             className={`flex gap-4 ${msg.role === 'user' ? 'flex-row-reverse' : 'animate-in slide-in-from-left-2 duration-300'}`}
           >
             <div
@@ -424,6 +631,11 @@ export function CenterPanel() {
               }`}
             >
               <div className="font-medium">
+                {msg.model && !msg.responses && (
+                  <div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-primary">
+                    {msg.model}
+                  </div>
+                )}
                 {msg.content || (isStreaming && i === messages.length - 1 ? (
                   <div className="flex gap-1.5 py-1">
                     <div className="w-2 h-2 bg-primary/40 rounded-full animate-bounce" />
@@ -526,4 +738,61 @@ function isTextLike(file: File) {
   return /\.(md|txt|json|csv|ya?ml|toml|py|ts|tsx|js|jsx|css|html|xml|sql|sh|log)$/i.test(
     file.name
   )
+}
+
+function storedToMessages(storedMessages: StoredMessage[]): Message[] {
+  const rendered: Message[] = []
+  const compareByParent = new Map<string, Message>()
+
+  for (const message of storedMessages) {
+    if (message.role === 'user') {
+      rendered.push({ id: message.id, role: 'user', content: message.content })
+      continue
+    }
+
+    if (message.role !== 'assistant') continue
+
+    if (message.parent_id) {
+      const existing = compareByParent.get(message.parent_id)
+      if (existing?.responses) {
+        existing.responses.push({
+          model: message.model || 'assistant',
+          content: message.content,
+        })
+        continue
+      }
+
+      const grouped: Message = {
+        id: `responses-${message.parent_id}`,
+        role: 'assistant',
+        content: '',
+        responses: [
+          {
+            model: message.model || 'assistant',
+            content: message.content,
+          },
+        ],
+      }
+      compareByParent.set(message.parent_id, grouped)
+      rendered.push(grouped)
+      continue
+    }
+
+    rendered.push({
+      id: message.id,
+      role: 'assistant',
+      content: message.content,
+      model: message.model,
+    })
+  }
+
+  return rendered.map((message) => {
+    if (!message.responses || message.responses.length !== 1) return message
+    return {
+      id: message.id,
+      role: 'assistant',
+      content: message.responses[0].content,
+      model: message.responses[0].model,
+    }
+  })
 }
