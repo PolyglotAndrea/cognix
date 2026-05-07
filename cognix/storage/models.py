@@ -33,8 +33,9 @@ class UserModel(Base):
     email: Mapped[str] = mapped_column(String(256), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(128), default="")
     avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    oauth_provider: Mapped[str] = mapped_column(String(32))  # google, github
-    oauth_id: Mapped[str] = mapped_column(String(128))
+    password_hash: Mapped[str | None] = mapped_column(String(256), nullable=True)  # bcrypt, null for OAuth users
+    oauth_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)  # google, github, null for email/password
+    oauth_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.USER)
     is_active: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)

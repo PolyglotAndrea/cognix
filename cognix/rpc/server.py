@@ -45,7 +45,9 @@ def rpc_method(name: str):
 
 @rpc_method("agent.chat")
 async def _agent_chat(params: dict, registry: AgentRegistry) -> dict:
-    agent = registry.get(params["agent_id"])
+    from cognix.api.state import get_agent_runtime
+
+    agent = await get_agent_runtime(params["agent_id"])
     if not agent:
         raise RPCError(METHOD_NOT_FOUND, f"Agent '{params['agent_id']}' not found")
     response = await agent.run(params["message"])
@@ -54,27 +56,75 @@ async def _agent_chat(params: dict, registry: AgentRegistry) -> dict:
 
 @rpc_method("agent.list")
 async def _agent_list(params: dict, registry: AgentRegistry) -> list[dict]:
-    return registry.list_all()
+    from sqlalchemy import select
+
+    from cognix.api.state import agent_from_model, agent_registry
+    from cognix.storage.database import get_session
+    from cognix.storage.models import AgentModel
+
+    async with get_session() as session:
+        result = await session.execute(select(AgentModel))
+        agents = []
+        for row in result.scalars():
+            agent = registry.get(row.id) or agent_from_model(row)
+            if not registry.get(row.id):
+                agent_registry.register(agent)
+            agents.append(agent.to_dict())
+        return agents
 
 
 @rpc_method("agent.create")
 async def _agent_create(params: dict, registry: AgentRegistry) -> dict:
     from cognix.core.agent import Agent
+    from cognix.core.memory import SQLiteBackend
+    from cognix.storage.database import get_session
+    from cognix.storage.models import AgentModel
 
     agent = Agent(
         name=params["name"],
         model=params.get("model", "gpt-4o"),
         system_prompt=params.get("system_prompt", "You are a helpful assistant."),
+        description=params.get("description", ""),
+        temperature=params.get("temperature", 0.7),
+        max_iterations=params.get("max_iterations", 10),
+        api_base=params.get("api_base"),
     )
+    agent.memory = SQLiteBackend(agent_id=agent.id)
     registry.register(agent)
+
+    async with get_session() as session:
+        db_agent = AgentModel(
+            id=agent.id,
+            name=agent.name,
+            description=agent.description,
+            model=agent.model,
+            system_prompt=agent.system_prompt,
+            temperature=agent.temperature,
+            max_iterations=agent.max_iterations,
+            api_base=agent.api_base,
+        )
+        session.add(db_agent)
+
     return agent.to_dict()
 
 
 @rpc_method("agent.delete")
 async def _agent_delete(params: dict, registry: AgentRegistry) -> dict:
-    if not registry.unregister(params["agent_id"]):
+    from sqlalchemy import delete
+
+    from cognix.api.state import get_agent_runtime
+    from cognix.storage.database import get_session
+    from cognix.storage.models import AgentModel
+
+    agent = await get_agent_runtime(params["agent_id"])
+    if not agent:
         raise RPCError(METHOD_NOT_FOUND, f"Agent '{params['agent_id']}' not found")
-    return {"deleted": params["agent_id"]}
+    registry.unregister(agent.id)
+
+    async with get_session() as session:
+        await session.execute(delete(AgentModel).where(AgentModel.id == agent.id))
+
+    return {"deleted": agent.id}
 
 
 @rpc_method("system.ping")
@@ -141,8 +191,6 @@ async def _task_trigger(params: dict, registry: AgentRegistry) -> dict:
     task = await store.get(task_id)
     if not task:
         raise RPCError(METHOD_NOT_FOUND, f"Task '{task_id}' not found")
-
-    import json
 
     payload = json.loads(task.payload) if isinstance(task.payload, str) else task.payload
     executor = TaskExecutor(agent_registry=registry)

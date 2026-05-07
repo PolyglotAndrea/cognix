@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import enum
+import json
 import logging
 import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator
+from typing import Any
 
-from cognix.core.context import Context, Message
+from cognix.core.context import Context
 from cognix.core.events import EventBus, Events
 from cognix.core.memory import InMemoryBackend, MemoryBackend
 from cognix.core.tool import Tool
@@ -16,7 +18,7 @@ from cognix.core.tool import Tool
 logger = logging.getLogger(__name__)
 
 
-class AgentState(str, enum.Enum):
+class AgentState(enum.StrEnum):
     IDLE = "idle"
     RUNNING = "running"
     WAITING = "waiting"
@@ -41,6 +43,14 @@ class AgentChunk:
 
 
 @dataclass
+class AgentEvent:
+    """Structured runtime event suitable for SSE/WebSocket streaming."""
+
+    type: str
+    data: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class Agent:
     """Hermes Agent - an LLM-powered autonomous entity."""
 
@@ -56,6 +66,8 @@ class Agent:
     temperature: float = 0.7
     api_base: str | None = None
     api_key: str | None = None
+    workspace_id: str | None = None
+    use_context_builder: bool = True
 
     _event_bus: EventBus | None = field(default=None, repr=False)
     _tool_map: dict[str, Tool] = field(default_factory=dict, repr=False)
@@ -77,6 +89,7 @@ class Agent:
     async def run(self, message: str, context: Context | None = None) -> AgentResponse:
         """Run the agent with a user message. Handles tool-call loops."""
         ctx = context or Context()
+        await self._inject_context_pack(ctx, message)
         ctx.add_message("user", message)
 
         await self._emit(Events.AGENT_STARTED, {"agent_id": self.id, "message": message})
@@ -93,6 +106,7 @@ class Agent:
                         Events.AGENT_COMPLETED,
                         {"agent_id": self.id, "response": response.content},
                     )
+                    await self._remember_exchange(message, response.content)
                     self.state = AgentState.IDLE
                     return response
 
@@ -116,9 +130,14 @@ class Agent:
             await self._emit(Events.AGENT_ERROR, {"agent_id": self.id, "error": str(e)})
             raise
 
-    async def stream(self, message: str, context: Context | None = None) -> AsyncIterator[AgentChunk]:
+    async def stream(
+        self,
+        message: str,
+        context: Context | None = None,
+    ) -> AsyncIterator[AgentChunk]:
         """Stream agent response chunks."""
         ctx = context or Context()
+        await self._inject_context_pack(ctx, message)
         ctx.add_message("user", message)
 
         await self._emit(Events.AGENT_STARTED, {"agent_id": self.id, "message": message})
@@ -128,11 +147,95 @@ class Agent:
             async for chunk in self._stream_llm(ctx):
                 yield chunk
 
+            await self._remember_exchange(message, "")
             self.state = AgentState.IDLE
         except Exception as e:
             self.state = AgentState.ERROR
             await self._emit(Events.AGENT_ERROR, {"agent_id": self.id, "error": str(e)})
             raise
+
+    async def stream_events(
+        self,
+        message: str,
+        context: Context | None = None,
+    ) -> AsyncIterator[AgentEvent]:
+        """Stream a stable event protocol: delta, tool_call, tool_result, error, done."""
+        ctx = context or Context()
+        await self._inject_context_pack(ctx, message)
+        ctx.add_message("user", message)
+
+        await self._emit(Events.AGENT_STARTED, {"agent_id": self.id, "message": message})
+        self.state = AgentState.RUNNING
+
+        try:
+            if not self.tools:
+                content = ""
+                async for chunk in self._stream_llm(ctx):
+                    if chunk.delta:
+                        content += chunk.delta
+                        yield AgentEvent("delta", {"delta": chunk.delta})
+                ctx.add_message("assistant", content)
+                await self._remember_exchange(message, content)
+                await self._emit(Events.AGENT_COMPLETED, {"agent_id": self.id, "response": content})
+                self.state = AgentState.IDLE
+                yield AgentEvent("done", {"finish_reason": "stop"})
+                return
+
+            for _ in range(self.max_iterations):
+                response = await self._call_llm(ctx)
+                if not response.tool_calls:
+                    ctx.add_message("assistant", response.content)
+                    if response.content:
+                        yield AgentEvent("delta", {"delta": response.content})
+                    await self._remember_exchange(message, response.content)
+                    await self._emit(
+                        Events.AGENT_COMPLETED,
+                        {"agent_id": self.id, "response": response.content},
+                    )
+                    self.state = AgentState.IDLE
+                    yield AgentEvent(
+                        "done",
+                        {"finish_reason": "stop", "usage": response.usage},
+                    )
+                    return
+
+                ctx.add_message("assistant", response.content, tool_calls=response.tool_calls)
+                for tc in response.tool_calls:
+                    yield AgentEvent(
+                        "tool_call",
+                        {
+                            "id": tc.get("id", ""),
+                            "name": tc.get("name", ""),
+                            "arguments": tc.get("arguments", {}),
+                            "args": tc.get("arguments", {}),
+                        },
+                    )
+                    tool_result = await self._execute_tool(tc)
+                    ctx.add_message(
+                        "tool",
+                        tool_result,
+                        tool_call_id=tc.get("id", ""),
+                        name=tc.get("name", ""),
+                    )
+                    yield AgentEvent(
+                        "tool_result",
+                        {
+                            "id": tc.get("id", ""),
+                            "name": tc.get("name", ""),
+                            "args": tc.get("arguments", {}),
+                            "result": tool_result,
+                        },
+                    )
+
+            self.state = AgentState.ERROR
+            raise RuntimeError(f"Agent {self.name} exceeded max iterations ({self.max_iterations})")
+        except Exception as e:
+            self.state = AgentState.ERROR
+            await self._emit(Events.AGENT_ERROR, {"agent_id": self.id, "error": str(e)})
+            yield AgentEvent("error", {"message": str(e)})
+        finally:
+            if self.state != AgentState.ERROR:
+                self.state = AgentState.IDLE
 
     async def _call_llm(self, ctx: Context) -> AgentResponse:
         """Call the LLM. Override for custom providers."""
@@ -178,8 +281,6 @@ class Agent:
 
         if choice.message.tool_calls:
             for tc in choice.message.tool_calls:
-                import json
-
                 tool_calls.append(
                     {
                         "id": tc.id,
@@ -202,14 +303,20 @@ class Agent:
         """Stream from LLM. Override for custom providers."""
         # Fallback for non-LLM models (e.g. "echo" for testing)
         if self.model in ("echo", "noop", "mock"):
-            yield AgentChunk(delta=f"[{self.name}] Echo: {ctx.messages[-1].content}", finish_reason="stop")
+            yield AgentChunk(
+                delta=f"[{self.name}] Echo: {ctx.messages[-1].content}",
+                finish_reason="stop",
+            )
             return
 
         try:
             import litellm
         except ImportError:
             logger.warning("litellm not installed, falling back to echo mode")
-            yield AgentChunk(delta=f"[{self.name}] Echo: {ctx.messages[-1].content}", finish_reason="stop")
+            yield AgentChunk(
+                delta=f"[{self.name}] Echo: {ctx.messages[-1].content}",
+                finish_reason="stop",
+            )
             return
 
         messages = [{"role": "system", "content": self.system_prompt}]
@@ -266,6 +373,75 @@ class Agent:
             await self._emit(Events.TOOL_ERROR, {"tool": name, "error": error_msg})
             return error_msg
 
+    async def _inject_context_pack(self, ctx: Context, message: str) -> None:
+        """Inject routed Cognix memory context, falling back to backend search."""
+        if self.use_context_builder:
+            try:
+                from cognix.memory.pipeline import ContextBuilder
+
+                pack = await ContextBuilder().build(message, workspace_id=self.workspace_id)
+                rendered = pack.render_system_context()
+                if rendered:
+                    ctx.add_message("system", rendered)
+                    return
+            except Exception:
+                logger.exception("ContextBuilder failed for agent %s", self.id)
+
+        await self._inject_relevant_memory(ctx, message)
+
+    async def _inject_relevant_memory(self, ctx: Context, message: str) -> None:
+        """Inject a compact long-term memory recall into the context."""
+        try:
+            memories = await self.memory.search(message, limit=5)
+        except Exception:
+            logger.exception("Memory search failed for agent %s", self.id)
+            return
+
+        if not memories:
+            return
+
+        lines = []
+        for entry in memories:
+            value = entry.value
+            if not isinstance(value, str):
+                value = json.dumps(value, ensure_ascii=False)
+            lines.append(f"- {entry.key}: {value[:500]}")
+
+        ctx.add_message(
+            "system",
+            "Relevant long-term memory:\n" + "\n".join(lines),
+        )
+
+    async def _remember_exchange(self, user_message: str, assistant_message: str) -> None:
+        """Persist a summarized exchange in the configured memory backend."""
+        if not user_message.strip():
+            return
+        key = f"conversation:{uuid.uuid4().hex[:12]}"
+        value = {
+            "user": user_message,
+            "assistant": assistant_message,
+        }
+        try:
+            await self.memory.set(key, value)
+        except Exception:
+            logger.exception("Memory write failed for agent %s", self.id)
+
+        try:
+            from cognix.local.home import CognixHome
+            from cognix.memory.pipeline import ColdMemoryStore
+
+            content = f"User: {user_message}\nAssistant: {assistant_message}"
+            await ColdMemoryStore(CognixHome.default().ensure().state_db).remember(
+                content,
+                workspace_id=self.workspace_id,
+                scope="agent",
+                kind="conversation",
+                summary=content[:700],
+                metadata={"agent_id": self.id, "agent_name": self.name},
+            )
+        except Exception:
+            logger.exception("Cold memory write failed for agent %s", self.id)
+
     async def _emit(self, event: str, data: dict[str, Any]) -> None:
         if self._event_bus:
             await self._event_bus.emit(event, data)
@@ -281,5 +457,6 @@ class Agent:
             "temperature": self.temperature,
             "max_iterations": self.max_iterations,
             "api_base": self.api_base,
+            "workspace_id": self.workspace_id,
             "tools": [t.name for t in self.tools],
         }

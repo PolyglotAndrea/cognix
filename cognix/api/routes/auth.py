@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime, timezone
 from urllib.parse import urlencode
 
+import bcrypt
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from sqlalchemy import select
 
 from cognix.auth.dependencies import CurrentUser, get_current_user
@@ -21,6 +23,22 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 # ── Schemas ─────────────────────────────────────────────────────────
+
+
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    password: str
+    name: str = ""
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class TokenResponse(BaseModel):
+    token: str
+    user: dict
 
 
 class CreateAPIKeyRequest(BaseModel):
@@ -37,6 +55,89 @@ class APIKeyResponse(BaseModel):
 
 class APIKeyCreatedResponse(APIKeyResponse):
     key: str  # Only returned on creation
+
+
+# ── Email / Password Auth ───────────────────────────────────────────
+
+
+def _validate_password(password: str) -> None:
+    """Enforce minimum password requirements."""
+    if len(password) < 8:
+        raise HTTPException(400, "Password must be at least 8 characters")
+    if not re.search(r"[A-Za-z]", password) or not re.search(r"\d", password):
+        raise HTTPException(400, "Password must contain at least one letter and one number")
+
+
+@router.post("/register", response_model=TokenResponse, status_code=201)
+async def register(body: RegisterRequest) -> dict:
+    """Register a new user with email and password."""
+    _validate_password(body.password)
+
+    password_hash = bcrypt.hashpw(body.password.encode(), bcrypt.gensalt()).decode()
+
+    async with get_session() as session:
+        # Check if email already exists
+        result = await session.execute(
+            select(UserModel).where(UserModel.email == body.email)
+        )
+        if result.scalar_one_or_none():
+            raise HTTPException(409, "Email already registered")
+
+        user = UserModel(
+            id=uuid.uuid4().hex,
+            email=body.email,
+            name=body.name or body.email.split("@")[0],
+            password_hash=password_hash,
+            oauth_provider=None,
+            oauth_id=None,
+            role=UserRole.USER,
+            is_active=True,
+        )
+        session.add(user)
+        await session.flush()
+
+        token = create_access_token(user_id=user.id, role=user.role.value, email=user.email)
+
+        return {
+            "token": token,
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "name": user.name,
+                "role": user.role.value,
+            },
+        }
+
+
+@router.post("/login", response_model=TokenResponse)
+async def login(body: LoginRequest) -> dict:
+    """Login with email and password."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(UserModel).where(UserModel.email == body.email)
+        )
+        user = result.scalar_one_or_none()
+
+        if not user or not user.password_hash:
+            raise HTTPException(401, "Invalid email or password")
+
+        if not bcrypt.checkpw(body.password.encode(), user.password_hash.encode()):
+            raise HTTPException(401, "Invalid email or password")
+
+        if not user.is_active:
+            raise HTTPException(403, "Account is disabled")
+
+        token = create_access_token(user_id=user.id, role=user.role.value, email=user.email)
+
+        return {
+            "token": token,
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "name": user.name,
+                "role": user.role.value,
+            },
+        }
 
 
 # ── OAuth Login ─────────────────────────────────────────────────────

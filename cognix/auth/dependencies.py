@@ -70,8 +70,14 @@ async def get_current_user(
     """Get the current authenticated user from JWT or API Key."""
 
     # Try JWT from Authorization header
-    if credentials and credentials.credentials:
-        payload = verify_token(credentials.credentials)
+    token = credentials.credentials if credentials and credentials.credentials else None
+    if not token:
+        authorization = request.headers.get("Authorization")
+        if authorization and authorization.lower().startswith("bearer "):
+            token = authorization.split(" ", 1)[1].strip()
+
+    if token:
+        payload = verify_token(token)
         if payload:
             user_id = payload.get("sub")
             if user_id:

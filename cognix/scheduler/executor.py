@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -40,6 +40,8 @@ class TaskExecutor:
                 result = await self._execute_rpc_call(payload)
             elif task_type == "http_webhook":
                 result = await self._execute_http_webhook(payload)
+            elif task_type == "skill_exec":
+                result = await self._execute_skill(payload)
             elif task_type == "workflow":
                 result = await self._execute_workflow(payload)
             else:
@@ -51,8 +53,8 @@ class TaskExecutor:
                 "status": "success",
                 "result": json.dumps(result) if not isinstance(result, str) else result,
                 "duration_ms": duration_ms,
-                "started_at": datetime.now(timezone.utc).isoformat(),
-                "finished_at": datetime.now(timezone.utc).isoformat(),
+                "started_at": datetime.now(UTC).isoformat(),
+                "finished_at": datetime.now(UTC).isoformat(),
             }
 
         except Exception as e:
@@ -62,8 +64,8 @@ class TaskExecutor:
                 "status": "failure",
                 "error": str(e),
                 "duration_ms": duration_ms,
-                "started_at": datetime.now(timezone.utc).isoformat(),
-                "finished_at": datetime.now(timezone.utc).isoformat(),
+                "started_at": datetime.now(UTC).isoformat(),
+                "finished_at": datetime.now(UTC).isoformat(),
             }
             logger.exception("Task %s failed", task_id)
 
@@ -124,6 +126,36 @@ class TaskExecutor:
             "body": resp.text[:1000],
         }
 
+    async def _execute_skill(self, payload: dict[str, Any]) -> Any:
+        """Execute a tool from an installed skill."""
+        from cognix.config import get_settings
+        from cognix.skills.adapter import skill_to_core_tools
+        from cognix.skills.manager import SkillsManager
+
+        skill_name = payload.get("skill")
+        tool_name = payload.get("tool")
+        args = payload.get("args", {})
+
+        if not skill_name:
+            raise ValueError("skill required for skill_exec task")
+
+        manager = SkillsManager(local_dir=get_settings().skills.local_dir)
+        skill = manager.load(skill_name)
+        if not skill:
+            raise ValueError(f"Skill '{skill_name}' not found")
+
+        tools = {tool.name: tool for tool in skill_to_core_tools(skill)}
+        if not tool_name:
+            if len(tools) != 1:
+                raise ValueError("tool required when skill exposes multiple tools")
+            tool_name = next(iter(tools))
+
+        tool = tools.get(tool_name)
+        if not tool:
+            raise ValueError(f"Tool '{tool_name}' not found in skill '{skill_name}'")
+
+        return await tool.execute(**args)
+
     async def _execute_workflow(self, payload: dict[str, Any]) -> str:
         """Execute a workflow task."""
         from cognix.orchestrator.workflow import execute_workflow, parse_workflow
@@ -165,7 +197,7 @@ class TaskExecutor:
                     .where(ScheduledTaskModel.id == run["task_id"])
                     .values(
                         run_count=ScheduledTaskModel.run_count + 1,
-                        last_run=datetime.now(timezone.utc),
+                        last_run=datetime.now(UTC),
                     )
                 )
 

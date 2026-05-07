@@ -37,7 +37,7 @@ class SkillsManager:
     def load(self, name: str) -> SkillInfo | None:
         """Load a skill by name."""
         if name in self._loaded:
-            return self._loaded[skill := self._loaded[name]] or None
+            return self._loaded[name]
 
         skill_dir = self.local_dir / name
         if not skill_dir.exists():
@@ -72,7 +72,7 @@ class SkillsManager:
                 "version": s.version,
                 "description": s.description,
                 "author": s.author,
-                "tags": s.tags,
+                "tags": ",".join(s.tags) if isinstance(s.tags, list) else s.tags,
                 "tools": [t.name for t in s.tools],
             }
             for s in skills
