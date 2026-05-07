@@ -78,7 +78,8 @@
 }
 
 .rich-message {
-  @apply text-sm leading-7 text-foreground;
+  @apply text-sm leading-7;
+  color: hsl(var(--foreground));
 }
 
 .rich-message > *:first-child {
@@ -113,7 +114,8 @@
 .rich-message h1,
 .rich-message h2,
 .rich-message h3 {
-  @apply mt-5 mb-2 font-bold text-foreground;
+  @apply mt-5 mb-2 font-bold;
+  color: hsl(var(--foreground));
 }
 
 .rich-message h1 {
@@ -129,7 +131,9 @@
 }
 
 .rich-message blockquote {
-  @apply my-4 border-l-2 border-primary/40 pl-4 text-muted-foreground;
+  @apply my-4 border-l-2 pl-4;
+  border-left-color: hsl(var(--primary) / 0.4);
+  color: hsl(var(--muted-foreground));
 }
 
 .rich-message table {
@@ -138,23 +142,29 @@
 
 .rich-message th,
 .rich-message td {
-  @apply border border-border px-3 py-2 text-left align-top;
+  @apply border px-3 py-2 text-left align-top;
+  border-color: hsl(var(--border));
 }
 
 .rich-message th {
-  @apply bg-muted font-bold;
+  @apply font-bold;
+  background-color: hsl(var(--muted));
 }
 
 .rich-message a {
-  @apply text-primary underline underline-offset-4;
+  @apply underline underline-offset-4;
+  color: hsl(var(--primary));
 }
 
 .rich-message :not(pre) > code {
-  @apply rounded-md bg-background px-1.5 py-0.5 font-mono text-[0.85em] text-primary;
+  @apply rounded-md px-1.5 py-0.5 font-mono text-[0.85em];
+  background-color: hsl(var(--background));
+  color: hsl(var(--primary));
 }
 
 .rich-message pre {
-  @apply my-4 overflow-x-auto rounded-xl border border-border bg-[#0d1117] p-4 text-xs leading-6 shadow-inner;
+  @apply my-4 overflow-x-auto rounded-xl border bg-[#0d1117] p-4 text-xs leading-6 shadow-inner;
+  border-color: hsl(var(--border));
 }
 
 .rich-message pre code {
