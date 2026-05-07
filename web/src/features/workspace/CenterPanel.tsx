@@ -6,6 +6,7 @@ import {
   Columns3,
   FileText,
   History,
+  Image,
   MessageSquarePlus,
   Paperclip,
   Save,
@@ -413,11 +414,22 @@ export function CenterPanel() {
     const next: PendingAttachment[] = []
     for (const file of Array.from(files)) {
       if (!isTextLike(file)) {
-        addLog({
-          id: '',
-          level: 'warn',
-          message: `Skipped unsupported attachment: ${file.name}`,
-          timestamp: Date.now(),
+        if (!isImageLike(file)) {
+          addLog({
+            id: '',
+            level: 'warn',
+            message: `Skipped unsupported attachment: ${file.name}`,
+            timestamp: Date.now(),
+          })
+          continue
+        }
+        next.push({
+          id: crypto.randomUUID(),
+          name: file.name,
+          mime_type: file.type || 'image/png',
+          size: file.size,
+          kind: 'image',
+          content: await readFileAsDataUrl(file),
         })
         continue
       }
@@ -677,7 +689,11 @@ export function CenterPanel() {
                 key={attachment.id}
                 className="flex items-center gap-2 px-3 py-2 bg-card border border-border rounded-xl text-xs text-muted-foreground shadow-sm"
               >
-                <FileText className="h-3.5 w-3.5 text-primary" />
+                {attachment.kind === 'image' ? (
+                  <Image className="h-3.5 w-3.5 text-primary" />
+                ) : (
+                  <FileText className="h-3.5 w-3.5 text-primary" />
+                )}
                 <span className="max-w-[180px] truncate font-medium">{attachment.name}</span>
                 <button
                   onClick={() => removeAttachment(attachment.id)}
@@ -695,6 +711,7 @@ export function CenterPanel() {
             ref={fileInputRef}
             type="file"
             multiple
+            accept="text/*,image/*,.md,.txt,.json,.csv,.yaml,.yml,.toml,.py,.ts,.tsx,.js,.jsx,.css,.html,.xml,.sql,.sh,.log"
             className="hidden"
             onChange={(event) => attachFiles(event.target.files)}
           />
@@ -738,6 +755,19 @@ function isTextLike(file: File) {
   return /\.(md|txt|json|csv|ya?ml|toml|py|ts|tsx|js|jsx|css|html|xml|sql|sh|log)$/i.test(
     file.name
   )
+}
+
+function isImageLike(file: File) {
+  return file.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp)$/i.test(file.name)
+}
+
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = () => reject(reader.error || new Error('Failed to read file'))
+    reader.readAsDataURL(file)
+  })
 }
 
 function storedToMessages(storedMessages: StoredMessage[]): Message[] {
