@@ -107,6 +107,33 @@ class ChatStore:
             return None
         return ChatSession(**json.loads(path.read_text(encoding="utf-8")))
 
+    def update(
+        self,
+        chat_id: str,
+        *,
+        title: str | None = None,
+        system_prompt: str | None = None,
+        model_profiles: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> ChatSession:
+        chat = self.get(chat_id)
+        if not chat:
+            raise FileNotFoundError(f"Chat not found: {chat_id}")
+
+        now = datetime.now(UTC).isoformat()
+        updated = ChatSession(
+            id=chat.id,
+            workspace_id=chat.workspace_id,
+            title=title if title is not None else chat.title,
+            system_prompt=system_prompt if system_prompt is not None else chat.system_prompt,
+            model_profiles=model_profiles if model_profiles is not None else chat.model_profiles,
+            metadata={**chat.metadata, **metadata} if metadata is not None else chat.metadata,
+            created_at=chat.created_at,
+            updated_at=now,
+        )
+        self._write_json(self._chat_meta_path(chat.id), asdict(updated))
+        return updated
+
     def list_all(self) -> list[ChatSession]:
         sessions = []
         for path in sorted(self.chats_dir.glob("*.json")):

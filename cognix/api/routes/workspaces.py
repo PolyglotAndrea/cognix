@@ -6,7 +6,7 @@ import asyncio
 import json
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 
 from cognix.auth.dependencies import CurrentUser, get_current_user
@@ -27,8 +27,15 @@ class CreateWorkspaceRequest(BaseModel):
 class CreateChatRequest(BaseModel):
     title: str = "New Chat"
     system_prompt: str = ""
-    model_profiles: list[str] = []
-    metadata: dict = {}
+    model_profiles: list[str] = Field(default_factory=list)
+    metadata: dict = Field(default_factory=dict)
+
+
+class UpdateChatRequest(BaseModel):
+    title: str | None = None
+    system_prompt: str | None = None
+    model_profiles: list[str] | None = None
+    metadata: dict | None = None
 
 
 class AttachmentRequest(BaseModel):
@@ -39,13 +46,13 @@ class AttachmentRequest(BaseModel):
     size: int = 0
     kind: str = "file"
     content: str | None = None
-    metadata: dict = {}
+    metadata: dict = Field(default_factory=dict)
 
 
 class SendChatMessageRequest(BaseModel):
     content: str
-    models: list[str] = []
-    attachments: list[AttachmentRequest] = []
+    models: list[str] = Field(default_factory=list)
+    attachments: list[AttachmentRequest] = Field(default_factory=list)
 
 
 @router.get("")
@@ -95,6 +102,40 @@ async def create_chat(
         model_profiles=body.model_profiles,
         metadata=body.metadata,
     )
+    return chat.__dict__
+
+
+@router.get("/{workspace_id}/chats/{chat_id}")
+async def get_chat(
+    workspace_id: str,
+    chat_id: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    store = _chat_store(workspace_id)
+    chat = store.get(chat_id)
+    if not chat:
+        raise HTTPException(404, "Chat not found")
+    return chat.__dict__
+
+
+@router.patch("/{workspace_id}/chats/{chat_id}")
+async def update_chat(
+    workspace_id: str,
+    chat_id: str,
+    body: UpdateChatRequest,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    store = _chat_store(workspace_id)
+    try:
+        chat = store.update(
+            chat_id,
+            title=body.title,
+            system_prompt=body.system_prompt,
+            model_profiles=body.model_profiles,
+            metadata=body.metadata,
+        )
+    except FileNotFoundError:
+        raise HTTPException(404, "Chat not found") from None
     return chat.__dict__
 
 
