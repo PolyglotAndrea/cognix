@@ -100,6 +100,64 @@ class SkillsManager:
 
         return load_skill(dest)
 
+    def create_scaffold(
+        self,
+        name: str,
+        *,
+        description: str = "",
+        author: str = "you",
+        overwrite: bool = False,
+    ) -> SkillInfo:
+        """Create a new local skill scaffold."""
+        if Path(name).name != name:
+            raise ValueError("Skill name must not contain path separators")
+
+        skill_dir = self.local_dir / name
+        if skill_dir.exists():
+            if not overwrite:
+                raise FileExistsError(f"Skill '{name}' already exists")
+            shutil.rmtree(skill_dir)
+
+        skill_dir.mkdir(parents=True, exist_ok=True)
+        skill_description = description or f"TODO: describe {name}"
+
+        import yaml
+
+        manifest = {
+            "name": name,
+            "version": "0.1.0",
+            "description": skill_description,
+            "author": author,
+            "tags": [],
+            "runtime": {
+                "python": ">=3.11",
+                "entrypoint": "handler.py",
+            },
+            "tools": [
+                {
+                    "name": name,
+                    "description": "TODO",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                        "required": [],
+                    },
+                }
+            ],
+        }
+        (skill_dir / "skill.yaml").write_text(
+            yaml.safe_dump(manifest, sort_keys=False)
+        )
+        (skill_dir / "handler.py").write_text(
+            '"""Skill handler."""\n'
+            "\n"
+            "async def run(**params) -> str:\n"
+            '    """Entry point for the skill."""\n'
+            f'    return "Hello from {name}"\n'
+        )
+
+        return load_skill(skill_dir)
+
     def uninstall(self, name: str) -> bool:
         """Uninstall a skill."""
         skill_dir = self.local_dir / name

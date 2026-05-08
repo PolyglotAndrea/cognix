@@ -19,6 +19,13 @@ class InstallSkillRequest(BaseModel):
     name: str | None = None
 
 
+class CreateSkillRequest(BaseModel):
+    name: str
+    description: str = ""
+    author: str = "you"
+    overwrite: bool = False
+
+
 def _manager() -> SkillsManager:
     return SkillsManager(local_dir=get_settings().skills.local_dir)
 
@@ -26,6 +33,47 @@ def _manager() -> SkillsManager:
 @router.get("")
 async def list_skills(user: CurrentUser = Depends(require_skills_read)) -> list[dict]:
     return _manager().list_installed()
+
+
+@router.get("/search")
+async def search_skills(
+    q: str,
+    user: CurrentUser = Depends(require_skills_read),
+) -> list[dict]:
+    query = q.lower().strip()
+    return [
+        skill
+        for skill in _manager().list_installed()
+        if query in skill["name"].lower()
+        or query in skill["description"].lower()
+        or query in str(skill.get("tags", "")).lower()
+    ]
+
+
+@router.post("", status_code=201)
+async def create_skill(
+    body: CreateSkillRequest,
+    user: CurrentUser = Depends(require_skills_write),
+) -> dict:
+    try:
+        skill = _manager().create_scaffold(
+            body.name,
+            description=body.description,
+            author=body.author,
+            overwrite=body.overwrite,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except FileExistsError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+    return {
+        "name": skill.name,
+        "version": skill.version,
+        "description": skill.description,
+        "path": str(skill.path),
+        "tools": [tool.name for tool in skill.tools],
+    }
 
 
 @router.get("/{name}")
