@@ -12,6 +12,7 @@ from cognix.api.routes.agents import agent_chat_ws
 from cognix.api.routes.agents import router as agents_router
 from cognix.api.routes.auth import router as auth_router
 from cognix.api.routes.billing import router as billing_router
+from cognix.api.routes.bots import router as bots_router
 from cognix.api.routes.rpc import router as rpc_router
 from cognix.api.routes.skills import router as skills_router
 from cognix.api.routes.tasks import router as tasks_router
@@ -50,6 +51,7 @@ app = FastAPI(
 
 app.include_router(auth_router)
 app.include_router(billing_router)
+app.include_router(bots_router)
 app.include_router(agents_router)
 app.include_router(tasks_router)
 app.include_router(skills_router)
