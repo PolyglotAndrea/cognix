@@ -61,7 +61,19 @@ class WorkspaceManager:
             updated_at=now,
         )
         self._write_json(path / "workspace.json", asdict(info))
-        self._write_json(path / "settings.json", {"default_model": None, "enabled_skills": []})
+        self._write_json(
+            path / "settings.json",
+            {
+                "default_model": None,
+                "enabled_skills": [],
+                "context": {
+                    "max_history_messages": 20,
+                    "include_hot_memory": True,
+                    "include_cold_memory": True,
+                    "include_skills": True,
+                },
+            },
+        )
         self._write_default(path / "MEMORY.md", f"# {name} Memory\n\n")
         (path / "events.jsonl").touch(exist_ok=True)
         return info

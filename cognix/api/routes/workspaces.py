@@ -11,12 +11,18 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from starlette.responses import StreamingResponse
 
-from cognix.auth.dependencies import CurrentUser, get_current_user
+from cognix.auth.dependencies import (
+    CurrentUser,
+    get_current_user,
+    require_skills_read,
+    require_skills_write,
+)
 from cognix.core.agent import Agent
 from cognix.core.context import Context
 from cognix.local.attachments import AttachmentStore, ParsedAttachment
 from cognix.local.chat import AttachmentRef, ChatMessage, ChatStore
 from cognix.local.workspace import WorkspaceManager
+from cognix.local.workspace_config import WorkspaceConfigStore
 
 router = APIRouter(prefix="/api/v1/workspaces", tags=["workspaces"])
 
@@ -38,6 +44,26 @@ class UpdateChatRequest(BaseModel):
     system_prompt: str | None = None
     model_profiles: list[str] | None = None
     metadata: dict | None = None
+
+
+class UpdateWorkspaceSettingsRequest(BaseModel):
+    default_model: str | None = None
+    enabled_skills: list[str] | None = None
+    context: dict | None = None
+
+
+class SetWorkspaceSkillRequest(BaseModel):
+    enabled: bool = True
+
+
+class UpsertMCPServerRequest(BaseModel):
+    id: str | None = None
+    name: str
+    command: str
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
+    enabled: bool = True
+    metadata: dict = Field(default_factory=dict)
 
 
 class AttachmentRequest(BaseModel):
@@ -80,6 +106,92 @@ async def get_workspace(
     if not workspace:
         raise HTTPException(404, "Workspace not found")
     return workspace.__dict__
+
+
+@router.get("/{workspace_id}/settings")
+async def get_workspace_settings(
+    workspace_id: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    return _workspace_config(workspace_id).get_settings()
+
+
+@router.patch("/{workspace_id}/settings")
+async def update_workspace_settings(
+    workspace_id: str,
+    body: UpdateWorkspaceSettingsRequest,
+    user: CurrentUser = Depends(require_skills_write),
+) -> dict:
+    updates = body.model_dump(exclude_unset=True)
+    return _workspace_config(workspace_id).update_settings(updates)
+
+
+@router.get("/{workspace_id}/skills")
+async def list_workspace_skills(
+    workspace_id: str,
+    user: CurrentUser = Depends(require_skills_read),
+) -> list[dict]:
+    from cognix.config import get_settings
+    from cognix.skills.manager import SkillsManager
+
+    settings = _workspace_config(workspace_id).get_settings()
+    enabled = set(settings.get("enabled_skills", []))
+    manager = SkillsManager(local_dir=get_settings().skills.local_dir)
+    return [{**skill, "enabled": skill["name"] in enabled} for skill in manager.list_installed()]
+
+
+@router.put("/{workspace_id}/skills/{skill_name}")
+async def set_workspace_skill(
+    workspace_id: str,
+    skill_name: str,
+    body: SetWorkspaceSkillRequest,
+    user: CurrentUser = Depends(require_skills_write),
+) -> dict:
+    from cognix.config import get_settings
+    from cognix.skills.manager import SkillsManager
+
+    manager = SkillsManager(local_dir=get_settings().skills.local_dir)
+    if not manager.load(skill_name):
+        raise HTTPException(404, "Skill not found")
+    settings = _workspace_config(workspace_id).set_skill_enabled(skill_name, body.enabled)
+    return {"workspace_id": workspace_id, "skill": skill_name, "enabled": body.enabled, **settings}
+
+
+@router.get("/{workspace_id}/mcp/servers")
+async def list_workspace_mcp_servers(
+    workspace_id: str,
+    user: CurrentUser = Depends(require_skills_read),
+) -> list[dict]:
+    return [server.__dict__ for server in _workspace_config(workspace_id).list_mcp_servers()]
+
+
+@router.post("/{workspace_id}/mcp/servers", status_code=201)
+async def upsert_workspace_mcp_server(
+    workspace_id: str,
+    body: UpsertMCPServerRequest,
+    user: CurrentUser = Depends(require_skills_write),
+) -> dict:
+    server = _workspace_config(workspace_id).upsert_mcp_server(
+        server_id=body.id,
+        name=body.name,
+        command=body.command,
+        args=body.args,
+        env=body.env,
+        enabled=body.enabled,
+        metadata=body.metadata,
+    )
+    return server.__dict__
+
+
+@router.delete("/{workspace_id}/mcp/servers/{server_id}")
+async def delete_workspace_mcp_server(
+    workspace_id: str,
+    server_id: str,
+    user: CurrentUser = Depends(require_skills_write),
+) -> dict:
+    if not _workspace_config(workspace_id).delete_mcp_server(server_id):
+        raise HTTPException(404, "MCP server not found")
+    return {"deleted": server_id}
 
 
 @router.get("/{workspace_id}/chats")
@@ -225,11 +337,11 @@ async def stream_chat_message(
     )
 
     async def event_generator():
-        agent = Agent(
+        agent = _chat_agent(
+            workspace_id=workspace_id,
             name=f"chat-{model}",
             model=model,
             system_prompt=chat.system_prompt or "You are a helpful assistant.",
-            workspace_id=workspace_id,
         )
         assistant_content = ""
         async for event in agent.stream_events(
@@ -266,6 +378,44 @@ def _chat_store(workspace_id: str) -> ChatStore:
         raise HTTPException(404, "Workspace not found") from None
 
 
+def _workspace_config(workspace_id: str) -> WorkspaceConfigStore:
+    try:
+        return WorkspaceConfigStore(workspace_id)
+    except FileNotFoundError:
+        raise HTTPException(404, "Workspace not found") from None
+
+
+def _chat_agent(*, workspace_id: str, name: str, model: str, system_prompt: str) -> Agent:
+    agent = Agent(
+        name=name,
+        model=model,
+        system_prompt=system_prompt,
+        workspace_id=workspace_id,
+    )
+    _attach_workspace_skills(agent, workspace_id)
+    return agent
+
+
+def _attach_workspace_skills(agent: Agent, workspace_id: str) -> None:
+    from cognix.config import get_settings
+    from cognix.skills.adapter import skill_to_core_tools
+    from cognix.skills.manager import SkillsManager
+
+    enabled_skills = _workspace_config(workspace_id).get_settings().get("enabled_skills", [])
+    if not enabled_skills:
+        return
+
+    manager = SkillsManager(local_dir=get_settings().skills.local_dir)
+    for skill_name in enabled_skills:
+        skill = manager.load(skill_name)
+        if not skill:
+            continue
+        for tool in skill_to_core_tools(skill):
+            if tool.name in [existing.name for existing in agent.tools]:
+                agent.remove_tool(tool.name)
+            agent.add_tool(tool)
+
+
 async def _run_model_response(
     *,
     workspace_id: str,
@@ -279,11 +429,11 @@ async def _run_model_response(
     attachments: list[AttachmentRef],
 ) -> dict:
     store = ChatStore(workspace_id)
-    agent = Agent(
+    agent = _chat_agent(
+        workspace_id=workspace_id,
         name=f"chat-{model}",
         model=model,
         system_prompt=system_prompt or "You are a helpful assistant.",
-        workspace_id=workspace_id,
     )
     context = _history_context(history, attachment_context=attachment_context)
     _set_multimodal_user_content(context, user_content, attachments)
