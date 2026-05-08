@@ -79,13 +79,15 @@ class TaskExecutor:
 
     async def _execute_agent_call(self, payload: dict[str, Any]) -> str:
         """Execute an agent call task."""
+        from cognix.api.state import get_agent_runtime
+
         agent_id = payload.get("agent_id")
         message = payload.get("message", "")
 
         if not agent_id:
             raise ValueError("agent_id required for agent_call task")
 
-        agent = self.agent_registry.get(agent_id)
+        agent = self.agent_registry.get(agent_id) or await get_agent_runtime(agent_id)
         if not agent:
             raise ValueError(f"Agent '{agent_id}' not found")
 
