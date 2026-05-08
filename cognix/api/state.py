@@ -151,6 +151,9 @@ async def start_runtime_node() -> str:
         capabilities=["rest", "rpc", "websocket", "scheduler", "agent-runtime"],
     )
     runtime_node_id = node.id
+    import os
+
+    os.environ["COGNIX_RUNTIME_NODE_ID"] = node.id
     runtime_heartbeat_task = asyncio.create_task(_heartbeat_runtime_node(node.id))
     return node.id
 

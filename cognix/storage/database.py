@@ -62,6 +62,7 @@ async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await _ensure_agent_runtime_columns(conn)
+        await _ensure_task_lease_columns(conn)
     logger.info("Database initialized")
 
 
@@ -89,3 +90,20 @@ async def _ensure_agent_runtime_columns(conn) -> None:
     for column, ddl_type in additions.items():
         if column not in columns:
             await conn.execute(text(f"ALTER TABLE agents ADD COLUMN {column} {ddl_type}"))
+
+
+async def _ensure_task_lease_columns(conn) -> None:
+    """Add lightweight distributed scheduling lease columns for existing DBs."""
+
+    def _columns(sync_conn) -> set[str]:
+        inspector = inspect(sync_conn)
+        return {column["name"] for column in inspector.get_columns("scheduled_tasks")}
+
+    columns = await conn.run_sync(_columns)
+    additions = {
+        "lease_owner": "VARCHAR(128)",
+        "lease_expires_at": "DATETIME",
+    }
+    for column, ddl_type in additions.items():
+        if column not in columns:
+            await conn.execute(text(f"ALTER TABLE scheduled_tasks ADD COLUMN {column} {ddl_type}"))

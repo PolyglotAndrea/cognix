@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import and_, or_, select, update
 
 from cognix.storage.database import get_session
 from cognix.storage.models import ScheduledTaskModel, TaskRunModel, TaskState, TaskType
@@ -66,6 +66,50 @@ class TaskStore:
                 update(ScheduledTaskModel)
                 .where(ScheduledTaskModel.id == task_id)
                 .values(state=state)
+            )
+            return result.rowcount > 0
+
+    async def acquire_lease(
+        self,
+        task_id: str,
+        *,
+        owner: str,
+        ttl_seconds: int = 120,
+    ) -> bool:
+        """Acquire a task execution lease if it is free or expired."""
+        now = datetime.now(UTC)
+        expires_at = now + timedelta(seconds=ttl_seconds)
+        async with get_session() as session:
+            result = await session.execute(
+                update(ScheduledTaskModel)
+                .where(
+                    and_(
+                        ScheduledTaskModel.id == task_id,
+                        ScheduledTaskModel.state == TaskState.ACTIVE,
+                        or_(
+                            ScheduledTaskModel.lease_owner.is_(None),
+                            ScheduledTaskModel.lease_owner == owner,
+                            ScheduledTaskModel.lease_expires_at.is_(None),
+                            ScheduledTaskModel.lease_expires_at < now,
+                        ),
+                    )
+                )
+                .values(lease_owner=owner, lease_expires_at=expires_at)
+            )
+            return result.rowcount > 0
+
+    async def release_lease(self, task_id: str, *, owner: str) -> bool:
+        """Release a task execution lease owned by this runtime node."""
+        async with get_session() as session:
+            result = await session.execute(
+                update(ScheduledTaskModel)
+                .where(
+                    and_(
+                        ScheduledTaskModel.id == task_id,
+                        ScheduledTaskModel.lease_owner == owner,
+                    )
+                )
+                .values(lease_owner=None, lease_expires_at=None)
             )
             return result.rowcount > 0
 

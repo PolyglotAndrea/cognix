@@ -85,6 +85,8 @@ async def list_tasks(
             "run_count": t.run_count,
             "workspace_id": _payload_dict(t.payload).get("workspace_id"),
             "last_run": t.last_run.isoformat() if t.last_run else None,
+            "lease_owner": t.lease_owner,
+            "lease_expires_at": t.lease_expires_at.isoformat() if t.lease_expires_at else None,
             "created_at": t.created_at.isoformat() if t.created_at else None,
         }
         for t in tasks
@@ -112,6 +114,8 @@ async def get_task(
         "run_count": task.run_count,
         "max_retries": task.max_retries,
         "last_run": task.last_run.isoformat() if task.last_run else None,
+        "lease_owner": task.lease_owner,
+        "lease_expires_at": task.lease_expires_at.isoformat() if task.lease_expires_at else None,
         "created_at": task.created_at.isoformat() if task.created_at else None,
     }
 

@@ -103,6 +103,8 @@ class ScheduledTaskModel(Base):
     run_count: Mapped[int] = mapped_column(Integer, default=0)
     last_run: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     next_run: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    lease_owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
 

@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -22,6 +23,9 @@ class SchedulerEngine:
         self._scheduler = AsyncIOScheduler()
         self._jobs: dict[str, dict[str, Any]] = {}  # task_id -> job metadata
         self._executor: Any = None  # Set by set_executor
+        self.node_id = (
+            os.environ.get("COGNIX_RUNTIME_NODE_ID") or f"scheduler-{uuid.uuid4().hex[:8]}"
+        )
 
     def set_executor(self, executor: Any) -> None:
         """Set the task executor."""
@@ -181,7 +185,16 @@ class SchedulerEngine:
             logger.error("No executor set for task %s", task_id)
             return
 
+        from cognix.scheduler.store import TaskStore
+
+        store = TaskStore()
+        if not await store.acquire_lease(task_id, owner=self.node_id):
+            logger.info("Task %s is leased by another runtime node", task_id)
+            return
+
         try:
             await self._executor.execute(task_id, payload)
         except Exception as e:
             logger.exception("Task %s failed: %s", task_id, e)
+        finally:
+            await store.release_lease(task_id, owner=self.node_id)
