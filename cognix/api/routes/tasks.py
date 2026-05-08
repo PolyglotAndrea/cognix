@@ -7,7 +7,7 @@ import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from cognix.api.state import agent_registry, get_scheduler_engine, schedule_task_in_engine
 from cognix.auth.dependencies import (
@@ -26,7 +26,7 @@ class CreateTaskRequest(BaseModel):
     name: str
     task_type: str = "agent_call"
     schedule: str
-    payload: dict = {}
+    payload: dict = Field(default_factory=dict)
     max_retries: int = 3
 
 
@@ -83,6 +83,7 @@ async def list_tasks(
             "schedule": t.schedule,
             "state": t.state.value,
             "run_count": t.run_count,
+            "workspace_id": _payload_dict(t.payload).get("workspace_id"),
             "last_run": t.last_run.isoformat() if t.last_run else None,
             "created_at": t.created_at.isoformat() if t.created_at else None,
         }
@@ -106,6 +107,7 @@ async def get_task(
         "task_type": task.task_type.value,
         "schedule": task.schedule,
         "payload": task.payload,
+        "payload_json": _payload_dict(task.payload),
         "state": task.state.value,
         "run_count": task.run_count,
         "max_retries": task.max_retries,
@@ -195,10 +197,19 @@ async def get_task_runs(
         {
             "id": r.id,
             "status": r.status,
-            "result": r.result[:200] if r.result else "",
+            "result": r.result[:2000] if r.result else "",
             "error": r.error,
             "duration_ms": r.duration_ms,
             "started_at": r.started_at.isoformat() if r.started_at else None,
         }
         for r in runs
     ]
+
+
+def _payload_dict(payload) -> dict:
+    if isinstance(payload, str):
+        try:
+            return json.loads(payload)
+        except json.JSONDecodeError:
+            return {}
+    return payload or {}

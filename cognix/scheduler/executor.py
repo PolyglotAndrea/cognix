@@ -31,7 +31,17 @@ class TaskExecutor:
     async def execute(self, task_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         """Execute a task based on its type."""
         task_type = payload.get("task_type", "agent_call")
+        workspace_id = payload.get("workspace_id")
         start_time = time.monotonic()
+        self._append_workspace_event(
+            workspace_id,
+            {
+                "type": "task.started",
+                "task_id": task_id,
+                "task_type": task_type,
+                "payload": self._safe_payload(payload),
+            },
+        )
 
         try:
             if task_type == "agent_call":
@@ -55,6 +65,7 @@ class TaskExecutor:
                 "duration_ms": duration_ms,
                 "started_at": datetime.now(UTC).isoformat(),
                 "finished_at": datetime.now(UTC).isoformat(),
+                "workspace_id": workspace_id,
             }
 
         except Exception as e:
@@ -66,6 +77,7 @@ class TaskExecutor:
                 "duration_ms": duration_ms,
                 "started_at": datetime.now(UTC).isoformat(),
                 "finished_at": datetime.now(UTC).isoformat(),
+                "workspace_id": workspace_id,
             }
             logger.exception("Task %s failed", task_id)
 
@@ -74,6 +86,17 @@ class TaskExecutor:
 
         # Persist to DB
         await self._persist_run(run)
+        self._append_workspace_event(
+            workspace_id,
+            {
+                "type": f"task.{run['status']}",
+                "task_id": task_id,
+                "task_type": task_type,
+                "duration_ms": run["duration_ms"],
+                "result": run.get("result", "")[:1000],
+                "error": run.get("error", ""),
+            },
+        )
 
         return run
 
@@ -158,7 +181,7 @@ class TaskExecutor:
 
         return await tool.execute(**args)
 
-    async def _execute_workflow(self, payload: dict[str, Any]) -> str:
+    async def _execute_workflow(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Execute a workflow task."""
         from cognix.orchestrator.workflow import execute_workflow, parse_workflow
 
@@ -170,7 +193,11 @@ class TaskExecutor:
 
         workflow = parse_workflow(workflow_path)
         result = await execute_workflow(workflow, self.agent_registry, initial_input=initial_input)
-        return result.content
+        return {
+            "content": result.content,
+            "steps": result.steps,
+            "metadata": result.metadata,
+        }
 
     async def _persist_run(self, run: dict[str, Any]) -> None:
         """Persist a task run to the database."""
@@ -209,3 +236,24 @@ class TaskExecutor:
     def get_history(self, task_id: str) -> list[dict[str, Any]]:
         """Get execution history for a task."""
         return self._history.get(task_id, [])
+
+    @staticmethod
+    def _safe_payload(payload: dict[str, Any]) -> dict[str, Any]:
+        redacted = {}
+        for key, value in payload.items():
+            if "secret" in key.lower() or "token" in key.lower() or "key" in key.lower():
+                redacted[key] = "***"
+            else:
+                redacted[key] = value
+        return redacted
+
+    @staticmethod
+    def _append_workspace_event(workspace_id: str | None, event: dict[str, Any]) -> None:
+        if not workspace_id:
+            return
+        try:
+            from cognix.local.workspace import WorkspaceManager
+
+            WorkspaceManager().append_event(workspace_id, event)
+        except Exception:
+            logger.exception("Failed to append workspace task event")
