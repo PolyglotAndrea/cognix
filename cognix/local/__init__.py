@@ -3,6 +3,7 @@
 from cognix.local.attachments import AttachmentStore, ParsedAttachment
 from cognix.local.chat import AttachmentRef, ChatMessage, ChatSession, ChatStore
 from cognix.local.home import CognixHome
+from cognix.local.workflows import WorkspaceWorkflow, WorkspaceWorkflowStore
 from cognix.local.workspace import WorkspaceInfo, WorkspaceManager
 from cognix.local.workspace_config import MCPServerConfig, WorkspaceConfigStore
 
@@ -18,4 +19,6 @@ __all__ = [
     "WorkspaceConfigStore",
     "WorkspaceInfo",
     "WorkspaceManager",
+    "WorkspaceWorkflow",
+    "WorkspaceWorkflowStore",
 ]

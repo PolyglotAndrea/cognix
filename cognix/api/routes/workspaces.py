@@ -21,6 +21,7 @@ from cognix.core.agent import Agent
 from cognix.core.context import Context
 from cognix.local.attachments import AttachmentStore, ParsedAttachment
 from cognix.local.chat import AttachmentRef, ChatMessage, ChatStore
+from cognix.local.workflows import WorkspaceWorkflowStore
 from cognix.local.workspace import WorkspaceManager
 from cognix.local.workspace_config import WorkspaceConfigStore
 
@@ -64,6 +65,16 @@ class UpsertMCPServerRequest(BaseModel):
     env: dict[str, str] = Field(default_factory=dict)
     enabled: bool = True
     metadata: dict = Field(default_factory=dict)
+
+
+class SaveWorkflowRequest(BaseModel):
+    name: str
+    definition: str
+    id: str | None = None
+
+
+class RunWorkflowRequest(BaseModel):
+    input: str = ""
 
 
 class AttachmentRequest(BaseModel):
@@ -192,6 +203,78 @@ async def delete_workspace_mcp_server(
     if not _workspace_config(workspace_id).delete_mcp_server(server_id):
         raise HTTPException(404, "MCP server not found")
     return {"deleted": server_id}
+
+
+@router.get("/{workspace_id}/workflows")
+async def list_workspace_workflows(
+    workspace_id: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    store = _workflow_store(workspace_id)
+    return [store.to_dict(workflow) for workflow in store.list_all()]
+
+
+@router.post("/{workspace_id}/workflows", status_code=201)
+async def save_workspace_workflow(
+    workspace_id: str,
+    body: SaveWorkflowRequest,
+    user: CurrentUser = Depends(require_skills_write),
+) -> dict:
+    store = _workflow_store(workspace_id)
+    workflow = store.save(name=body.name, definition=body.definition, workflow_id=body.id)
+    return store.to_dict(workflow)
+
+
+@router.get("/{workspace_id}/workflows/{workflow_id}")
+async def get_workspace_workflow(
+    workspace_id: str,
+    workflow_id: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    store = _workflow_store(workspace_id)
+    try:
+        workflow = store.describe(workflow_id)
+        return {**store.to_dict(workflow), "definition": store.get_definition(workflow_id)}
+    except FileNotFoundError:
+        raise HTTPException(404, "Workflow not found") from None
+
+
+@router.delete("/{workspace_id}/workflows/{workflow_id}")
+async def delete_workspace_workflow(
+    workspace_id: str,
+    workflow_id: str,
+    user: CurrentUser = Depends(require_skills_write),
+) -> dict:
+    if not _workflow_store(workspace_id).delete(workflow_id):
+        raise HTTPException(404, "Workflow not found")
+    return {"deleted": workflow_id}
+
+
+@router.post("/{workspace_id}/workflows/{workflow_id}/run")
+async def run_workspace_workflow(
+    workspace_id: str,
+    workflow_id: str,
+    body: RunWorkflowRequest,
+    user: CurrentUser = Depends(require_skills_write),
+) -> dict:
+    from cognix.api.state import agent_registry
+    from cognix.orchestrator.workflow import execute_workflow, parse_workflow
+
+    store = _workflow_store(workspace_id)
+    try:
+        workflow_info = store.describe(workflow_id)
+    except FileNotFoundError:
+        raise HTTPException(404, "Workflow not found") from None
+    if workflow_info.errors:
+        raise HTTPException(400, {"errors": workflow_info.errors})
+
+    workflow = parse_workflow(workflow_info.path)
+    result = await execute_workflow(workflow, agent_registry, initial_input=body.input)
+    return {
+        "content": result.content,
+        "steps": result.steps,
+        "metadata": result.metadata,
+    }
 
 
 @router.get("/{workspace_id}/chats")
@@ -381,6 +464,13 @@ def _chat_store(workspace_id: str) -> ChatStore:
 def _workspace_config(workspace_id: str) -> WorkspaceConfigStore:
     try:
         return WorkspaceConfigStore(workspace_id)
+    except FileNotFoundError:
+        raise HTTPException(404, "Workspace not found") from None
+
+
+def _workflow_store(workspace_id: str) -> WorkspaceWorkflowStore:
+    try:
+        return WorkspaceWorkflowStore(workspace_id)
     except FileNotFoundError:
         raise HTTPException(404, "Workspace not found") from None
 
