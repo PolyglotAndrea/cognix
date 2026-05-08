@@ -18,4 +18,4 @@ async def rpc_endpoint(
     body: Annotated[dict | list, Body()],
     user: CurrentUser = Depends(get_current_user),
 ) -> dict | list:
-    return await handle_rpc(body, agent_registry)
+    return await handle_rpc(body, agent_registry, user=user)

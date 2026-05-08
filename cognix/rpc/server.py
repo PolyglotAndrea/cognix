@@ -27,10 +27,22 @@ INVALID_REQUEST = -32600
 METHOD_NOT_FOUND = -32601
 INVALID_PARAMS = -32602
 INTERNAL_ERROR = -32603
+FORBIDDEN = -32003
 
 
 # Method registry
 _handlers: dict[str, Any] = {}
+_method_permissions: dict[str, str] = {
+    "agent.chat": "agents:read",
+    "agent.create": "agents:write",
+    "agent.delete": "agents:write",
+    "agent.list": "agents:read",
+    "task.create": "tasks:write",
+    "task.list": "tasks:read",
+    "task.trigger": "tasks:write",
+    "workflow.list": "agents:read",
+    "workflow.run": "agents:write",
+}
 
 
 def rpc_method(name: str):
@@ -233,22 +245,22 @@ async def _workflow_run(params: dict, registry: AgentRegistry) -> dict:
     return {"content": result.content, "steps": result.steps}
 
 
-async def handle_rpc(body: Any, registry: AgentRegistry) -> Any:
+async def handle_rpc(body: Any, registry: AgentRegistry, user: Any = None) -> Any:
     """Handle a JSON-RPC 2.0 request or batch of requests."""
     # Batch request
     if isinstance(body, list):
         results = []
         for item in body:
-            result = await _handle_single(item, registry)
+            result = await _handle_single(item, registry, user=user)
             if result:  # Skip empty responses (notifications)
                 results.append(result)
         return results
 
     # Single request
-    return await _handle_single(body, registry)
+    return await _handle_single(body, registry, user=user)
 
 
-async def _handle_single(body: dict, registry: AgentRegistry) -> dict:
+async def _handle_single(body: dict, registry: AgentRegistry, user: Any = None) -> dict:
     """Handle a single JSON-RPC 2.0 request."""
     # Validate basic structure
     jsonrpc = body.get("jsonrpc")
@@ -272,6 +284,7 @@ async def _handle_single(body: dict, registry: AgentRegistry) -> dict:
         return _error_response(req_id, METHOD_NOT_FOUND, f"Method '{method}' not found")
 
     try:
+        _ensure_rpc_permission(method, user)
         result = await handler(params, registry)
     except RPCError as e:
         if is_notification:
@@ -291,6 +304,26 @@ async def _handle_single(body: dict, registry: AgentRegistry) -> dict:
         "result": result,
         "id": req_id,
     }
+
+
+def rpc_permission(method: str) -> str | None:
+    """Return the RBAC permission required by a JSON-RPC method."""
+    return _method_permissions.get(method)
+
+
+def _ensure_rpc_permission(method: str, user: Any = None) -> None:
+    if user is None:
+        return
+
+    permission = rpc_permission(method)
+    if not permission:
+        return
+
+    from cognix.auth.dependencies import has_permission
+
+    role = getattr(getattr(user, "role", ""), "value", getattr(user, "role", ""))
+    if not has_permission(str(role), permission):
+        raise RPCError(FORBIDDEN, f"Permission required: {permission}")
 
 
 def _error_response(
