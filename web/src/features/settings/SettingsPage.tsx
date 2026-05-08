@@ -1,6 +1,17 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Bot, Check, Copy, Key, Plus, RadioTower, Trash2, type LucideIcon } from 'lucide-react'
+import {
+  Bot,
+  Brain,
+  Check,
+  Copy,
+  Key,
+  Plus,
+  RadioTower,
+  Search,
+  Trash2,
+  type LucideIcon,
+} from 'lucide-react'
 import { api, authApi } from '@/shared/api/client'
 import { Badge, Button, Input, Spinner } from '@/shared/ui'
 
@@ -25,6 +36,21 @@ interface RemoteBot {
   webhook_path: string
 }
 
+interface HotMemory {
+  user: string
+  global_memory: string
+  workspace_memory: string
+}
+
+interface ColdMemory {
+  id: string
+  content: string
+  summary: string
+  kind: string
+  scope: string
+  created_at: string
+}
+
 const PROVIDERS = ['lark', 'feishu', 'dingtalk', 'wechat']
 
 export default function SettingsPage() {
@@ -35,6 +61,12 @@ export default function SettingsPage() {
   const [botProvider, setBotProvider] = useState('lark')
   const [botSecret, setBotSecret] = useState('')
   const [selectedAgentId, setSelectedAgentId] = useState('')
+  const [hotDraft, setHotDraft] = useState<HotMemory | null>(null)
+  const [memoryContent, setMemoryContent] = useState('')
+  const [memorySummary, setMemorySummary] = useState('')
+  const [memorySearch, setMemorySearch] = useState('')
+  const [contextMessage, setContextMessage] = useState('')
+  const [contextPreview, setContextPreview] = useState('')
 
   const { data: apiKeys = [], isLoading: keysLoading } = useQuery({
     queryKey: ['api-keys'],
@@ -55,6 +87,26 @@ export default function SettingsPage() {
   const { data: bots = [], isLoading: botsLoading } = useQuery<RemoteBot[]>({
     queryKey: ['remote-bots'],
     queryFn: () => api.get('/bots').then((r) => r.data),
+  })
+
+  const { data: hotMemory } = useQuery<HotMemory>({
+    queryKey: ['hot-memory', workspace?.id],
+    queryFn: () =>
+      api.get('/memory/hot', { params: { workspace_id: workspace?.id } }).then((r) => r.data),
+    enabled: !!workspace,
+  })
+
+  const { data: memoryResults = [], refetch: refetchMemory } = useQuery<ColdMemory[]>({
+    queryKey: ['memory-search', workspace?.id, memorySearch],
+    queryFn: () =>
+      api
+        .post('/memory/search', {
+          query: memorySearch || 'conversation',
+          workspace_id: workspace?.id,
+          limit: 8,
+        })
+        .then((r) => r.data),
+    enabled: !!workspace,
   })
 
   const createKeyMutation = useMutation({
@@ -97,10 +149,51 @@ export default function SettingsPage() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['remote-bots'] }),
   })
 
+  const saveHotMemoryMutation = useMutation({
+    mutationFn: () =>
+      api.patch('/memory/hot', hotDraft || hotMemory, { params: { workspace_id: workspace?.id } }),
+    onSuccess: (response) => {
+      setHotDraft(response.data)
+      queryClient.invalidateQueries({ queryKey: ['hot-memory', workspace?.id] })
+    },
+  })
+
+  const rememberMutation = useMutation({
+    mutationFn: () =>
+      api.post('/memory/remember', {
+        content: memoryContent,
+        summary: memorySummary,
+        workspace_id: workspace?.id,
+        scope: workspace?.id ? 'workspace' : 'global',
+        kind: 'manual',
+      }),
+    onSuccess: () => {
+      setMemoryContent('')
+      setMemorySummary('')
+      refetchMemory()
+    },
+  })
+
+  const contextPreviewMutation = useMutation({
+    mutationFn: () =>
+      api.post('/memory/context-preview', {
+        message: contextMessage || memorySearch || 'current task',
+        workspace_id: workspace?.id,
+        include_skills: true,
+      }),
+    onSuccess: (response) => setContextPreview(response.data.rendered),
+  })
+
   const copyText = (id: string, value: string) => {
     navigator.clipboard.writeText(value)
     setCopiedKey(id)
     window.setTimeout(() => setCopiedKey(null), 2000)
+  }
+
+  const activeHot = hotDraft || hotMemory || {
+    user: '',
+    global_memory: '',
+    workspace_memory: '',
   }
 
   return (
@@ -115,6 +208,113 @@ export default function SettingsPage() {
           Manage programmatic access and remote robot bridges into local Agent workflows.
         </p>
       </div>
+
+      <section className="rounded-2xl border border-border bg-card">
+        <SectionHeader icon={Brain} title="Memory Studio" subtitle="Hot memory, cold recall and context preview" />
+        <div className="grid grid-cols-1 gap-5 border-b border-border p-5 xl:grid-cols-3">
+          <MemoryEditor
+            label="USER.md"
+            value={activeHot.user}
+            onChange={(value) => setHotDraft({ ...activeHot, user: value })}
+          />
+          <MemoryEditor
+            label="Global MEMORY.md"
+            value={activeHot.global_memory}
+            onChange={(value) => setHotDraft({ ...activeHot, global_memory: value })}
+          />
+          <MemoryEditor
+            label="Workspace MEMORY.md"
+            value={activeHot.workspace_memory}
+            onChange={(value) => setHotDraft({ ...activeHot, workspace_memory: value })}
+          />
+        </div>
+        <div className="flex flex-col gap-3 border-b border-border p-5 lg:flex-row">
+          <Button
+            disabled={!hotDraft || saveHotMemoryMutation.isPending}
+            onClick={() => saveHotMemoryMutation.mutate()}
+          >
+            Save Hot Memory
+          </Button>
+          <Input
+            placeholder="Search cold memory"
+            value={memorySearch}
+            onChange={(event) => setMemorySearch(event.target.value)}
+          />
+          <Button variant="secondary" onClick={() => refetchMemory()}>
+            <Search className="h-4 w-4" />
+            Search
+          </Button>
+        </div>
+        <div className="grid grid-cols-1 gap-5 border-b border-border p-5 lg:grid-cols-[1fr_280px]">
+          <textarea
+            value={memoryContent}
+            onChange={(event) => setMemoryContent(event.target.value)}
+            rows={4}
+            placeholder="Add a durable memory or decision..."
+            className="w-full resize-none rounded-xl border border-border bg-muted/50 px-4 py-3 text-sm leading-6 text-foreground outline-none transition-all focus:border-primary/40 focus:bg-background focus:ring-2 focus:ring-primary/20"
+          />
+          <div className="space-y-3">
+            <Input
+              placeholder="Optional summary"
+              value={memorySummary}
+              onChange={(event) => setMemorySummary(event.target.value)}
+            />
+            <Button
+              className="w-full"
+              disabled={!memoryContent.trim() || rememberMutation.isPending}
+              onClick={() => rememberMutation.mutate()}
+            >
+              Remember
+            </Button>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 gap-5 p-5 xl:grid-cols-[1fr_1fr]">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <h4 className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Cold Recall</h4>
+              <Badge>{memoryResults.length} results</Badge>
+            </div>
+            <div className="max-h-80 space-y-3 overflow-auto pr-1">
+              {memoryResults.length === 0 ? (
+                <EmptyRow icon={Brain} text="No recalled memories" />
+              ) : (
+                memoryResults.map((memory) => (
+                  <div key={memory.id} className="rounded-xl border border-border bg-muted/30 p-3">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <Badge variant="info">{memory.kind}</Badge>
+                      <span className="text-[10px] text-muted-foreground">
+                        {new Date(memory.created_at).toLocaleDateString()}
+                      </span>
+                    </div>
+                    <p className="text-xs leading-5 text-foreground/80">
+                      {memory.summary || memory.content.slice(0, 220)}
+                    </p>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+          <div className="space-y-3">
+            <div className="flex gap-2">
+              <Input
+                placeholder="Message for context preview"
+                value={contextMessage}
+                onChange={(event) => setContextMessage(event.target.value)}
+              />
+              <Button
+                variant="secondary"
+                disabled={contextPreviewMutation.isPending}
+                onClick={() => contextPreviewMutation.mutate()}
+              >
+                Preview
+              </Button>
+            </div>
+            <pre className="max-h-80 overflow-auto rounded-xl border border-border bg-muted/40 p-4 text-xs leading-5 text-muted-foreground">
+              {contextPreview || 'Context preview will appear here.'}
+            </pre>
+          </div>
+        </div>
+      </section>
 
       <section className="rounded-2xl border border-border bg-card">
         <SectionHeader icon={Key} title="API Keys" subtitle="JWT-backed programmatic access" />
@@ -292,6 +492,30 @@ function IconCopyButton({ active, onClick }: { active: boolean; onClick: () => v
     >
       {active ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
     </button>
+  )
+}
+
+function MemoryEditor({
+  label,
+  value,
+  onChange,
+}: {
+  label: string
+  value: string
+  onChange: (value: string) => void
+}) {
+  return (
+    <label className="block min-w-0">
+      <span className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+        {label}
+      </span>
+      <textarea
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        rows={8}
+        className="w-full resize-none rounded-xl border border-border bg-muted/50 px-4 py-3 font-mono text-xs leading-6 text-foreground outline-none transition-all focus:border-primary/40 focus:bg-background focus:ring-2 focus:ring-primary/20"
+      />
+    </label>
   )
 }
 
