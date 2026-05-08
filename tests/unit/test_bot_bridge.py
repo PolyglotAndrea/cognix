@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+from datetime import UTC, datetime
 
 from cognix.bots.bridge import BotBridgeService
 from cognix.local.bots import BotConfigStore
@@ -26,11 +27,30 @@ def test_bot_config_store_hides_and_verifies_secret(tmp_path):
     public = bot.public_dict()
     assert public["webhook_path"] == f"/api/v1/bots/lark/{bot.id}/webhook"
     assert "secret_hash" not in public
+    assert "signing_secret" not in public
     assert store.verify_secret(bot, "secret-token") is True
     assert store.verify_secret(bot, "wrong") is False
     body = json.dumps({"text": "hello"}).encode("utf-8")
     signature = hmac.new(bot.secret_hash.encode("utf-8"), b"1." + body, hashlib.sha256).hexdigest()
     assert store.verify_signature(bot, body=body, timestamp="1", signature=signature) is True
+    raw_signature = hmac.new(
+        b"secret-token",
+        b"1." + body,
+        hashlib.sha256,
+    ).hexdigest()
+    assert store.verify_signature(bot, body=body, timestamp="1", signature=raw_signature) is True
+    now = datetime.now(UTC)
+    assert (
+        store.verify_signature(
+            bot,
+            body=body,
+            timestamp="1",
+            signature=raw_signature,
+            tolerance_seconds=300,
+            now=now,
+        )
+        is False
+    )
     assert store.verify_signature(bot, body=body, timestamp="2", signature=signature) is False
     assert store.list_all() == [bot]
 
@@ -78,6 +98,10 @@ def test_bot_bridge_session_key_uses_chat_or_sender(tmp_path):
     )
 
     assert BotBridgeService.session_key(bot, message) == f"dingtalk:{bot.id}:cid"
+    remote_content = BotBridgeService.remote_user_content(bot, message)
+    assert "session_key=dingtalk:" in remote_content
+    assert "sender=Ada chat_id=cid" in remote_content
+    assert remote_content.endswith("hi")
 
 
 def test_bot_bridge_formats_provider_responses():

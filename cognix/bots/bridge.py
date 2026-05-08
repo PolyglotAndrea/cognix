@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from cognix.api.state import get_agent_runtime
+from cognix.core.context import Context
 from cognix.local.bots import BotConfig, BotConfigStore
 from cognix.local.workspace import WorkspaceManager
 
@@ -40,7 +41,7 @@ class BotBridgeService:
         if not self.store.verify_secret(bot, secret):
             raise PermissionError("Invalid bot bridge secret")
 
-        challenge = self._challenge_response(provider, payload)
+        challenge = self.challenge_response(provider, payload)
         if challenge:
             return challenge
 
@@ -56,7 +57,21 @@ class BotBridgeService:
         if not agent:
             raise ValueError(f"Agent '{bot.agent_id}' not found")
         agent.workspace_id = bot.workspace_id
-        response = await agent.run(message.text)
+        session_key = self.session_key(bot, message)
+        context = Context(
+            conversation_id=session_key,
+            metadata={
+                "remote_bot": {
+                    "provider": bot.provider,
+                    "bot_id": bot.id,
+                    "sender": message.sender,
+                    "chat_id": message.chat_id,
+                    "session_key": session_key,
+                },
+                "next_user_content": self.remote_user_content(bot, message),
+            },
+        )
+        response = await agent.run(message.text, context=context)
 
         try:
             WorkspaceManager().append_event(
@@ -68,7 +83,7 @@ class BotBridgeService:
                     "agent_id": bot.agent_id,
                     "sender": message.sender,
                     "chat_id": message.chat_id,
-                    "session_key": self.session_key(bot, message),
+                    "session_key": session_key,
                     "message": message.text,
                     "response": response.content,
                 },
@@ -132,7 +147,21 @@ class BotBridgeService:
         return {"text": text}
 
     @staticmethod
-    def _challenge_response(provider: str, payload: dict[str, Any]) -> dict[str, Any] | None:
+    def remote_user_content(bot: BotConfig, message: BotMessage) -> str:
+        """Build the user message seen by the Agent with remote chat context."""
+        return "\n".join(
+            [
+                f"[remote_bot provider={bot.provider} bot_id={bot.id}]",
+                f"[session_key={BotBridgeService.session_key(bot, message)}]",
+                f"[sender={message.sender or 'unknown'} chat_id={message.chat_id or 'direct'}]",
+                message.text,
+            ]
+        )
+
+    @staticmethod
+    def challenge_response(provider: str, payload: dict[str, Any]) -> dict[str, Any] | None:
         if provider in ("lark", "feishu") and "challenge" in payload:
             return {"challenge": payload["challenge"]}
         return None
+
+    _challenge_response = challenge_response

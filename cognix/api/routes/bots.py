@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from cognix.auth.dependencies import CurrentUser, get_current_user, require_agents_write
@@ -82,7 +82,13 @@ async def delete_bot(
 
 
 @router.post("/{provider}/{bot_id}/webhook")
-async def bot_webhook(provider: BotProvider, bot_id: str, request: Request) -> dict:
+async def bot_webhook(
+    provider: BotProvider,
+    bot_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    async_dispatch: bool = Query(False, alias="async"),
+) -> dict:
     store = BotConfigStore()
     bot = store.get(bot_id)
     if not bot or bot.provider != provider:
@@ -90,13 +96,16 @@ async def bot_webhook(provider: BotProvider, bot_id: str, request: Request) -> d
 
     body = await request.body()
     secret = request.query_params.get("secret") or request.headers.get("X-Cognix-Bot-Secret", "")
-    timestamp = request.headers.get("X-Cognix-Timestamp", "")
-    signature = request.headers.get("X-Cognix-Signature", "")
+    timestamp, signature = _signature_parts(provider, request)
+    require_signature = bool(bot.metadata.get("require_signature", False))
+    if require_signature and not signature:
+        raise HTTPException(401, "Missing bot bridge signature")
     if signature and not store.verify_signature(
         bot,
         body=body,
         timestamp=timestamp,
         signature=signature,
+        tolerance_seconds=300,
     ):
         raise HTTPException(401, "Invalid bot bridge signature")
 
@@ -105,8 +114,26 @@ async def bot_webhook(provider: BotProvider, bot_id: str, request: Request) -> d
     except json.JSONDecodeError as exc:
         raise HTTPException(400, "Invalid JSON payload") from exc
 
+    service = BotBridgeService(store=store)
+    challenge = service.challenge_response(provider, payload)
+    if challenge:
+        return challenge
+    if not bot.enabled:
+        return {"ok": False, "message": "Bot bridge disabled"}
+    if not store.verify_secret(bot, secret):
+        raise HTTPException(401, "Invalid bot bridge secret")
+    if async_dispatch:
+        background_tasks.add_task(
+            service.handle_webhook,
+            provider=provider,
+            bot_id=bot_id,
+            secret=secret,
+            payload=payload,
+        )
+        return {"ok": True, "queued": True}
+
     try:
-        return await BotBridgeService(store=store).handle_webhook(
+        return await service.handle_webhook(
             provider=provider,
             bot_id=bot_id,
             secret=secret,
@@ -118,3 +145,29 @@ async def bot_webhook(provider: BotProvider, bot_id: str, request: Request) -> d
         raise HTTPException(401, "Invalid bot bridge secret") from None
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from None
+
+
+def _signature_parts(provider: str, request: Request) -> tuple[str, str]:
+    headers = request.headers
+    query = request.query_params
+    timestamp = (
+        headers.get("X-Cognix-Timestamp")
+        or headers.get("X-Lark-Request-Timestamp")
+        or headers.get("X-Lark-Timestamp")
+        or headers.get("X-Dingtalk-Timestamp")
+        or headers.get("X-WeChat-Timestamp")
+        or query.get("timestamp")
+        or ""
+    )
+    signature = (
+        headers.get("X-Cognix-Signature")
+        or headers.get("X-Lark-Signature")
+        or headers.get("X-Dingtalk-Signature")
+        or headers.get("X-WeChat-Signature")
+        or query.get("sign")
+        or query.get("signature")
+        or ""
+    )
+    if provider in ("lark", "feishu"):
+        signature = signature or headers.get("X-Lark-Request-Signature", "")
+    return timestamp, signature

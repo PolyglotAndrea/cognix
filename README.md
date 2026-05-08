@@ -11,7 +11,7 @@ A Hermes Agent-based multi-agent collaboration platform built in Python. Cognix 
 - **JSON-RPC 2.0** — Inter-service communication over HTTP and WebSocket
 - **Skills + MCP Tools** — Local skills, workspace MCP server config, stdio MCP tool discovery, and Agent tool mounting
 - **Claude Agent SDK Bridge** — Workspace-scoped Claude Agent SDK execution with permission mode, MCP config mapping, and approval callbacks
-- **Remote Bot Bridge** — Lark/Feishu, DingTalk, and WeChat entry points with signature-aware webhook handling
+- **Remote Bot Bridge** — Lark/Feishu, DingTalk, and WeChat entry points with signature-aware webhook handling, async dispatch, and chat context binding
 - **CLI + API** — Typer CLI and FastAPI REST/WebSocket API
 - **OAuth2 Authentication** — Google and GitHub providers with JWT tokens and API keys
 - **RBAC Permissions** — Admin, user, and viewer roles

@@ -24,6 +24,7 @@ class BotConfig:
     workspace_id: str
     agent_id: str
     secret_hash: str
+    signing_secret: str = ""
     enabled: bool = True
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
@@ -32,6 +33,7 @@ class BotConfig:
     def public_dict(self) -> dict[str, Any]:
         data = asdict(self)
         data.pop("secret_hash", None)
+        data.pop("signing_secret", None)
         data["webhook_path"] = f"/api/v1/bots/{self.provider}/{self.id}/webhook"
         return data
 
@@ -66,6 +68,7 @@ class BotConfigStore:
             workspace_id=workspace_id,
             agent_id=agent_id,
             secret_hash=self.hash_secret(secret),
+            signing_secret=secret,
             enabled=enabled,
             created_at=now,
             updated_at=now,
@@ -94,7 +97,9 @@ class BotConfigStore:
             raise FileNotFoundError(f"Bot bridge not found: {bot_id}")
         data = asdict(bot)
         if "secret" in updates:
-            data["secret_hash"] = self.hash_secret(str(updates.pop("secret")))
+            secret = str(updates.pop("secret"))
+            data["secret_hash"] = self.hash_secret(secret)
+            data["signing_secret"] = secret
         data.update(updates)
         data["updated_at"] = datetime.now(UTC).isoformat()
         updated = BotConfig(**data)
@@ -122,15 +127,28 @@ class BotConfigStore:
         body: bytes,
         timestamp: str,
         signature: str,
+        tolerance_seconds: int | None = None,
+        now: datetime | None = None,
     ) -> bool:
         if not timestamp or not signature:
             return False
-        digest = hmac.new(
-            bot.secret_hash.encode("utf-8"),
-            timestamp.encode("utf-8") + b"." + body,
-            hashlib.sha256,
-        ).hexdigest()
-        return hmac.compare_digest(digest, signature.removeprefix("sha256="))
+        if tolerance_seconds is not None:
+            try:
+                current = int((now or datetime.now(UTC)).timestamp())
+                if abs(current - int(timestamp)) > tolerance_seconds:
+                    return False
+            except ValueError:
+                return False
+
+        signed_body = timestamp.encode("utf-8") + b"." + body
+        expected = signature.removeprefix("sha256=")
+        for secret in {bot.signing_secret, bot.secret_hash}:
+            if not secret:
+                continue
+            digest = hmac.new(secret.encode("utf-8"), signed_body, hashlib.sha256).hexdigest()
+            if hmac.compare_digest(digest, expected):
+                return True
+        return False
 
     def _path(self, bot_id: str) -> Path:
         return self.bots_dir / f"{bot_id}.json"
