@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import defaultdict
-from typing import Any, Callable, Coroutine
+from collections.abc import Callable, Coroutine
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,12 @@ class Events:
     AGENT_STARTED = "agent.started"
     AGENT_COMPLETED = "agent.completed"
     AGENT_ERROR = "agent.error"
+    AGENT_WAITING = "agent.waiting"
+
+    APPROVAL_REQUESTED = "approval.requested"
+    APPROVAL_APPROVED = "approval.approved"
+    APPROVAL_REJECTED = "approval.rejected"
+    APPROVAL_COMPLETED = "approval.completed"
 
     TOOL_CALLED = "tool.called"
     TOOL_RESULT = "tool.result"

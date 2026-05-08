@@ -368,10 +368,35 @@ class Agent:
 
         decision = decide_permission(self.permission_mode, tool.access_level, f"tool '{name}'")
         if not decision.allowed:
+            approval_id = ""
+            if decision.requires_approval:
+                approval_id = self._create_approval_request(
+                    tool_name=name,
+                    arguments=arguments,
+                    access_level=tool.access_level,
+                    reason=decision.reason,
+                )
+                self.state = AgentState.WAITING
+                await self._emit(
+                    Events.APPROVAL_REQUESTED,
+                    {
+                        "approval_id": approval_id,
+                        "agent_id": self.id,
+                        "workspace_id": self.workspace_id,
+                        "tool": name,
+                        "arguments": arguments,
+                        "access_level": tool.access_level,
+                        "reason": decision.reason,
+                    },
+                )
+                await self._emit(
+                    Events.AGENT_WAITING,
+                    {"agent_id": self.id, "approval_id": approval_id, "reason": decision.reason},
+                )
             error_msg = (
                 f"Permission denied: {decision.reason}"
                 if not decision.requires_approval
-                else f"Approval required: {decision.reason}"
+                else f"Approval required [{approval_id}]: {decision.reason}"
             )
             await self._emit(
                 Events.TOOL_ERROR,
@@ -385,6 +410,40 @@ class Agent:
             )
             return error_msg
 
+        return await self._execute_tool_unchecked(tool_call, tool)
+
+    async def resume_approval(self, approval_id: str) -> str:
+        """Execute a previously approved tool call."""
+        from cognix.local.approvals import ApprovalStore
+
+        store = ApprovalStore()
+        approval = store.get(approval_id)
+        if not approval:
+            raise ValueError(f"Approval '{approval_id}' not found")
+        if approval.agent_id != self.id:
+            raise ValueError(f"Approval '{approval_id}' does not belong to agent '{self.id}'")
+        if approval.status != "approved":
+            raise ValueError(f"Approval '{approval_id}' is not approved")
+
+        tool = self._tool_map.get(approval.tool_name)
+        if not tool:
+            raise ValueError(f"Tool '{approval.tool_name}' not found")
+
+        result = await self._execute_tool_unchecked(
+            {"name": approval.tool_name, "arguments": approval.arguments},
+            tool,
+        )
+        store.complete(approval_id, result)
+        await self._emit(
+            Events.APPROVAL_COMPLETED,
+            {"approval_id": approval_id, "agent_id": self.id, "result": result},
+        )
+        self.state = AgentState.IDLE
+        return result
+
+    async def _execute_tool_unchecked(self, tool_call: dict[str, Any], tool: Tool) -> str:
+        name = tool_call.get("name", "")
+        arguments = tool_call.get("arguments", {})
         await self._emit(Events.TOOL_CALLED, {"tool": name, "arguments": arguments})
         try:
             result = await tool.execute(**arguments)
@@ -395,6 +454,26 @@ class Agent:
             error_msg = f"Tool '{name}' error: {e}"
             await self._emit(Events.TOOL_ERROR, {"tool": name, "error": error_msg})
             return error_msg
+
+    def _create_approval_request(
+        self,
+        *,
+        tool_name: str,
+        arguments: dict[str, Any],
+        access_level: str,
+        reason: str,
+    ) -> str:
+        from cognix.local.approvals import ApprovalStore
+
+        request = ApprovalStore().create(
+            agent_id=self.id,
+            workspace_id=self.workspace_id,
+            tool_name=tool_name,
+            arguments=arguments,
+            access_level=access_level,
+            reason=reason,
+        )
+        return request.id
 
     def _next_user_content(self, ctx: Context, message: str) -> Any:
         return ctx.metadata.get("next_user_content", message)

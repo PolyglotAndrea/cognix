@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from cognix.core.agent import Agent
+from cognix.core.agent import Agent, AgentState
 from cognix.core.permissions import PermissionDeniedError, decide_permission
 from cognix.core.tool import tool
 from cognix.local.files import WorkspaceFileStore
@@ -38,7 +38,12 @@ async def test_agent_blocks_write_tool_in_read_only_mode() -> None:
 
 
 @pytest.mark.asyncio
-async def test_agent_marks_write_tool_as_approval_required_in_ask_mode() -> None:
+async def test_agent_marks_write_tool_as_approval_required_in_ask_mode(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("COGNIX_HOME", str(tmp_path / ".cognix"))
+
     @tool(name="write_note", description="Write a note", access_level="write")
     async def write_note(content: str) -> str:
         return f"wrote {content}"
@@ -46,7 +51,8 @@ async def test_agent_marks_write_tool_as_approval_required_in_ask_mode() -> None
     agent = Agent(name="guarded", model="echo", tools=[write_note], permission_mode="ask")
     result = await agent._execute_tool({"name": "write_note", "arguments": {"content": "x"}})
 
-    assert result.startswith("Approval required:")
+    assert result.startswith("Approval required [")
+    assert agent.state == AgentState.WAITING
 
 
 def test_workspace_file_store_respects_permission_mode(tmp_path) -> None:
@@ -56,3 +62,25 @@ def test_workspace_file_store_respects_permission_mode(tmp_path) -> None:
 
     with pytest.raises(PermissionDeniedError):
         store.write_text("note.md", "hello")
+
+
+@pytest.mark.asyncio
+async def test_agent_resumes_approved_tool(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("COGNIX_HOME", str(tmp_path / ".cognix"))
+
+    @tool(name="write_note", description="Write a note", access_level="write")
+    async def write_note(content: str) -> str:
+        return f"wrote {content}"
+
+    agent = Agent(name="guarded", model="echo", tools=[write_note], permission_mode="ask")
+    blocked = await agent._execute_tool({"name": "write_note", "arguments": {"content": "x"}})
+    approval_id = blocked.split("[", 1)[1].split("]", 1)[0]
+
+    from cognix.local.approvals import ApprovalStore
+
+    ApprovalStore().approve(approval_id)
+    result = await agent.resume_approval(approval_id)
+
+    assert result == "wrote x"
+    assert ApprovalStore().get(approval_id).status == "completed"
+    assert agent.state == AgentState.IDLE

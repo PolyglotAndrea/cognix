@@ -66,6 +66,7 @@ class CognixHome:
             "bots",
             "memory",
             "runtime",
+            "approvals",
             "logs",
             "cache",
         ):
