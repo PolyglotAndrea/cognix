@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react'
+import { useRef, useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   AlertCircle,
@@ -6,6 +6,8 @@ import {
   Clock,
   Terminal,
   FileJson,
+  FileText,
+  Folder,
   PlayCircle,
   Wrench,
   ChevronRight,
@@ -17,6 +19,7 @@ import { Panel, PanelHeader, PanelBody, Badge } from '@/shared/ui'
 
 const TABS = [
   { key: 'tasks' as const, label: 'Tasks', icon: Clock },
+  { key: 'files' as const, label: 'Files', icon: Folder },
   { key: 'results' as const, label: 'Results', icon: Wrench },
   { key: 'logs' as const, label: 'Logs', icon: Terminal },
   { key: 'json' as const, label: 'JSON', icon: FileJson },
@@ -42,10 +45,30 @@ interface TaskRun {
   started_at?: string | null
 }
 
+interface WorkspaceInfo {
+  id: string
+  name: string
+}
+
+interface WorkspaceFile {
+  path: string
+  name: string
+  kind: 'file' | 'directory'
+  size: number
+  updated_at: string
+}
+
 export function RightPanel() {
   const { rightPanelTab, setRightPanelTab, rightPanelOpen, toggleRightPanel, toolResults, executionLogs } =
     useWorkspaceStore()
   const logsEndRef = useRef<HTMLDivElement>(null)
+  const [currentDir, setCurrentDir] = useState('')
+  const [previewPath, setPreviewPath] = useState<string | null>(null)
+  const { data: workspaces = [] } = useQuery<WorkspaceInfo[]>({
+    queryKey: ['workspaces'],
+    queryFn: () => api.get('/workspaces').then((r) => r.data),
+  })
+  const workspaceId = workspaces[0]?.id
   const { data: tasks = [], isLoading: tasksLoading } = useQuery<TaskSummary[]>({
     queryKey: ['workspace-task-status'],
     queryFn: async () => {
@@ -62,6 +85,16 @@ export function RightPanel() {
       )
     },
     refetchInterval: 5000,
+  })
+  const { data: files = [], isLoading: filesLoading } = useQuery<WorkspaceFile[]>({
+    queryKey: ['workspace-files', workspaceId, currentDir],
+    queryFn: () => api.get(`/workspaces/${workspaceId}/files`, { params: { path: currentDir } }).then((r) => r.data),
+    enabled: !!workspaceId,
+  })
+  const { data: preview } = useQuery<{ path: string; content: string }>({
+    queryKey: ['workspace-file-preview', workspaceId, previewPath],
+    queryFn: () => api.get(`/workspaces/${workspaceId}/files/preview`, { params: { path: previewPath } }).then((r) => r.data),
+    enabled: !!workspaceId && !!previewPath,
   })
 
   useEffect(() => {
@@ -80,6 +113,7 @@ export function RightPanel() {
         <ChevronLeft className="h-5 w-5 text-muted-foreground group-hover:text-foreground transition-colors" />
         <div className="flex flex-col gap-6">
            <Clock className="h-4 w-4 text-muted-foreground/30" />
+           <Folder className="h-4 w-4 text-muted-foreground/30" />
            <Wrench className="h-4 w-4 text-muted-foreground/30" />
            <Terminal className="h-4 w-4 text-muted-foreground/30" />
            <FileJson className="h-4 w-4 text-muted-foreground/30" />
@@ -132,6 +166,85 @@ export function RightPanel() {
               </div>
             ) : (
               tasks.map((task) => <TaskStatusCard key={task.id} task={task} />)
+            )}
+          </div>
+        )}
+
+        {/* Files Tab */}
+        {rightPanelTab === 'files' && (
+          <div className="p-4 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <button
+                onClick={() => {
+                  setCurrentDir(parentDir(currentDir))
+                  setPreviewPath(null)
+                }}
+                disabled={!currentDir}
+                className="rounded-lg px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-30"
+              >
+                Up
+              </button>
+              <span className="truncate font-mono text-[10px] text-muted-foreground">
+                /{currentDir}
+              </span>
+            </div>
+
+            {filesLoading ? (
+              <div className="py-20 text-center">
+                <Folder className="h-8 w-8 text-muted-foreground/20 animate-pulse mx-auto mb-4" />
+                <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Loading Files</p>
+              </div>
+            ) : files.length === 0 ? (
+              <div className="py-20 text-center">
+                <Folder className="h-8 w-8 text-muted-foreground/20 mx-auto mb-4" />
+                <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">No Files</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {files.map((file) => (
+                  <button
+                    key={file.path}
+                    onClick={() => {
+                      if (file.kind === 'directory') {
+                        setCurrentDir(file.path)
+                        setPreviewPath(null)
+                      } else {
+                        setPreviewPath(file.path)
+                      }
+                    }}
+                    className={`w-full rounded-xl border p-3 text-left transition-all ${
+                      previewPath === file.path
+                        ? 'border-primary/30 bg-primary/10'
+                        : 'border-border bg-muted/30 hover:border-primary/20'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      {file.kind === 'directory' ? (
+                        <Folder className="h-4 w-4 text-primary" />
+                      ) : (
+                        <FileText className="h-4 w-4 text-primary" />
+                      )}
+                      <div className="min-w-0">
+                        <div className="truncate text-xs font-bold text-foreground">{file.name}</div>
+                        <div className="mt-0.5 text-[10px] text-muted-foreground">
+                          {file.kind === 'directory' ? 'Directory' : formatBytes(file.size)}
+                        </div>
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {previewPath && (
+              <div className="rounded-2xl border border-border bg-muted/40 overflow-hidden">
+                <div className="border-b border-border px-3 py-2 font-mono text-[10px] text-muted-foreground truncate">
+                  {previewPath}
+                </div>
+                <pre className="max-h-80 overflow-auto p-3 text-[11px] leading-5 text-foreground/80">
+                  {preview?.content || 'Loading preview...'}
+                </pre>
+              </div>
             )}
           </div>
         )}
@@ -304,4 +417,16 @@ function LogIcon({ level }: { level: string }) {
   if (level === 'error') return <div className="w-2 h-2 rounded-full bg-rose-500 mt-1.5 shadow-sm shadow-rose-500/50" />
   if (level === 'warn') return <div className="w-2 h-2 rounded-full bg-amber-500 mt-1.5 shadow-sm shadow-amber-500/50" />
   return <div className="w-2 h-2 rounded-full bg-sky-500 mt-1.5 shadow-sm shadow-sky-500/50" />
+}
+
+function parentDir(path: string) {
+  const parts = path.split('/').filter(Boolean)
+  parts.pop()
+  return parts.join('/')
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
