@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Clock, FileCode2, Pause, Play, Plus, Trash2, type LucideIcon } from 'lucide-react'
+import { Clock, FileCode2, Pause, Play, Plus, RotateCw, Trash2, type LucideIcon } from 'lucide-react'
 import { api } from '@/shared/api/client'
 import { Badge, Button, Input, Spinner } from '@/shared/ui'
 
@@ -16,6 +16,8 @@ interface ScheduledTask {
   schedule: string
   state: string
   run_count: number
+  workspace_id?: string | null
+  last_run?: string | null
 }
 
 interface WorkspaceWorkflow {
@@ -46,6 +48,7 @@ export default function TaskList() {
   const [workflowDefinition, setWorkflowDefinition] = useState(DEFAULT_WORKFLOW)
   const [runInput, setRunInput] = useState('Summarize the current workspace status.')
   const [runOutput, setRunOutput] = useState<Record<string, string>>({})
+  const [taskRunOutput, setTaskRunOutput] = useState<Record<string, string>>({})
 
   const { data: workspaces = [] } = useQuery<WorkspaceInfo[]>({
     queryKey: ['workspaces'],
@@ -87,6 +90,36 @@ export default function TaskList() {
   const deleteWorkflowMutation = useMutation({
     mutationFn: (workflowId: string) => api.delete(`/workspaces/${workspace.id}/workflows/${workflowId}`),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['workspace-workflows', workspace?.id] }),
+  })
+
+  const triggerTaskMutation = useMutation({
+    mutationFn: (taskId: string) => api.post(`/tasks/${taskId}/trigger`),
+    onSuccess: (response, taskId) => {
+      setTaskRunOutput((current) => ({ ...current, [taskId]: formatTaskRunOutput(response.data) }))
+      queryClient.invalidateQueries({ queryKey: ['tasks'] })
+    },
+  })
+
+  const pauseTaskMutation = useMutation({
+    mutationFn: (taskId: string) => api.post(`/tasks/${taskId}/pause`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['tasks'] }),
+  })
+
+  const resumeTaskMutation = useMutation({
+    mutationFn: (taskId: string) => api.post(`/tasks/${taskId}/resume`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['tasks'] }),
+  })
+
+  const deleteTaskMutation = useMutation({
+    mutationFn: (taskId: string) => api.delete(`/tasks/${taskId}`),
+    onSuccess: (_, taskId) => {
+      setTaskRunOutput((current) => {
+        const next = { ...current }
+        delete next[taskId]
+        return next
+      })
+      queryClient.invalidateQueries({ queryKey: ['tasks'] })
+    },
   })
 
   return (
@@ -215,32 +248,71 @@ export default function TaskList() {
               </thead>
               <tbody className="divide-y divide-border">
                 {tasks.map((task) => (
-                  <tr key={task.id} className="group transition-colors hover:bg-muted/30">
-                    <td className="px-6 py-5">
-                      <div className="flex items-center gap-4">
-                        <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-muted transition-colors group-hover:border-primary/30">
-                          <Clock className="h-5 w-5 text-primary/70 group-hover:text-primary" />
+                  <Fragment key={task.id}>
+                    <tr className="group transition-colors hover:bg-muted/30">
+                      <td className="px-6 py-5">
+                        <div className="flex items-center gap-4">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-muted transition-colors group-hover:border-primary/30">
+                            <Clock className="h-5 w-5 text-primary/70 group-hover:text-primary" />
+                          </div>
+                          <div className="min-w-0">
+                            <span className="block truncate font-bold text-foreground transition-colors group-hover:text-primary">
+                              {task.name}
+                            </span>
+                            {task.last_run && (
+                              <span className="mt-1 block text-[11px] text-muted-foreground">
+                                Last run {new Date(task.last_run).toLocaleString()}
+                              </span>
+                            )}
+                          </div>
                         </div>
-                        <span className="font-bold text-foreground transition-colors group-hover:text-primary">
-                          {task.name}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-5"><Badge>{task.task_type}</Badge></td>
-                    <td className="px-6 py-5 font-mono text-sm font-medium text-muted-foreground">{task.schedule}</td>
-                    <td className="px-6 py-5">
-                      <Badge variant={task.state === 'active' ? 'success' : task.state === 'paused' ? 'warning' : 'default'}>
-                        {task.state}
-                      </Badge>
-                    </td>
-                    <td className="px-6 py-5 text-sm font-bold text-foreground">{task.run_count}</td>
-                    <td className="px-6 py-5 text-right">
-                      <div className="flex items-center justify-end gap-2 opacity-0 transition-opacity group-hover:opacity-100">
-                        <IconButton icon={task.state === 'active' ? Pause : Play} label="Toggle task" />
-                        <IconButton icon={Trash2} label="Delete task" danger />
-                      </div>
-                    </td>
-                  </tr>
+                      </td>
+                      <td className="px-6 py-5"><Badge>{task.task_type}</Badge></td>
+                      <td className="px-6 py-5 font-mono text-sm font-medium text-muted-foreground">{task.schedule}</td>
+                      <td className="px-6 py-5">
+                        <Badge variant={task.state === 'active' ? 'success' : task.state === 'paused' ? 'warning' : 'default'}>
+                          {task.state}
+                        </Badge>
+                      </td>
+                      <td className="px-6 py-5 text-sm font-bold text-foreground">{task.run_count}</td>
+                      <td className="px-6 py-5 text-right">
+                        <div className="flex items-center justify-end gap-2 opacity-0 transition-opacity group-hover:opacity-100">
+                          <IconButton
+                            icon={RotateCw}
+                            label={`Trigger ${task.name}`}
+                            onClick={() => triggerTaskMutation.mutate(task.id)}
+                            disabled={triggerTaskMutation.isPending}
+                          />
+                          <IconButton
+                            icon={task.state === 'active' ? Pause : Play}
+                            label={task.state === 'active' ? `Pause ${task.name}` : `Resume ${task.name}`}
+                            onClick={() =>
+                              task.state === 'active'
+                                ? pauseTaskMutation.mutate(task.id)
+                                : resumeTaskMutation.mutate(task.id)
+                            }
+                            disabled={pauseTaskMutation.isPending || resumeTaskMutation.isPending}
+                          />
+                          <IconButton
+                            icon={Trash2}
+                            label={`Delete ${task.name}`}
+                            onClick={() => deleteTaskMutation.mutate(task.id)}
+                            disabled={deleteTaskMutation.isPending}
+                            danger
+                          />
+                        </div>
+                      </td>
+                    </tr>
+                    {taskRunOutput[task.id] && (
+                      <tr key={`${task.id}-output`} className="border-t border-border/60 bg-muted/20">
+                        <td colSpan={6} className="px-6 py-4">
+                          <pre className="max-h-44 overflow-auto rounded-xl border border-border bg-background p-3 text-xs leading-6 text-muted-foreground">
+                            {taskRunOutput[task.id]}
+                          </pre>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
@@ -295,22 +367,39 @@ function EmptyState({
 function IconButton({
   icon: Icon,
   label,
+  onClick,
+  disabled = false,
   danger = false,
 }: {
   icon: LucideIcon
   label: string
+  onClick: () => void
+  disabled?: boolean
   danger?: boolean
 }) {
   return (
     <button
-      className={`flex h-9 w-9 items-center justify-center rounded-xl border border-transparent text-muted-foreground transition-all ${
+      onClick={onClick}
+      disabled={disabled}
+      className={`flex h-9 w-9 items-center justify-center rounded-xl border border-transparent text-muted-foreground transition-all disabled:cursor-not-allowed disabled:opacity-40 ${
         danger
           ? 'hover:border-rose-500/20 hover:bg-rose-500/10 hover:text-rose-500'
           : 'hover:border-primary/20 hover:bg-primary/10 hover:text-primary'
       }`}
       aria-label={label}
+      title={label}
     >
       <Icon className="h-4 w-4" />
     </button>
   )
+}
+
+function formatTaskRunOutput(run: unknown) {
+  if (!run || typeof run !== 'object') return String(run ?? 'Completed.')
+
+  const data = run as Record<string, unknown>
+  const result = data.result
+  if (typeof result === 'string') return result
+  if (result) return JSON.stringify(result, null, 2)
+  return JSON.stringify(data, null, 2)
 }
