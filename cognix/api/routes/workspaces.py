@@ -21,6 +21,7 @@ from cognix.core.agent import Agent
 from cognix.core.context import Context
 from cognix.local.attachments import AttachmentStore, ParsedAttachment
 from cognix.local.chat import AttachmentRef, ChatMessage, ChatStore
+from cognix.local.files import WorkspaceFileStore
 from cognix.local.workflows import WorkspaceWorkflowStore
 from cognix.local.workspace import WorkspaceManager
 from cognix.local.workspace_config import WorkspaceConfigStore
@@ -75,6 +76,11 @@ class SaveWorkflowRequest(BaseModel):
 
 class RunWorkflowRequest(BaseModel):
     input: str = ""
+
+
+class WriteWorkspaceFileRequest(BaseModel):
+    path: str
+    content: str
 
 
 class AttachmentRequest(BaseModel):
@@ -277,6 +283,64 @@ async def run_workspace_workflow(
     }
 
 
+@router.get("/{workspace_id}/files")
+async def list_workspace_files(
+    workspace_id: str,
+    path: str = "",
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    store = _file_store(workspace_id)
+    try:
+        return [store.to_dict(item) for item in store.list(path)]
+    except FileNotFoundError:
+        raise HTTPException(404, "Directory not found") from None
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+@router.get("/{workspace_id}/files/preview")
+async def preview_workspace_file(
+    workspace_id: str,
+    path: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    store = _file_store(workspace_id)
+    try:
+        return {"path": path, "content": store.read_text(path)}
+    except FileNotFoundError:
+        raise HTTPException(404, "File not found") from None
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+@router.put("/{workspace_id}/files")
+async def write_workspace_file(
+    workspace_id: str,
+    body: WriteWorkspaceFileRequest,
+    user: CurrentUser = Depends(require_skills_write),
+) -> dict:
+    store = _file_store(workspace_id)
+    try:
+        return store.to_dict(store.write_text(body.path, body.content))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+@router.delete("/{workspace_id}/files")
+async def delete_workspace_file(
+    workspace_id: str,
+    path: str,
+    user: CurrentUser = Depends(require_skills_write),
+) -> dict:
+    store = _file_store(workspace_id)
+    try:
+        if not store.delete(path):
+            raise HTTPException(404, "File not found")
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    return {"deleted": path}
+
+
 @router.get("/{workspace_id}/chats")
 async def list_chats(
     workspace_id: str,
@@ -471,6 +535,13 @@ def _workspace_config(workspace_id: str) -> WorkspaceConfigStore:
 def _workflow_store(workspace_id: str) -> WorkspaceWorkflowStore:
     try:
         return WorkspaceWorkflowStore(workspace_id)
+    except FileNotFoundError:
+        raise HTTPException(404, "Workspace not found") from None
+
+
+def _file_store(workspace_id: str) -> WorkspaceFileStore:
+    try:
+        return WorkspaceFileStore(workspace_id)
     except FileNotFoundError:
         raise HTTPException(404, "Workspace not found") from None
 
