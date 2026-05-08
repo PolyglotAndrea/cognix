@@ -5,10 +5,13 @@ A Hermes Agent-based multi-agent collaboration platform built in Python. Cognix 
 ## Features
 
 - **Agent Runtime** — Stateful agents with tool calling, memory, and event system
+- **Human-in-the-loop Approvals** — `ask` permission mode, approval requests, approve/reject/resume API, and SSE approval events
 - **Multi-Agent Orchestration** — Sequential, Parallel, Router, and Loop patterns via YAML workflow DSL
-- **Scheduled Tasks** — Cron, interval, and one-shot scheduling with APScheduler
+- **Scheduled Tasks** — Cron, interval, and one-shot scheduling with APScheduler plus runtime task leases
 - **JSON-RPC 2.0** — Inter-service communication over HTTP and WebSocket
-- **Skills System** — Local directory + remote marketplace for reusable agent capabilities
+- **Skills + MCP Tools** — Local skills, workspace MCP server config, stdio MCP tool discovery, and Agent tool mounting
+- **Claude Agent SDK Bridge** — Workspace-scoped Claude Agent SDK execution with permission mode, MCP config mapping, and approval callbacks
+- **Remote Bot Bridge** — Lark/Feishu, DingTalk, and WeChat entry points with signature-aware webhook handling
 - **CLI + API** — Typer CLI and FastAPI REST/WebSocket API
 - **OAuth2 Authentication** — Google and GitHub providers with JWT tokens and API keys
 - **RBAC Permissions** — Admin, user, and viewer roles
@@ -25,7 +28,7 @@ A Hermes Agent-based multi-agent collaboration platform built in Python. Cognix 
 | CLI | Typer + Rich |
 | Database | SQLite (dev) / PostgreSQL (prod) via SQLAlchemy + Alembic |
 | Scheduler | APScheduler |
-| LLM | LiteLLM (OpenAI, Anthropic, local models) |
+| LLM | LiteLLM (OpenAI, Anthropic, local models) + Claude Agent SDK bridge |
 | Config | Pydantic Settings (`COGNIX_` prefix) |
 
 ## Quick Start
@@ -111,6 +114,9 @@ cognix/
 ├── scheduler/      # APScheduler-based task engine
 ├── rpc/            # JSON-RPC 2.0 server/client
 ├── skills/         # Skills system (local + marketplace)
+├── mcp/            # MCP stdio client and Tool adapter
+├── claude/         # Claude Agent SDK runtime bridge
+├── local/          # Local-first ~/.cognix workspace storage
 ├── api/            # FastAPI REST + WebSocket API
 ├── cli/            # Typer CLI
 ├── auth/           # OAuth2, JWT, API keys, RBAC
@@ -125,6 +131,7 @@ cognix/
 |--------|------------|
 | `agent.py` | Agent class — stateful runtime with IDLE/RUNNING/WAITING/ERROR states |
 | `tool.py` | Tool class + `@tool` decorator — async callables with JSON Schema |
+| `permissions.py` | Runtime permission policy for read-only, workspace-write, ask, and unrestricted modes |
 | `events.py` | EventBus — async pub/sub with well-known event types |
 | `memory.py` | MemoryBackend — in-memory with TTL support |
 | `context.py` | Context — carries conversation state through execution |
@@ -137,10 +144,29 @@ cognix/
 | `GET /api/v1/agents` | List agents |
 | `POST /api/v1/agents` | Create agent |
 | `POST /api/v1/agents/{id}/chat` | Chat with agent (SSE streaming) |
+| `GET /api/v1/approvals` | List pending or resolved human approval requests |
+| `POST /api/v1/approvals/{id}/approve` | Approve a pending tool/action request |
+| `POST /api/v1/approvals/{id}/reject` | Reject a pending tool/action request |
+| `POST /api/v1/approvals/{id}/resume` | Resume an approved Agent tool call |
 | `GET /api/v1/tasks` | List scheduled tasks |
 | `POST /api/v1/tasks` | Create scheduled task |
 | `GET /api/v1/skills` | List skills |
+| `GET /api/v1/workspaces/{id}/mcp/servers/{server_id}/tools` | Discover MCP tools for a workspace server |
+| `POST /api/v1/workspaces/{id}/claude/stream` | Stream Claude Agent SDK execution events |
 | `POST /rpc` | JSON-RPC endpoint |
+
+### Streaming Events
+
+Agent and workspace chat streaming use a stable data-only SSE JSON payload with:
+
+- `delta`
+- `tool_call`
+- `tool_result`
+- `approval_request`
+- `error`
+- `done`
+
+`approval_request` is emitted when `permission_mode="ask"` or a dangerous tool needs human confirmation. Claude Agent SDK runs use the same approval channel through the SDK `can_use_tool` callback.
 
 ### Authentication
 

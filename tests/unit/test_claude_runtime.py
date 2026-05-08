@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
+
+import pytest
 
 from cognix.claude.runtime import ClaudeAgentRunRequest, ClaudeAgentRuntime
+from cognix.local.approvals import ApprovalStore
 from cognix.local.home import CognixHome
 from cognix.local.workspace import WorkspaceManager
 from cognix.local.workspace_config import WorkspaceConfigStore
@@ -20,12 +24,20 @@ class FakeOptions:
     disallowed_tools: list[str] | None = None
     mcp_servers: dict | None = None
     strict_mcp_config: bool = False
+    can_use_tool: Any = None
     max_turns: int | None = None
     resume: str | None = None
 
 
+@dataclass
+class FakePermissionResultDeny:
+    message: str
+    interrupt: bool = False
+
+
 class FakeSDK:
     ClaudeAgentOptions = FakeOptions
+    PermissionResultDeny = FakePermissionResultDeny
 
 
 def test_claude_runtime_maps_read_only_workspace_options(tmp_path, monkeypatch) -> None:
@@ -75,3 +87,34 @@ def test_claude_runtime_maps_workspace_mcp_servers(tmp_path, monkeypatch) -> Non
         }
     }
     assert options.strict_mcp_config is True
+
+
+@pytest.mark.asyncio
+async def test_claude_runtime_ask_mode_creates_approval_request(tmp_path, monkeypatch) -> None:
+    home = CognixHome(tmp_path / ".cognix")
+    workspace = WorkspaceManager(home).create("Claude")
+    monkeypatch.setenv("COGNIX_HOME", str(home.root))
+    pending = []
+
+    options = ClaudeAgentRuntime().build_options(
+        ClaudeAgentRunRequest(
+            workspace_id=workspace.id,
+            agent_id="agent-1",
+            prompt="edit file",
+            permission_mode="ask",
+        ),
+        sdk=FakeSDK,
+        approval_sink=pending.append,
+    )
+
+    result = await options.can_use_tool("Write", {"file_path": "README.md"})
+    approvals = ApprovalStore(home).list_all(workspace_id=workspace.id)
+
+    assert isinstance(result, FakePermissionResultDeny)
+    assert result.interrupt is True
+    assert len(approvals) == 1
+    assert approvals[0].agent_id == "agent-1"
+    assert approvals[0].tool_name == "Write"
+    assert approvals[0].access_level == "write"
+    assert approvals[0].metadata["runtime"] == "claude-agent-sdk"
+    assert pending == approvals

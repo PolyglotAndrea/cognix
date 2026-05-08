@@ -71,6 +71,7 @@ class UpsertMCPServerRequest(BaseModel):
 
 class ClaudeAgentRunRequestBody(BaseModel):
     prompt: str
+    agent_id: str | None = None
     model: str | None = None
     system_prompt: str | None = None
     permission_mode: str = "workspace-write"
@@ -273,6 +274,7 @@ async def stream_claude_agent(
     request = ClaudeAgentRunRequest(
         workspace_id=workspace_id,
         prompt=body.prompt,
+        agent_id=body.agent_id,
         model=body.model,
         system_prompt=body.system_prompt,
         permission_mode=body.permission_mode,
