@@ -67,6 +67,7 @@ class Agent:
     api_base: str | None = None
     api_key: str | None = None
     workspace_id: str | None = None
+    permission_mode: str = "workspace-write"
     use_context_builder: bool = True
 
     _event_bus: EventBus | None = field(default=None, repr=False)
@@ -495,5 +496,6 @@ class Agent:
             "max_iterations": self.max_iterations,
             "api_base": self.api_base,
             "workspace_id": self.workspace_id,
+            "permission_mode": self.permission_mode,
             "tools": [t.name for t in self.tools],
         }

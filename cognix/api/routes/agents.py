@@ -22,6 +22,8 @@ class CreateAgentRequest(BaseModel):
     temperature: float = 0.7
     max_iterations: int = 10
     api_base: str | None = None
+    workspace_id: str | None = None
+    permission_mode: str = "workspace-write"
 
 
 class UpdateAgentRequest(BaseModel):
@@ -32,6 +34,8 @@ class UpdateAgentRequest(BaseModel):
     temperature: float | None = None
     max_iterations: int | None = None
     api_base: str | None = None
+    workspace_id: str | None = None
+    permission_mode: str | None = None
 
 
 class ChatRequest(BaseModel):
@@ -61,6 +65,8 @@ async def create_agent(
         temperature=body.temperature,
         max_iterations=body.max_iterations,
         api_base=body.api_base,
+        workspace_id=body.workspace_id,
+        permission_mode=body.permission_mode,
     )
     agent.memory = SQLiteBackend(agent_id=agent.id)
     agent_registry.register(agent)
@@ -75,6 +81,8 @@ async def create_agent(
             temperature=agent.temperature,
             max_iterations=agent.max_iterations,
             api_base=body.api_base,
+            workspace_id=body.workspace_id,
+            permission_mode=body.permission_mode,
         )
         session.add(db_agent)
 

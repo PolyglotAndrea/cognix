@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import enum
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from enum import StrEnum
 
-from sqlalchemy import DateTime, Enum, Float, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import JSON, DateTime, Enum, Float, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class Base(DeclarativeBase):
@@ -20,7 +20,7 @@ class Base(DeclarativeBase):
 # ── Auth models ─────────────────────────────────────────────────────
 
 
-class UserRole(str, enum.Enum):
+class UserRole(StrEnum):
     ADMIN = "admin"
     USER = "user"
     VIEWER = "viewer"
@@ -33,8 +33,10 @@ class UserModel(Base):
     email: Mapped[str] = mapped_column(String(256), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(128), default="")
     avatar_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    password_hash: Mapped[str | None] = mapped_column(String(256), nullable=True)  # bcrypt, null for OAuth users
-    oauth_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)  # google, github, null for email/password
+    # bcrypt, null for OAuth users
+    password_hash: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    # google, github, null for email/password
+    oauth_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
     oauth_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.USER)
     is_active: Mapped[bool] = mapped_column(default=True)
@@ -67,18 +69,20 @@ class AgentModel(Base):
     temperature: Mapped[float] = mapped_column(Float, default=0.7)
     max_iterations: Mapped[int] = mapped_column(Integer, default=10)
     api_base: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    workspace_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    permission_mode: Mapped[str] = mapped_column(String(32), default="workspace-write")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
 
 
-class TaskState(str, enum.Enum):
+class TaskState(StrEnum):
     ACTIVE = "active"
     PAUSED = "paused"
     COMPLETED = "completed"
     FAILED = "failed"
 
 
-class TaskType(str, enum.Enum):
+class TaskType(StrEnum):
     AGENT_CALL = "agent_call"
     RPC_CALL = "rpc_call"
     HTTP_WEBHOOK = "http_webhook"
@@ -132,7 +136,7 @@ class SkillModel(Base):
 # ── Billing models ─────────────────────────────────────────────────
 
 
-class SubscriptionStatus(str, enum.Enum):
+class SubscriptionStatus(StrEnum):
     ACTIVE = "active"
     PAST_DUE = "past_due"
     CANCELED = "canceled"

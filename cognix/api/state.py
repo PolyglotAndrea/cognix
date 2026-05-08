@@ -38,6 +38,7 @@ def agent_from_model(row: AgentModel) -> Agent:
         description=row.description,
         api_base=row.api_base,
         workspace_id=getattr(row, "workspace_id", None),
+        permission_mode=getattr(row, "permission_mode", "workspace-write"),
         memory=SQLiteBackend(agent_id=row.id),
     )
 

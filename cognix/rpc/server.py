@@ -104,6 +104,8 @@ async def _agent_create(params: dict, registry: AgentRegistry) -> dict:
         temperature=params.get("temperature", 0.7),
         max_iterations=params.get("max_iterations", 10),
         api_base=params.get("api_base"),
+        workspace_id=params.get("workspace_id"),
+        permission_mode=params.get("permission_mode", "workspace-write"),
     )
     agent.memory = SQLiteBackend(agent_id=agent.id)
     registry.register(agent)
@@ -118,6 +120,8 @@ async def _agent_create(params: dict, registry: AgentRegistry) -> dict:
             temperature=agent.temperature,
             max_iterations=agent.max_iterations,
             api_base=agent.api_base,
+            workspace_id=agent.workspace_id,
+            permission_mode=agent.permission_mode,
         )
         session.add(db_agent)
 

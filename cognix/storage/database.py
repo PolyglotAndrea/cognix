@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
 
+from sqlalchemy import inspect, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from cognix.config import get_settings
@@ -60,6 +61,7 @@ async def init_db() -> None:
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await _ensure_agent_runtime_columns(conn)
     logger.info("Database initialized")
 
 
@@ -70,3 +72,20 @@ async def close_db() -> None:
         await _engine.dispose()
         _engine = None
         _session_factory = None
+
+
+async def _ensure_agent_runtime_columns(conn) -> None:
+    """Add lightweight Agent runtime columns for existing local databases."""
+
+    def _columns(sync_conn) -> set[str]:
+        inspector = inspect(sync_conn)
+        return {column["name"] for column in inspector.get_columns("agents")}
+
+    columns = await conn.run_sync(_columns)
+    additions = {
+        "workspace_id": "VARCHAR(64)",
+        "permission_mode": "VARCHAR(32) DEFAULT 'workspace-write'",
+    }
+    for column, ddl_type in additions.items():
+        if column not in columns:
+            await conn.execute(text(f"ALTER TABLE agents ADD COLUMN {column} {ddl_type}"))
