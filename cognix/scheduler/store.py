@@ -69,6 +69,63 @@ class TaskStore:
             )
             return result.rowcount > 0
 
+    async def set_next_run(self, task_id: str, next_run: datetime | None) -> bool:
+        """Persist the next expected run time for distributed dispatchers."""
+        async with get_session() as session:
+            result = await session.execute(
+                update(ScheduledTaskModel)
+                .where(ScheduledTaskModel.id == task_id)
+                .values(next_run=next_run)
+            )
+            return result.rowcount > 0
+
+    async def claim_due_tasks(
+        self,
+        *,
+        owner: str,
+        limit: int = 10,
+        ttl_seconds: int = 120,
+        now: datetime | None = None,
+    ) -> list[ScheduledTaskModel]:
+        """Claim active tasks whose ``next_run`` is due.
+
+        Candidate selection is intentionally separate from ``acquire_lease`` so
+        each claim still goes through an atomic conditional update. Multiple
+        workers can safely race this method; only one owner wins each task lease.
+        """
+        now = now or datetime.now(UTC)
+        async with get_session() as session:
+            result = await session.execute(
+                select(ScheduledTaskModel)
+                .where(
+                    and_(
+                        ScheduledTaskModel.state == TaskState.ACTIVE,
+                        ScheduledTaskModel.next_run.is_not(None),
+                        ScheduledTaskModel.next_run <= now,
+                        or_(
+                            ScheduledTaskModel.lease_owner.is_(None),
+                            ScheduledTaskModel.lease_expires_at.is_(None),
+                            ScheduledTaskModel.lease_expires_at < now,
+                        ),
+                    )
+                )
+                .order_by(ScheduledTaskModel.next_run.asc())
+                .limit(limit)
+            )
+            candidates = list(result.scalars().all())
+
+        claimed: list[ScheduledTaskModel] = []
+        for candidate in candidates:
+            if await self.acquire_lease(
+                candidate.id,
+                owner=owner,
+                ttl_seconds=ttl_seconds,
+            ):
+                task = await self.get(candidate.id)
+                if task:
+                    claimed.append(task)
+        return claimed
+
     async def acquire_lease(
         self,
         task_id: str,
@@ -95,6 +152,28 @@ class TaskStore:
                     )
                 )
                 .values(lease_owner=owner, lease_expires_at=expires_at)
+            )
+            return result.rowcount > 0
+
+    async def extend_lease(
+        self,
+        task_id: str,
+        *,
+        owner: str,
+        ttl_seconds: int = 120,
+    ) -> bool:
+        """Extend an owned task lease for long-running executions."""
+        expires_at = datetime.now(UTC) + timedelta(seconds=ttl_seconds)
+        async with get_session() as session:
+            result = await session.execute(
+                update(ScheduledTaskModel)
+                .where(
+                    and_(
+                        ScheduledTaskModel.id == task_id,
+                        ScheduledTaskModel.lease_owner == owner,
+                    )
+                )
+                .values(lease_expires_at=expires_at)
             )
             return result.rowcount > 0
 
