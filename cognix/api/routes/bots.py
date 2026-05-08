@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -82,10 +83,30 @@ async def delete_bot(
 
 @router.post("/{provider}/{bot_id}/webhook")
 async def bot_webhook(provider: BotProvider, bot_id: str, request: Request) -> dict:
+    store = BotConfigStore()
+    bot = store.get(bot_id)
+    if not bot or bot.provider != provider:
+        raise HTTPException(404, "Bot bridge not found")
+
+    body = await request.body()
     secret = request.query_params.get("secret") or request.headers.get("X-Cognix-Bot-Secret", "")
-    payload = await request.json()
+    timestamp = request.headers.get("X-Cognix-Timestamp", "")
+    signature = request.headers.get("X-Cognix-Signature", "")
+    if signature and not store.verify_signature(
+        bot,
+        body=body,
+        timestamp=timestamp,
+        signature=signature,
+    ):
+        raise HTTPException(401, "Invalid bot bridge signature")
+
     try:
-        return await BotBridgeService().handle_webhook(
+        payload = json.loads(body.decode("utf-8") or "{}")
+    except json.JSONDecodeError as exc:
+        raise HTTPException(400, "Invalid JSON payload") from exc
+
+    try:
+        return await BotBridgeService(store=store).handle_webhook(
             provider=provider,
             bot_id=bot_id,
             secret=secret,

@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
+
 from cognix.bots.bridge import BotBridgeService
 from cognix.local.bots import BotConfigStore
 from cognix.local.home import CognixHome
@@ -24,6 +28,10 @@ def test_bot_config_store_hides_and_verifies_secret(tmp_path):
     assert "secret_hash" not in public
     assert store.verify_secret(bot, "secret-token") is True
     assert store.verify_secret(bot, "wrong") is False
+    body = json.dumps({"text": "hello"}).encode("utf-8")
+    signature = hmac.new(bot.secret_hash.encode("utf-8"), b"1." + body, hashlib.sha256).hexdigest()
+    assert store.verify_signature(bot, body=body, timestamp="1", signature=signature) is True
+    assert store.verify_signature(bot, body=body, timestamp="2", signature=signature) is False
     assert store.list_all() == [bot]
 
 
@@ -52,6 +60,24 @@ def test_bot_bridge_extracts_provider_messages():
     assert dingtalk.chat_id == "cid"
     assert wechat.text == "ping"
     assert wechat.sender == "wxid"
+
+
+def test_bot_bridge_session_key_uses_chat_or_sender(tmp_path):
+    home = CognixHome(tmp_path / ".cognix").ensure()
+    store = BotConfigStore(home=home)
+    bot = store.create(
+        name="Ding",
+        provider="dingtalk",
+        workspace_id="workspace-1",
+        agent_id="agent-1",
+        secret="secret-token",
+    )
+    message = BotBridgeService.extract_message(
+        "dingtalk",
+        {"senderNick": "Ada", "conversationId": "cid", "text": {"content": "hi"}},
+    )
+
+    assert BotBridgeService.session_key(bot, message) == f"dingtalk:{bot.id}:cid"
 
 
 def test_bot_bridge_formats_provider_responses():

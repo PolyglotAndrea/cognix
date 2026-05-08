@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -112,7 +113,24 @@ class BotConfigStore:
         return hashlib.sha256(secret.encode("utf-8")).hexdigest()
 
     def verify_secret(self, bot: BotConfig, secret: str) -> bool:
-        return bot.secret_hash == self.hash_secret(secret)
+        return hmac.compare_digest(bot.secret_hash, self.hash_secret(secret))
+
+    def verify_signature(
+        self,
+        bot: BotConfig,
+        *,
+        body: bytes,
+        timestamp: str,
+        signature: str,
+    ) -> bool:
+        if not timestamp or not signature:
+            return False
+        digest = hmac.new(
+            bot.secret_hash.encode("utf-8"),
+            timestamp.encode("utf-8") + b"." + body,
+            hashlib.sha256,
+        ).hexdigest()
+        return hmac.compare_digest(digest, signature.removeprefix("sha256="))
 
     def _path(self, bot_id: str) -> Path:
         return self.bots_dir / f"{bot_id}.json"

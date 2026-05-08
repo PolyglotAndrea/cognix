@@ -68,6 +68,7 @@ class BotBridgeService:
                     "agent_id": bot.agent_id,
                     "sender": message.sender,
                     "chat_id": message.chat_id,
+                    "session_key": self.session_key(bot, message),
                     "message": message.text,
                     "response": response.content,
                 },
@@ -90,7 +91,7 @@ class BotBridgeService:
             return BotMessage(
                 text=str(content or message.get("text", "")),
                 sender=str(event.get("sender", {}).get("sender_id", {}).get("open_id", "")),
-                chat_id=str(message.get("chat_id", "")),
+                chat_id=str(message.get("chat_id", "") or event.get("chat_id", "")),
                 raw=payload,
             )
 
@@ -114,6 +115,11 @@ class BotBridgeService:
             )
 
         return BotMessage(text=str(payload.get("text", "")), raw=payload)
+
+    @staticmethod
+    def session_key(bot: BotConfig, message: BotMessage) -> str:
+        remote_id = message.chat_id or message.sender or "direct"
+        return f"{bot.provider}:{bot.id}:{remote_id}"
 
     @staticmethod
     def format_response(provider: str, text: str) -> dict[str, Any]:
