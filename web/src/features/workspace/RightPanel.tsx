@@ -4,6 +4,7 @@ import {
   AlertCircle,
   CheckCircle2,
   Clock,
+  Activity,
   Terminal,
   FileJson,
   FileText,
@@ -20,6 +21,7 @@ import { Panel, PanelHeader, PanelBody, Badge } from '@/shared/ui'
 const TABS = [
   { key: 'tasks' as const, label: 'Tasks', icon: Clock },
   { key: 'files' as const, label: 'Files', icon: Folder },
+  { key: 'events' as const, label: 'Events', icon: Activity },
   { key: 'results' as const, label: 'Results', icon: Wrench },
   { key: 'logs' as const, label: 'Logs', icon: Terminal },
   { key: 'json' as const, label: 'JSON', icon: FileJson },
@@ -56,6 +58,16 @@ interface WorkspaceFile {
   kind: 'file' | 'directory'
   size: number
   updated_at: string
+}
+
+interface WorkspaceEvent {
+  timestamp: string
+  type: string
+  message?: string
+  response?: string
+  provider?: string
+  agent_id?: string
+  [key: string]: unknown
 }
 
 export function RightPanel() {
@@ -96,6 +108,12 @@ export function RightPanel() {
     queryFn: () => api.get(`/workspaces/${workspaceId}/files/preview`, { params: { path: previewPath } }).then((r) => r.data),
     enabled: !!workspaceId && !!previewPath,
   })
+  const { data: events = [], isLoading: eventsLoading } = useQuery<WorkspaceEvent[]>({
+    queryKey: ['workspace-events', workspaceId],
+    queryFn: () => api.get(`/workspaces/${workspaceId}/events`, { params: { limit: 50 } }).then((r) => r.data),
+    enabled: !!workspaceId,
+    refetchInterval: 5000,
+  })
 
   useEffect(() => {
     if (rightPanelTab === 'logs') {
@@ -114,6 +132,7 @@ export function RightPanel() {
         <div className="flex flex-col gap-6">
            <Clock className="h-4 w-4 text-muted-foreground/30" />
            <Folder className="h-4 w-4 text-muted-foreground/30" />
+           <Activity className="h-4 w-4 text-muted-foreground/30" />
            <Wrench className="h-4 w-4 text-muted-foreground/30" />
            <Terminal className="h-4 w-4 text-muted-foreground/30" />
            <FileJson className="h-4 w-4 text-muted-foreground/30" />
@@ -245,6 +264,42 @@ export function RightPanel() {
                   {preview?.content || 'Loading preview...'}
                 </pre>
               </div>
+            )}
+          </div>
+        )}
+
+        {/* Events Tab */}
+        {rightPanelTab === 'events' && (
+          <div className="p-4 space-y-2">
+            {eventsLoading ? (
+              <div className="py-20 text-center">
+                <Activity className="h-8 w-8 text-muted-foreground/20 animate-pulse mx-auto mb-4" />
+                <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Loading Events</p>
+              </div>
+            ) : events.length === 0 ? (
+              <div className="py-20 text-center">
+                <Activity className="h-8 w-8 text-muted-foreground/20 mx-auto mb-4" />
+                <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">No Events</p>
+              </div>
+            ) : (
+              [...events].reverse().map((event, index) => (
+                <div key={`${event.timestamp}-${index}`} className="rounded-2xl border border-border bg-muted/30 p-3">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <Badge variant="info">{event.type}</Badge>
+                    <span className="font-mono text-[10px] text-muted-foreground">
+                      {new Date(event.timestamp).toLocaleTimeString([], { hour12: false })}
+                    </span>
+                  </div>
+                  {event.provider && (
+                    <div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-primary">
+                      {event.provider} · {event.agent_id || 'agent'}
+                    </div>
+                  )}
+                  <p className="text-xs leading-5 text-foreground/80">
+                    {String(event.message || event.response || JSON.stringify(event))}
+                  </p>
+                </div>
+              ))
             )}
           </div>
         )}
