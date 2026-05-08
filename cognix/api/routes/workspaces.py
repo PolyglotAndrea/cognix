@@ -125,6 +125,18 @@ async def get_workspace(
     return workspace.__dict__
 
 
+@router.get("/{workspace_id}/events")
+async def list_workspace_events(
+    workspace_id: str,
+    limit: int = 100,
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    manager = WorkspaceManager()
+    if not manager.get(workspace_id):
+        raise HTTPException(404, "Workspace not found")
+    return manager.list_events(workspace_id, limit=limit)
+
+
 @router.get("/{workspace_id}/settings")
 async def get_workspace_settings(
     workspace_id: str,

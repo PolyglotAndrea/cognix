@@ -105,6 +105,17 @@ class WorkspaceManager:
         with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
+    def list_events(self, workspace_id: str, *, limit: int = 100) -> list[dict[str, Any]]:
+        path = self.workspace_path(workspace_id) / "events.jsonl"
+        if not path.exists():
+            return []
+        rows = []
+        with path.open(encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    rows.append(json.loads(line))
+        return rows[-limit:]
+
     @staticmethod
     def _new_workspace_id(name: str) -> str:
         slug = re.sub(r"[^a-zA-Z0-9]+", "-", name.strip().lower()).strip("-")

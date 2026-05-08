@@ -30,6 +30,11 @@ def test_workspace_manager_create_and_list(tmp_path):
     assert manager.get(workspace.id) == workspace
     assert manager.list_all() == [workspace]
 
+    manager.append_event(workspace.id, {"type": "test.event", "message": "hello"})
+    events = manager.list_events(workspace.id)
+    assert events[-1]["type"] == "test.event"
+    assert events[-1]["message"] == "hello"
+
 
 @pytest.mark.asyncio
 async def test_context_builder_loads_hot_cold_and_procedural_memory(tmp_path):
