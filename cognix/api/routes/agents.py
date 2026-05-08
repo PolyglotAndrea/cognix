@@ -160,6 +160,7 @@ async def agent_chat(
     if not agent:
         raise HTTPException(404, "Agent not found")
 
+    await _attach_runtime_mcp_tools(agent)
     response = await agent.run(body.message)
     return {"content": response.content, "usage": response.usage}
 
@@ -174,6 +175,8 @@ async def agent_chat_stream(
     agent = await get_agent_runtime(agent_id)
     if not agent:
         raise HTTPException(404, "Agent not found")
+
+    await _attach_runtime_mcp_tools(agent)
 
     async def event_generator():
         async for event in agent.stream_events(body.message):
@@ -212,6 +215,14 @@ async def attach_skill(
     return {"agent_id": agent.id, "skill": skill.name, "tools": attached}
 
 
+async def _attach_runtime_mcp_tools(agent) -> None:
+    if not getattr(agent, "workspace_id", None):
+        return
+    from cognix.mcp.adapter import attach_workspace_mcp_tools
+
+    await attach_workspace_mcp_tools(agent, agent.workspace_id)
+
+
 @router.websocket("/{agent_id}/chat/ws")
 async def agent_chat_ws(websocket: WebSocket, agent_id: str) -> None:
     """Authenticated WebSocket endpoint for agent chat with event streaming."""
@@ -230,6 +241,7 @@ async def agent_chat_ws(websocket: WebSocket, agent_id: str) -> None:
         await websocket.send_json({"type": "error", "message": "Agent not found"})
         await websocket.close()
         return
+    await _attach_runtime_mcp_tools(agent)
 
     try:
         while True:

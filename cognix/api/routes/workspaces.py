@@ -213,6 +213,30 @@ async def upsert_workspace_mcp_server(
     return server.__dict__
 
 
+@router.get("/{workspace_id}/mcp/servers/{server_id}/tools")
+async def list_workspace_mcp_tools(
+    workspace_id: str,
+    server_id: str,
+    user: CurrentUser = Depends(require_skills_read),
+) -> list[dict]:
+    from cognix.mcp.adapter import mcp_server_to_core_tools
+
+    servers = _workspace_config(workspace_id).list_mcp_servers()
+    server = next((item for item in servers if item.id == server_id), None)
+    if not server:
+        raise HTTPException(404, "MCP server not found")
+    tools = await mcp_server_to_core_tools(server)
+    return [
+        {
+            "name": tool.name,
+            "description": tool.description,
+            "parameters": tool.parameters,
+            "access_level": tool.access_level,
+        }
+        for tool in tools
+    ]
+
+
 @router.delete("/{workspace_id}/mcp/servers/{server_id}")
 async def delete_workspace_mcp_server(
     workspace_id: str,
@@ -503,6 +527,7 @@ async def stream_chat_message(
             model=model,
             system_prompt=chat.system_prompt or "You are a helpful assistant.",
         )
+        await _prepare_chat_agent(agent, workspace_id)
         assistant_content = ""
         async for event in agent.stream_events(
             body.content,
@@ -569,6 +594,13 @@ def _chat_agent(*, workspace_id: str, name: str, model: str, system_prompt: str)
     return agent
 
 
+async def _prepare_chat_agent(agent: Agent, workspace_id: str) -> Agent:
+    from cognix.mcp.adapter import attach_workspace_mcp_tools
+
+    await attach_workspace_mcp_tools(agent, workspace_id)
+    return agent
+
+
 def _attach_workspace_skills(agent: Agent, workspace_id: str) -> None:
     from cognix.config import get_settings
     from cognix.skills.adapter import skill_to_core_tools
@@ -608,6 +640,7 @@ async def _run_model_response(
         model=model,
         system_prompt=system_prompt or "You are a helpful assistant.",
     )
+    await _prepare_chat_agent(agent, workspace_id)
     context = _history_context(history, attachment_context=attachment_context)
     _set_multimodal_user_content(context, user_content, attachments)
     response = await agent.run(user_content, context=context)
