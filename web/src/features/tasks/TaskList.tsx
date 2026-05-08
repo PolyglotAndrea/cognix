@@ -1,104 +1,316 @@
-import { useQuery } from '@tanstack/react-query'
+import { useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Clock, FileCode2, Pause, Play, Plus, Trash2, type LucideIcon } from 'lucide-react'
 import { api } from '@/shared/api/client'
-import { Clock, Play, Pause, Trash2 } from 'lucide-react'
-import { Badge } from '@/shared/ui'
+import { Badge, Button, Input, Spinner } from '@/shared/ui'
+
+interface WorkspaceInfo {
+  id: string
+  name: string
+}
+
+interface ScheduledTask {
+  id: string
+  name: string
+  task_type: string
+  schedule: string
+  state: string
+  run_count: number
+}
+
+interface WorkspaceWorkflow {
+  id: string
+  name: string
+  description: string
+  step_count: number
+  errors: string[]
+}
+
+const DEFAULT_WORKFLOW = `name: Research Team
+description: Sequential multi-agent research workflow.
+steps:
+  - id: research
+    agent: researcher
+    input: "{{ input }}"
+    output: research
+  - id: summarize
+    agent: writer
+    input: "{{ research }}"
+    output: summary
+`
 
 export default function TaskList() {
-  const { data: tasks, isLoading } = useQuery({
+  const queryClient = useQueryClient()
+  const [showWorkflowForm, setShowWorkflowForm] = useState(false)
+  const [workflowName, setWorkflowName] = useState('Research Team')
+  const [workflowDefinition, setWorkflowDefinition] = useState(DEFAULT_WORKFLOW)
+  const [runInput, setRunInput] = useState('Summarize the current workspace status.')
+  const [runOutput, setRunOutput] = useState<Record<string, string>>({})
+
+  const { data: workspaces = [] } = useQuery<WorkspaceInfo[]>({
+    queryKey: ['workspaces'],
+    queryFn: () => api.get('/workspaces').then((r) => r.data),
+  })
+  const workspace = workspaces[0]
+
+  const { data: tasks = [], isLoading: tasksLoading } = useQuery<ScheduledTask[]>({
     queryKey: ['tasks'],
     queryFn: () => api.get('/tasks').then((r) => r.data),
   })
 
+  const { data: workflows = [], isLoading: workflowsLoading } = useQuery<WorkspaceWorkflow[]>({
+    queryKey: ['workspace-workflows', workspace?.id],
+    queryFn: () => api.get(`/workspaces/${workspace.id}/workflows`).then((r) => r.data),
+    enabled: !!workspace,
+  })
+
+  const saveWorkflowMutation = useMutation({
+    mutationFn: () =>
+      api.post(`/workspaces/${workspace.id}/workflows`, {
+        name: workflowName,
+        definition: workflowDefinition,
+      }),
+    onSuccess: () => {
+      setShowWorkflowForm(false)
+      queryClient.invalidateQueries({ queryKey: ['workspace-workflows', workspace?.id] })
+    },
+  })
+
+  const runWorkflowMutation = useMutation({
+    mutationFn: (workflowId: string) =>
+      api.post(`/workspaces/${workspace.id}/workflows/${workflowId}/run`, { input: runInput }),
+    onSuccess: (response, workflowId) => {
+      setRunOutput((current) => ({ ...current, [workflowId]: response.data.content || 'Completed.' }))
+    },
+  })
+
+  const deleteWorkflowMutation = useMutation({
+    mutationFn: (workflowId: string) => api.delete(`/workspaces/${workspace.id}/workflows/${workflowId}`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['workspace-workflows', workspace?.id] }),
+  })
+
   return (
-    <div className="animate-in fade-in duration-500 font-outfit">
-      <div className="flex items-center justify-between mb-8">
+    <div className="space-y-8 animate-in fade-in duration-500 font-outfit">
+      <div className="flex items-center justify-between gap-6">
         <div>
-          <h2 className="text-3xl font-bold text-foreground tracking-tight">Scheduled Tasks</h2>
-          <p className="text-muted-foreground mt-1 text-sm">Monitor and manage your automated agent workflows.</p>
+          <h2 className="text-3xl font-bold tracking-tight text-foreground">Agent Teams & Tasks</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Monitor scheduled jobs and define workspace-scoped multi-agent workflows.
+          </p>
         </div>
-        <button className="premium-gradient text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-primary/20 hover:scale-105 transition-all active:scale-95">
-          New Task
-        </button>
+        <Button onClick={() => setShowWorkflowForm((open) => !open)}>
+          <Plus className="h-4 w-4" />
+          Workflow
+        </Button>
       </div>
 
-      {isLoading ? (
-        <div className="text-center py-24 bg-card rounded-3xl border border-border backdrop-blur-xl">
-           <div className="w-12 h-12 border-4 border-primary/20 border-t-primary rounded-full animate-spin mx-auto mb-4" />
-           <p className="text-muted-foreground font-medium">Synchronizing task scheduler...</p>
-        </div>
-      ) : tasks?.length ? (
-        <div className="bg-card rounded-3xl shadow-2xl border border-border overflow-hidden">
-          <table className="w-full">
-            <thead>
-              <tr className="bg-muted/50 border-b border-border">
-                <th className="px-8 py-5 text-left text-[10px] font-bold text-muted-foreground uppercase tracking-[0.2em]">Name</th>
-                <th className="px-8 py-5 text-left text-[10px] font-bold text-muted-foreground uppercase tracking-[0.2em]">Type</th>
-                <th className="px-8 py-5 text-left text-[10px] font-bold text-muted-foreground uppercase tracking-[0.2em]">Schedule</th>
-                <th className="px-8 py-5 text-left text-[10px] font-bold text-muted-foreground uppercase tracking-[0.2em]">State</th>
-                <th className="px-8 py-5 text-left text-[10px] font-bold text-muted-foreground uppercase tracking-[0.2em]">Runs</th>
-                <th className="px-8 py-5 text-right text-[10px] font-bold text-muted-foreground uppercase tracking-[0.2em]">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {tasks.map((task: any) => (
-                <tr key={task.id} className="group hover:bg-muted/30 transition-colors">
-                  <td className="px-8 py-5">
-                    <div className="flex items-center gap-4">
-                      <div className="w-10 h-10 bg-muted rounded-xl flex items-center justify-center border border-border group-hover:border-primary/30 transition-colors">
-                        <Clock className="w-5 h-5 text-primary/70 group-hover:text-primary" />
-                      </div>
-                      <span className="font-bold text-foreground group-hover:text-primary transition-colors">{task.name}</span>
-                    </div>
-                  </td>
-                  <td className="px-8 py-5">
-                    <Badge variant="default" className="bg-muted border-border text-muted-foreground">{task.task_type}</Badge>
-                  </td>
-                  <td className="px-8 py-5 text-sm text-muted-foreground font-mono font-medium">{task.schedule}</td>
-                  <td className="px-8 py-5">
-                    <Badge variant={task.state === 'active' ? 'success' : task.state === 'paused' ? 'warning' : 'default'}>
-                      {task.state}
-                    </Badge>
-                  </td>
-                  <td className="px-8 py-5">
-                    <div className="flex items-center gap-2">
-                       <div className="w-1.5 h-1.5 rounded-full bg-primary/40" />
-                       <span className="text-sm font-bold text-foreground">{task.run_count}</span>
-                    </div>
-                  </td>
-                  <td className="px-8 py-5 text-right">
-                    <div className="flex items-center justify-end gap-3 opacity-0 group-hover:opacity-100 transition-opacity">
-                      {task.state === 'active' ? (
-                        <button className="w-9 h-9 flex items-center justify-center text-muted-foreground hover:text-amber-500 hover:bg-amber-500/10 rounded-xl transition-all border border-transparent hover:border-amber-500/20">
-                          <Pause className="w-4 h-4" />
-                        </button>
-                      ) : (
-                        <button className="w-9 h-9 flex items-center justify-center text-muted-foreground hover:text-emerald-500 hover:bg-emerald-500/10 rounded-xl transition-all border border-transparent hover:border-emerald-500/20">
-                          <Play className="w-4 h-4" />
-                        </button>
-                      )}
-                      <button className="w-9 h-9 flex items-center justify-center text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 rounded-xl transition-all border border-transparent hover:border-rose-500/20">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <div className="text-center py-24 bg-card rounded-[2.5rem] border border-border relative overflow-hidden group">
-          <div className="absolute inset-0 bg-primary/5 opacity-0 group-hover:opacity-100 transition-opacity blur-3xl -z-10 rounded-full scale-50" />
-          <div className="w-20 h-20 bg-muted rounded-3xl flex items-center justify-center mx-auto mb-6 border border-border shadow-2xl transition-transform group-hover:scale-110">
-            <Clock className="w-10 h-10 text-muted-foreground/20" />
+      {showWorkflowForm && (
+        <section className="rounded-2xl border border-border bg-card p-5 shadow-xl">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-[320px_1fr]">
+            <div className="space-y-4">
+              <Input value={workflowName} onChange={(event) => setWorkflowName(event.target.value)} />
+              <Input value={runInput} onChange={(event) => setRunInput(event.target.value)} />
+              <Button
+                className="w-full"
+                disabled={!workspace || !workflowName.trim() || !workflowDefinition.trim() || saveWorkflowMutation.isPending}
+                onClick={() => saveWorkflowMutation.mutate()}
+              >
+                Save Workflow
+              </Button>
+            </div>
+            <textarea
+              value={workflowDefinition}
+              onChange={(event) => setWorkflowDefinition(event.target.value)}
+              rows={10}
+              className="w-full resize-none rounded-xl border border-border bg-muted/50 px-4 py-3 font-mono text-xs leading-6 text-foreground outline-none transition-all focus:border-primary/40 focus:bg-background focus:ring-2 focus:ring-primary/20"
+            />
           </div>
-          <h3 className="text-xl font-bold text-foreground mb-2">No Scheduled Tasks</h3>
-          <p className="text-muted-foreground max-w-xs mx-auto leading-relaxed">Automate your agents by creating one-shot or recurring task schedules.</p>
-          <button className="mt-8 bg-muted hover:bg-card text-foreground px-6 py-3 rounded-xl text-sm font-bold border border-border transition-all">
-             Initialize First Task
-          </button>
-        </div>
+        </section>
       )}
+
+      <section className="rounded-2xl border border-border bg-card">
+        <div className="flex items-center justify-between border-b border-border px-6 py-4">
+          <div>
+            <h3 className="text-sm font-bold text-foreground">Workspace Workflows</h3>
+            <p className="text-[11px] text-muted-foreground">{workspace?.name || 'No workspace selected'}</p>
+          </div>
+          <Badge variant="primary">{workflows.length} definitions</Badge>
+        </div>
+
+        {workflowsLoading ? (
+          <LoadingState text="Loading workflows..." />
+        ) : workflows.length === 0 ? (
+          <EmptyState icon={FileCode2} title="No Workflows" text="Create a YAML workflow to coordinate multiple agents." />
+        ) : (
+          <div className="divide-y divide-border">
+            {workflows.map((workflow) => (
+              <div key={workflow.id} className="px-6 py-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h4 className="text-sm font-bold text-foreground">{workflow.name}</h4>
+                      <Badge variant={workflow.errors.length ? 'error' : 'success'}>
+                        {workflow.errors.length ? 'Invalid' : `${workflow.step_count} steps`}
+                      </Badge>
+                    </div>
+                    <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                      {workflow.description || workflow.id}
+                    </p>
+                    {workflow.errors.length > 0 && (
+                      <p className="mt-2 text-xs font-medium text-rose-500">{workflow.errors.join(', ')}</p>
+                    )}
+                    {runOutput[workflow.id] && (
+                      <pre className="mt-3 max-h-32 overflow-auto rounded-xl border border-border bg-muted/50 p-3 text-xs text-muted-foreground">
+                        {runOutput[workflow.id]}
+                      </pre>
+                    )}
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <button
+                      onClick={() => runWorkflowMutation.mutate(workflow.id)}
+                      disabled={workflow.errors.length > 0 || runWorkflowMutation.isPending}
+                      className="flex h-9 w-9 items-center justify-center rounded-xl border border-transparent text-muted-foreground transition-all hover:border-emerald-500/20 hover:bg-emerald-500/10 hover:text-emerald-500 disabled:opacity-40"
+                      aria-label={`Run ${workflow.name}`}
+                    >
+                      <Play className="h-4 w-4" />
+                    </button>
+                    <button
+                      onClick={() => deleteWorkflowMutation.mutate(workflow.id)}
+                      disabled={deleteWorkflowMutation.isPending}
+                      className="flex h-9 w-9 items-center justify-center rounded-xl border border-transparent text-muted-foreground transition-all hover:border-rose-500/20 hover:bg-rose-500/10 hover:text-rose-500 disabled:opacity-40"
+                      aria-label={`Delete ${workflow.name}`}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="rounded-2xl border border-border bg-card">
+        <div className="border-b border-border px-6 py-4">
+          <h3 className="text-sm font-bold text-foreground">Scheduled Tasks</h3>
+          <p className="text-[11px] text-muted-foreground">APScheduler-backed recurring and one-shot jobs</p>
+        </div>
+
+        {tasksLoading ? (
+          <LoadingState text="Synchronizing task scheduler..." />
+        ) : tasks.length === 0 ? (
+          <EmptyState icon={Clock} title="No Scheduled Tasks" text="Create one-shot or recurring task schedules through the API or CLI." />
+        ) : (
+          <div className="overflow-hidden">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-border bg-muted/50">
+                  <TableHead>Name</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Schedule</TableHead>
+                  <TableHead>State</TableHead>
+                  <TableHead>Runs</TableHead>
+                  <TableHead align="right">Actions</TableHead>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {tasks.map((task) => (
+                  <tr key={task.id} className="group transition-colors hover:bg-muted/30">
+                    <td className="px-6 py-5">
+                      <div className="flex items-center gap-4">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-muted transition-colors group-hover:border-primary/30">
+                          <Clock className="h-5 w-5 text-primary/70 group-hover:text-primary" />
+                        </div>
+                        <span className="font-bold text-foreground transition-colors group-hover:text-primary">
+                          {task.name}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-5"><Badge>{task.task_type}</Badge></td>
+                    <td className="px-6 py-5 font-mono text-sm font-medium text-muted-foreground">{task.schedule}</td>
+                    <td className="px-6 py-5">
+                      <Badge variant={task.state === 'active' ? 'success' : task.state === 'paused' ? 'warning' : 'default'}>
+                        {task.state}
+                      </Badge>
+                    </td>
+                    <td className="px-6 py-5 text-sm font-bold text-foreground">{task.run_count}</td>
+                    <td className="px-6 py-5 text-right">
+                      <div className="flex items-center justify-end gap-2 opacity-0 transition-opacity group-hover:opacity-100">
+                        <IconButton icon={task.state === 'active' ? Pause : Play} label="Toggle task" />
+                        <IconButton icon={Trash2} label="Delete task" danger />
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
     </div>
+  )
+}
+
+function TableHead({ children, align = 'left' }: { children: React.ReactNode; align?: 'left' | 'right' }) {
+  return (
+    <th
+      className={`px-6 py-4 text-[10px] font-bold uppercase tracking-[0.2em] text-muted-foreground ${
+        align === 'right' ? 'text-right' : 'text-left'
+      }`}
+    >
+      {children}
+    </th>
+  )
+}
+
+function LoadingState({ text }: { text: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-20">
+      <Spinner />
+      <p className="mt-4 text-sm font-medium text-muted-foreground">{text}</p>
+    </div>
+  )
+}
+
+function EmptyState({
+  icon: Icon,
+  title,
+  text,
+}: {
+  icon: LucideIcon
+  title: string
+  text: string
+}) {
+  return (
+    <div className="py-20 text-center">
+      <div className="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl border border-border bg-muted">
+        <Icon className="h-8 w-8 text-muted-foreground/25" />
+      </div>
+      <h3 className="text-lg font-bold text-foreground">{title}</h3>
+      <p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-muted-foreground">{text}</p>
+    </div>
+  )
+}
+
+function IconButton({
+  icon: Icon,
+  label,
+  danger = false,
+}: {
+  icon: LucideIcon
+  label: string
+  danger?: boolean
+}) {
+  return (
+    <button
+      className={`flex h-9 w-9 items-center justify-center rounded-xl border border-transparent text-muted-foreground transition-all ${
+        danger
+          ? 'hover:border-rose-500/20 hover:bg-rose-500/10 hover:text-rose-500'
+          : 'hover:border-primary/20 hover:bg-primary/10 hover:text-primary'
+      }`}
+      aria-label={label}
+    >
+      <Icon className="h-4 w-4" />
+    </button>
   )
 }
