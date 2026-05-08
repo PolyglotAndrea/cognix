@@ -38,7 +38,11 @@ _method_permissions: dict[str, str] = {
     "agent.delete": "agents:write",
     "agent.list": "agents:read",
     "task.create": "tasks:write",
+    "task.delete": "tasks:write",
     "task.list": "tasks:read",
+    "task.pause": "tasks:write",
+    "task.resume": "tasks:write",
+    "task.runs": "tasks:read",
     "task.trigger": "tasks:write",
     "workflow.list": "agents:read",
     "workflow.run": "agents:write",
@@ -157,6 +161,7 @@ async def _list_methods(params: dict, registry: AgentRegistry) -> list[str]:
 async def _task_create(params: dict, registry: AgentRegistry) -> dict:
     import uuid
 
+    from cognix.api.state import get_scheduler_engine, schedule_task_in_engine
     from cognix.scheduler.store import TaskStore
     from cognix.storage.models import TaskType
 
@@ -164,14 +169,23 @@ async def _task_create(params: dict, registry: AgentRegistry) -> dict:
     store = TaskStore()
 
     task_type = TaskType(params.get("task_type", "agent_call"))
+    payload = {**params.get("payload", {}), "task_type": task_type.value}
+    schedule = params["schedule"]
+    name = params.get("name", task_id)
     await store.create(
         task_id=task_id,
-        name=params.get("name", task_id),
+        name=name,
         task_type=task_type,
-        schedule=params["schedule"],
-        payload=params.get("payload", {}),
+        schedule=schedule,
+        payload=payload,
+        max_retries=params.get("max_retries", 3),
     )
-    return {"id": task_id, "state": "active"}
+
+    engine = get_scheduler_engine()
+    if engine:
+        schedule_task_in_engine(engine, task_id, schedule, payload, name=name)
+
+    return {"id": task_id, "name": name, "state": "active"}
 
 
 @rpc_method("task.list")
@@ -193,6 +207,60 @@ async def _task_list(params: dict, registry: AgentRegistry) -> list[dict]:
     ]
 
 
+@rpc_method("task.delete")
+async def _task_delete(params: dict, registry: AgentRegistry) -> dict:
+    from cognix.api.state import get_scheduler_engine
+    from cognix.scheduler.store import TaskStore
+
+    task_id = params["task_id"]
+    engine = get_scheduler_engine()
+    if engine:
+        engine.remove(task_id)
+
+    if not await TaskStore().delete(task_id):
+        raise RPCError(METHOD_NOT_FOUND, f"Task '{task_id}' not found")
+
+    return {"deleted": task_id}
+
+
+@rpc_method("task.pause")
+async def _task_pause(params: dict, registry: AgentRegistry) -> dict:
+    from cognix.api.state import get_scheduler_engine
+    from cognix.scheduler.store import TaskStore
+    from cognix.storage.models import TaskState
+
+    task_id = params["task_id"]
+    if not await TaskStore().update_state(task_id, TaskState.PAUSED):
+        raise RPCError(METHOD_NOT_FOUND, f"Task '{task_id}' not found")
+
+    engine = get_scheduler_engine()
+    if engine:
+        engine.pause(task_id)
+
+    return {"id": task_id, "state": "paused"}
+
+
+@rpc_method("task.resume")
+async def _task_resume(params: dict, registry: AgentRegistry) -> dict:
+    from cognix.api.state import get_scheduler_engine, schedule_task_in_engine
+    from cognix.scheduler.store import TaskStore
+    from cognix.storage.models import TaskState
+
+    task_id = params["task_id"]
+    store = TaskStore()
+    if not await store.update_state(task_id, TaskState.ACTIVE):
+        raise RPCError(METHOD_NOT_FOUND, f"Task '{task_id}' not found")
+
+    task = await store.get(task_id)
+    engine = get_scheduler_engine()
+    if engine and task:
+        payload = _payload_dict(task.payload)
+        schedule_task_in_engine(engine, task.id, task.schedule, payload, name=task.name)
+        engine.resume(task_id)
+
+    return {"id": task_id, "state": "active"}
+
+
 @rpc_method("task.trigger")
 async def _task_trigger(params: dict, registry: AgentRegistry) -> dict:
     from cognix.scheduler.executor import TaskExecutor
@@ -204,9 +272,28 @@ async def _task_trigger(params: dict, registry: AgentRegistry) -> dict:
     if not task:
         raise RPCError(METHOD_NOT_FOUND, f"Task '{task_id}' not found")
 
-    payload = json.loads(task.payload) if isinstance(task.payload, str) else task.payload
+    payload = _payload_dict(task.payload)
     executor = TaskExecutor(agent_registry=registry)
     return await executor.execute(task_id, payload)
+
+
+@rpc_method("task.runs")
+async def _task_runs(params: dict, registry: AgentRegistry) -> list[dict]:
+    from cognix.scheduler.store import TaskStore
+
+    task_id = params["task_id"]
+    runs = await TaskStore().get_runs(task_id, limit=params.get("limit", 20))
+    return [
+        {
+            "id": r.id,
+            "status": r.status,
+            "result": r.result[:2000] if r.result else "",
+            "error": r.error,
+            "duration_ms": r.duration_ms,
+            "started_at": r.started_at.isoformat() if r.started_at else None,
+        }
+        for r in runs
+    ]
 
 
 # ── Workflow methods ────────────────────────────────────────────────
@@ -324,6 +411,15 @@ def _ensure_rpc_permission(method: str, user: Any = None) -> None:
     role = getattr(getattr(user, "role", ""), "value", getattr(user, "role", ""))
     if not has_permission(str(role), permission):
         raise RPCError(FORBIDDEN, f"Permission required: {permission}")
+
+
+def _payload_dict(payload: Any) -> dict[str, Any]:
+    if isinstance(payload, str):
+        try:
+            return json.loads(payload)
+        except json.JSONDecodeError:
+            return {}
+    return payload or {}
 
 
 def _error_response(

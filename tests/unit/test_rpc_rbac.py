@@ -44,5 +44,7 @@ async def test_rpc_allows_unrestricted_system_methods_for_viewer() -> None:
 
 def test_rpc_permission_mapping_documents_mutating_methods() -> None:
     assert rpc_permission("agent.create") == "agents:write"
+    assert rpc_permission("task.pause") == "tasks:write"
+    assert rpc_permission("task.runs") == "tasks:read"
     assert rpc_permission("task.trigger") == "tasks:write"
     assert rpc_permission("system.ping") is None
