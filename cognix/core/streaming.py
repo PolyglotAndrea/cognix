@@ -13,6 +13,7 @@ class StreamEventType(StrEnum):
     DELTA = "delta"
     TOOL_CALL = "tool_call"
     TOOL_RESULT = "tool_result"
+    APPROVAL_REQUEST = "approval_request"
     ERROR = "error"
     DONE = "done"
 

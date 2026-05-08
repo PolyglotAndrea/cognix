@@ -73,6 +73,7 @@ class Agent:
 
     _event_bus: EventBus | None = field(default=None, repr=False)
     _tool_map: dict[str, Tool] = field(default_factory=dict, repr=False)
+    _pending_approval_event: dict[str, Any] | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         self._tool_map = {t.name: t for t in self.tools}
@@ -213,6 +214,7 @@ class Agent:
                         },
                     )
                     tool_result = await self._execute_tool(tc)
+                    approval_event = self._consume_pending_approval_event()
                     ctx.add_message(
                         "tool",
                         tool_result,
@@ -228,6 +230,16 @@ class Agent:
                             "result": tool_result,
                         },
                     )
+                    if approval_event:
+                        yield AgentEvent("approval_request", approval_event)
+                        yield AgentEvent(
+                            "done",
+                            {
+                                "finish_reason": "waiting_for_approval",
+                                "approval_id": approval_event["approval_id"],
+                            },
+                        )
+                        return
 
             self.state = AgentState.ERROR
             raise RuntimeError(f"Agent {self.name} exceeded max iterations ({self.max_iterations})")
@@ -389,6 +401,18 @@ class Agent:
                         "reason": decision.reason,
                     },
                 )
+                self._pending_approval_event = {
+                    "approval_id": approval_id,
+                    "agent_id": self.id,
+                    "workspace_id": self.workspace_id,
+                    "tool": name,
+                    "name": name,
+                    "arguments": arguments,
+                    "args": arguments,
+                    "access_level": tool.access_level,
+                    "reason": decision.reason,
+                    "permission_mode": self.permission_mode,
+                }
                 await self._emit(
                     Events.AGENT_WAITING,
                     {"agent_id": self.id, "approval_id": approval_id, "reason": decision.reason},
@@ -474,6 +498,11 @@ class Agent:
             reason=reason,
         )
         return request.id
+
+    def _consume_pending_approval_event(self) -> dict[str, Any] | None:
+        event = self._pending_approval_event
+        self._pending_approval_event = None
+        return event
 
     def _next_user_content(self, ctx: Context, message: str) -> Any:
         return ctx.metadata.get("next_user_content", message)

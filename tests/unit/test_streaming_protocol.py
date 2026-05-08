@@ -11,7 +11,14 @@ from cognix.core.streaming import STREAM_EVENT_TYPES, encode_sse_event, stream_p
 
 
 def test_stream_payload_keeps_canonical_event_types() -> None:
-    assert STREAM_EVENT_TYPES == {"delta", "tool_call", "tool_result", "error", "done"}
+    assert STREAM_EVENT_TYPES == {
+        "delta",
+        "tool_call",
+        "tool_result",
+        "approval_request",
+        "error",
+        "done",
+    }
 
     payload = stream_payload(AgentEvent("delta", {"delta": "hello"}), extra={"model": "echo"})
 

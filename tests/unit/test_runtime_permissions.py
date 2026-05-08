@@ -84,3 +84,43 @@ async def test_agent_resumes_approved_tool(monkeypatch, tmp_path) -> None:
     assert result == "wrote x"
     assert ApprovalStore().get(approval_id).status == "completed"
     assert agent.state == AgentState.IDLE
+
+
+@pytest.mark.asyncio
+async def test_agent_streams_approval_request_event(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("COGNIX_HOME", str(tmp_path / ".cognix"))
+
+    @tool(name="write_note", description="Write a note", access_level="write")
+    async def write_note(content: str) -> str:
+        return f"wrote {content}"
+
+    class ApprovalAgent(Agent):
+        async def _call_llm(self, ctx):
+            from cognix.core.agent import AgentResponse
+
+            return AgentResponse(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "tc-1",
+                        "name": "write_note",
+                        "arguments": {"content": "x"},
+                    }
+                ],
+            )
+
+    agent = ApprovalAgent(
+        name="guarded",
+        model="mock",
+        tools=[write_note],
+        permission_mode="ask",
+        max_iterations=1,
+    )
+    events = [event async for event in agent.stream_events("write")]
+
+    approval = next(event for event in events if event.type == "approval_request")
+    done = events[-1]
+    assert approval.data["tool"] == "write_note"
+    assert approval.data["approval_id"]
+    assert done.type == "done"
+    assert done.data["finish_reason"] == "waiting_for_approval"
