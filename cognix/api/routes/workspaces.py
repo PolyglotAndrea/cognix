@@ -69,6 +69,17 @@ class UpsertMCPServerRequest(BaseModel):
     metadata: dict = Field(default_factory=dict)
 
 
+class ClaudeAgentRunRequestBody(BaseModel):
+    prompt: str
+    model: str | None = None
+    system_prompt: str | None = None
+    permission_mode: str = "workspace-write"
+    max_turns: int | None = None
+    resume: str | None = None
+    allowed_tools: list[str] = Field(default_factory=list)
+    disallowed_tools: list[str] = Field(default_factory=list)
+
+
 class SaveWorkflowRequest(BaseModel):
     name: str
     definition: str
@@ -246,6 +257,36 @@ async def delete_workspace_mcp_server(
     if not _workspace_config(workspace_id).delete_mcp_server(server_id):
         raise HTTPException(404, "MCP server not found")
     return {"deleted": server_id}
+
+
+@router.post("/{workspace_id}/claude/stream")
+async def stream_claude_agent(
+    workspace_id: str,
+    body: ClaudeAgentRunRequestBody,
+    user: CurrentUser = Depends(get_current_user),
+) -> StreamingResponse:
+    from cognix.claude.runtime import ClaudeAgentRunRequest, ClaudeAgentRuntime
+
+    if not WorkspaceManager().get(workspace_id):
+        raise HTTPException(404, "Workspace not found")
+
+    request = ClaudeAgentRunRequest(
+        workspace_id=workspace_id,
+        prompt=body.prompt,
+        model=body.model,
+        system_prompt=body.system_prompt,
+        permission_mode=body.permission_mode,
+        max_turns=body.max_turns,
+        resume=body.resume,
+        allowed_tools=body.allowed_tools,
+        disallowed_tools=body.disallowed_tools,
+    )
+
+    async def event_generator():
+        async for event in ClaudeAgentRuntime().stream(request):
+            yield encode_sse_event(event, extra={"runtime": "claude-agent-sdk"})
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @router.get("/{workspace_id}/workflows")
