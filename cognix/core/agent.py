@@ -396,7 +396,15 @@ class Agent:
             try:
                 from cognix.memory.pipeline import ContextBuilder
 
-                pack = await ContextBuilder().build(message, workspace_id=self.workspace_id)
+                memory_options = self._workspace_memory_options()
+
+                pack = await ContextBuilder().build(
+                    message,
+                    workspace_id=self.workspace_id,
+                    include_hot_memory=memory_options.get("include_hot_memory", True),
+                    include_cold_memory=memory_options.get("include_cold_memory", True),
+                    include_skills=memory_options.get("include_skills", True),
+                )
                 rendered = pack.render_system_context()
                 if rendered:
                     ctx.add_message("system", rendered)
@@ -405,6 +413,18 @@ class Agent:
                 logger.exception("ContextBuilder failed for agent %s", self.id)
 
         await self._inject_relevant_memory(ctx, message)
+
+    def _workspace_memory_options(self) -> dict[str, Any]:
+        if not self.workspace_id:
+            return {}
+        try:
+            from cognix.local.workspace_config import WorkspaceConfigStore
+
+            settings = WorkspaceConfigStore(self.workspace_id).get_settings()
+            return settings.get("context", {})
+        except Exception:
+            logger.exception("Workspace memory settings failed for agent %s", self.id)
+            return {}
 
     async def _inject_relevant_memory(self, ctx: Context, message: str) -> None:
         """Inject a compact long-term memory recall into the context."""

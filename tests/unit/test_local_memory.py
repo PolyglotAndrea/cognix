@@ -65,6 +65,17 @@ async def test_context_builder_loads_hot_cold_and_procedural_memory(tmp_path):
     assert "Python testing strategy" in rendered
     assert "Use pytest" in rendered
 
+    cold_only = await ContextBuilder(home).build(
+        "python tests",
+        workspace_id=workspace.id,
+        include_hot_memory=False,
+        include_skills=False,
+    )
+    cold_rendered = cold_only.render_system_context()
+    assert "Python testing strategy" in cold_rendered
+    assert "Alice" not in cold_rendered
+    assert "Use pytest" not in cold_rendered
+
 
 @pytest.mark.asyncio
 async def test_agent_writes_cold_memory_under_cognix_home(tmp_path, monkeypatch):

@@ -269,16 +269,20 @@ class ContextBuilder:
         user_message: str,
         *,
         workspace_id: str | None = None,
+        include_hot_memory: bool = True,
+        include_cold_memory: bool = True,
         include_skills: bool = True,
         token_budget: int = 8000,
         deep_memory: str = "",
     ) -> ContextPack:
-        hot = self.load_hot_memory(workspace_id=workspace_id)
-        cold = await self.cold_store.search(
-            user_message,
-            workspace_id=workspace_id,
-            limit=5,
-        )
+        hot = self.load_hot_memory(workspace_id=workspace_id) if include_hot_memory else HotMemory()
+        cold = []
+        if include_cold_memory:
+            cold = await self.cold_store.search(
+                user_message,
+                workspace_id=workspace_id,
+                limit=5,
+            )
         skills = self.search_procedural_memory(user_message, workspace_id=workspace_id, limit=3)
         if not include_skills:
             skills = []
