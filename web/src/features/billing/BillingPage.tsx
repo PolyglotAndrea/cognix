@@ -46,12 +46,12 @@ export default function BillingPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold text-gray-900">Billing</h2>
+      <div className="flex items-center justify-between mb-8">
+        <h2 className="text-2xl font-bold text-foreground tracking-tight">Billing & Subscriptions</h2>
         {currentPlan !== 'free' && (
           <button
             onClick={handlePortal}
-            className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+            className="flex items-center gap-2 px-4 py-2 bg-muted border border-border rounded-xl hover:bg-muted/80 text-foreground transition-all active:scale-95 font-semibold text-sm shadow-sm"
           >
             <ExternalLink className="w-4 h-4" />
             Manage Subscription
@@ -61,22 +61,25 @@ export default function BillingPage() {
 
       {/* Current usage */}
       {usage && (
-        <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100 mb-8">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">Current Usage</h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="bg-muted/30 rounded-2xl p-8 border border-border mb-10 backdrop-blur-sm">
+          <h3 className="text-lg font-bold text-foreground mb-6 flex items-center gap-2">
+            <div className="w-2 h-2 rounded-full bg-primary" />
+            Current Resource Usage
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
             {Object.entries(usage.usage || {}).map(([metric, used]) => {
               const limit = usage.limits?.[metric] || 1
               const percent = Math.min(((used as number) / limit) * 100, 100)
               return (
                 <div key={metric}>
-                  <div className="flex justify-between text-sm mb-2">
-                    <span className="text-gray-600 capitalize">{metric.replace('_', ' ')}</span>
-                    <span className="text-gray-900 font-medium">{used as number} / {limit}</span>
+                  <div className="flex justify-between text-xs font-bold mb-3">
+                    <span className="text-muted-foreground uppercase tracking-widest">{metric.replace('_', ' ')}</span>
+                    <span className="text-foreground">{used as number} / {limit}</span>
                   </div>
-                  <div className="w-full bg-gray-200 rounded-full h-3">
+                  <div className="w-full bg-background/50 rounded-full h-2.5 border border-border overflow-hidden">
                     <div
-                      className={`h-3 rounded-full transition-all ${
-                        percent > 80 ? 'bg-red-500' : percent > 50 ? 'bg-yellow-500' : 'bg-indigo-500'
+                      className={`h-full rounded-full transition-all duration-500 ${
+                        percent > 80 ? 'bg-rose-500' : percent > 50 ? 'bg-amber-500' : 'bg-primary'
                       }`}
                       style={{ width: `${percent}%` }}
                     />
@@ -89,7 +92,7 @@ export default function BillingPage() {
       )}
 
       {/* Plans */}
-      <h3 className="text-lg font-semibold text-gray-900 mb-4">Plans</h3>
+      <h3 className="text-lg font-bold text-foreground mb-6 uppercase tracking-widest text-[10px]">Select a Plan</h3>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {plans?.map((plan: any) => {
           const isCurrent = plan.id === currentPlan
@@ -98,64 +101,60 @@ export default function BillingPage() {
           return (
             <div
               key={plan.id}
-              className={`bg-white rounded-xl p-6 shadow-sm border-2 transition-colors ${
-                isCurrent ? 'border-indigo-500' : 'border-gray-100 hover:border-gray-200'
+              className={`bg-card rounded-2xl p-6 border-2 transition-all duration-300 relative overflow-hidden group ${
+                isCurrent 
+                  ? 'border-primary shadow-xl shadow-primary/10' 
+                  : 'border-border hover:border-primary/40 hover:shadow-lg'
               }`}
             >
               {isCurrent && (
-                <span className="inline-block px-2 py-1 bg-indigo-100 text-indigo-700 text-xs rounded-full mb-4">
-                  Current Plan
-                </span>
+                <div className="absolute top-0 right-0">
+                  <div className="bg-primary text-white text-[10px] font-bold px-3 py-1 rounded-bl-xl uppercase tracking-wider">
+                    Active
+                  </div>
+                </div>
               )}
-              <h4 className="text-xl font-bold text-gray-900">{plan.name}</h4>
-              <div className="mt-2 mb-6">
+              <h4 className="text-xl font-bold text-foreground mb-1">{plan.name}</h4>
+              <div className="mt-4 mb-8">
                 {isEnterprise ? (
-                  <p className="text-2xl font-bold text-gray-900">Custom</p>
+                  <p className="text-2xl font-extrabold text-foreground tracking-tight">Custom Pricing</p>
                 ) : (
-                  <>
-                    <span className="text-3xl font-bold text-gray-900">${plan.price_monthly}</span>
-                    <span className="text-gray-500">/month</span>
-                  </>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-3xl font-extrabold text-foreground tracking-tight">${plan.price_monthly}</span>
+                    <span className="text-muted-foreground text-xs font-medium">/month</span>
+                  </div>
                 )}
               </div>
 
-              <ul className="space-y-3 mb-6">
-                <li className="flex items-center gap-2 text-sm text-gray-600">
-                  <Check className="w-4 h-4 text-green-500" />
-                  {plan.limits.max_agents} agents
-                </li>
-                <li className="flex items-center gap-2 text-sm text-gray-600">
-                  <Check className="w-4 h-4 text-green-500" />
-                  {plan.limits.api_calls_monthly.toLocaleString()} API calls/mo
-                </li>
-                <li className="flex items-center gap-2 text-sm text-gray-600">
-                  <Check className="w-4 h-4 text-green-500" />
-                  {plan.limits.tokens_monthly.toLocaleString()} tokens/mo
-                </li>
-                {plan.features.orchestration && (
-                  <li className="flex items-center gap-2 text-sm text-gray-600">
-                    <Check className="w-4 h-4 text-green-500" />
-                    Multi-agent orchestration
-                  </li>
-                )}
-                {plan.features.workflow_builder && (
-                  <li className="flex items-center gap-2 text-sm text-gray-600">
-                    <Check className="w-4 h-4 text-green-500" />
-                    Workflow builder
-                  </li>
-                )}
+              <ul className="space-y-4 mb-8">
+                {[
+                  { label: `${plan.limits.max_agents} agents` },
+                  { label: `${plan.limits.api_calls_monthly.toLocaleString()} API calls/mo` },
+                  { label: `${plan.limits.tokens_monthly.toLocaleString()} tokens/mo` },
+                  { label: 'Multi-agent orchestration', enabled: plan.features.orchestration },
+                  { label: 'Workflow builder', enabled: plan.features.workflow_builder },
+                ].map((feature, i) => (
+                  feature.enabled !== false && (
+                    <li key={i} className="flex items-center gap-3 text-xs font-medium text-foreground/80">
+                      <div className="shrink-0 w-5 h-5 rounded-full bg-emerald-500/10 flex items-center justify-center">
+                        <Check className="w-3 h-3 text-emerald-500" />
+                      </div>
+                      {feature.label}
+                    </li>
+                  )
+                ))}
               </ul>
 
               {!isCurrent && (
                 <button
                   onClick={() => isEnterprise ? null : handleCheckout(plan.id)}
-                  className={`w-full py-2 rounded-lg transition-colors ${
+                  className={`w-full py-3 rounded-xl font-bold text-xs uppercase tracking-widest transition-all active:scale-95 ${
                     isEnterprise
-                      ? 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                      : 'bg-indigo-600 text-white hover:bg-indigo-700'
+                      ? 'bg-muted text-muted-foreground hover:bg-muted/80'
+                      : 'bg-primary text-white hover:opacity-90 shadow-lg shadow-primary/20'
                   }`}
                 >
-                  {isEnterprise ? 'Contact Sales' : 'Upgrade'}
+                  {isEnterprise ? 'Contact Sales' : 'Upgrade Now'}
                 </button>
               )}
             </div>

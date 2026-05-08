@@ -1,5 +1,5 @@
 import { useRef, useEffect, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertCircle,
   CheckCircle2,
@@ -13,12 +13,15 @@ import {
   Wrench,
   ChevronRight,
   ChevronLeft,
+  ShieldQuestion,
+  ShieldCheck,
 } from 'lucide-react'
 import { api } from '@/shared/api/client'
 import { useWorkspaceStore } from './store'
 import { Panel, PanelHeader, PanelBody, Badge } from '@/shared/ui'
 
 const TABS = [
+  { key: 'approvals' as const, label: 'Ask', icon: ShieldQuestion },
   { key: 'tasks' as const, label: 'Tasks', icon: Clock },
   { key: 'files' as const, label: 'Files', icon: Folder },
   { key: 'events' as const, label: 'Events', icon: Activity },
@@ -70,17 +73,35 @@ interface WorkspaceEvent {
   [key: string]: unknown
 }
 
-export function RightPanel() {
+interface ApprovalRequest {
+  id: string
+  agent_id: string
+  workspace_id?: string | null
+  tool_name: string
+  arguments: Record<string, unknown>
+  access_level: string
+  reason: string
+  status: 'pending' | 'approved' | 'rejected' | 'completed'
+  result?: string
+  created_at: string
+  updated_at: string
+}
+
+export function RightPanel({ dragHandleProps }: { dragHandleProps?: any }) {
+  const queryClient = useQueryClient()
   const { rightPanelTab, setRightPanelTab, rightPanelOpen, toggleRightPanel, toolResults, executionLogs } =
     useWorkspaceStore()
   const logsEndRef = useRef<HTMLDivElement>(null)
   const [currentDir, setCurrentDir] = useState('')
   const [previewPath, setPreviewPath] = useState<string | null>(null)
+  
   const { data: workspaces = [] } = useQuery<WorkspaceInfo[]>({
     queryKey: ['workspaces'],
     queryFn: () => api.get('/workspaces').then((r) => r.data),
   })
+  
   const workspaceId = workspaces[0]?.id
+  
   const { data: tasks = [], isLoading: tasksLoading } = useQuery<TaskSummary[]>({
     queryKey: ['workspace-task-status'],
     queryFn: async () => {
@@ -98,21 +119,43 @@ export function RightPanel() {
     },
     refetchInterval: 5000,
   })
+  
   const { data: files = [], isLoading: filesLoading } = useQuery<WorkspaceFile[]>({
     queryKey: ['workspace-files', workspaceId, currentDir],
     queryFn: () => api.get(`/workspaces/${workspaceId}/files`, { params: { path: currentDir } }).then((r) => r.data),
     enabled: !!workspaceId,
   })
+  
   const { data: preview } = useQuery<{ path: string; content: string }>({
     queryKey: ['workspace-file-preview', workspaceId, previewPath],
     queryFn: () => api.get(`/workspaces/${workspaceId}/files/preview`, { params: { path: previewPath } }).then((r) => r.data),
     enabled: !!workspaceId && !!previewPath,
   })
+  
   const { data: events = [], isLoading: eventsLoading } = useQuery<WorkspaceEvent[]>({
     queryKey: ['workspace-events', workspaceId],
     queryFn: () => api.get(`/workspaces/${workspaceId}/events`, { params: { limit: 50 } }).then((r) => r.data),
     enabled: !!workspaceId,
     refetchInterval: 5000,
+  })
+
+  const { data: approvals = [], isLoading: approvalsLoading } = useQuery<ApprovalRequest[]>({
+    queryKey: ['approvals', workspaceId],
+    queryFn: () =>
+      api
+        .get('/approvals', { params: { workspace_id: workspaceId, include_resolved: true } })
+        .then((r) => r.data),
+    enabled: !!workspaceId,
+    refetchInterval: 5000,
+  })
+
+  const approvalMutation = useMutation({
+    mutationFn: ({ id, action }: { id: string; action: 'approve' | 'reject' | 'resume' }) =>
+      api.post(`/approvals/${id}/${action}`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['approvals', workspaceId] })
+      queryClient.invalidateQueries({ queryKey: ['workspace-events', workspaceId] })
+    },
   })
 
   useEffect(() => {
@@ -125,11 +168,12 @@ export function RightPanel() {
     return (
       <button
         onClick={toggleRightPanel}
-        className="w-10 shrink-0 border-l border-border bg-card flex flex-col items-center py-6 gap-8 hover:bg-muted transition-colors group"
+        className="w-10 shrink-0 border-l border-border bg-card flex flex-col items-center py-6 gap-8 hover:bg-muted transition-colors group h-full"
         title="Open output panel"
       >
         <ChevronLeft className="h-5 w-5 text-muted-foreground group-hover:text-foreground transition-colors" />
         <div className="flex flex-col gap-6">
+           <ShieldQuestion className="h-4 w-4 text-muted-foreground/30" />
            <Clock className="h-4 w-4 text-muted-foreground/30" />
            <Folder className="h-4 w-4 text-muted-foreground/30" />
            <Activity className="h-4 w-4 text-muted-foreground/30" />
@@ -142,14 +186,14 @@ export function RightPanel() {
   }
 
   return (
-    <Panel className="w-80 shrink-0 border-l border-border bg-card">
-      <PanelHeader className="justify-between bg-muted/50 backdrop-blur-md px-4 h-14">
-        <div className="flex bg-background/50 p-1 rounded-xl border border-border">
+    <Panel className="w-80 shrink-0 border-l border-border bg-card h-full">
+      <PanelHeader dragHandleProps={dragHandleProps} className="justify-between bg-muted/50 backdrop-blur-md px-4 h-14">
+        <div className="flex bg-background/50 p-1 rounded-xl border border-border overflow-x-auto scrollbar-hide max-w-[220px]">
           {TABS.map((tab) => (
             <button
               key={tab.key}
               onClick={() => setRightPanelTab(tab.key)}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all ${
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all shrink-0 ${
                 rightPanelTab === tab.key
                   ? 'bg-primary text-white shadow-lg shadow-primary/20'
                   : 'text-muted-foreground hover:text-foreground hover:bg-background'
@@ -160,12 +204,40 @@ export function RightPanel() {
             </button>
           ))}
         </div>
-        <button onClick={toggleRightPanel} className="p-2 rounded-xl hover:bg-muted text-muted-foreground hover:text-foreground transition-all">
+        <button onClick={toggleRightPanel} className="p-2 rounded-xl hover:bg-muted text-muted-foreground hover:text-foreground transition-all shrink-0">
           <ChevronRight className="h-4 w-4" />
         </button>
       </PanelHeader>
 
       <PanelBody className="p-0 scrollbar-hide bg-card">
+        {/* Approvals Tab */}
+        {rightPanelTab === 'approvals' && (
+          <div className="p-4 space-y-3">
+            {approvalsLoading ? (
+              <div className="py-20 text-center">
+                <ShieldQuestion className="h-8 w-8 text-muted-foreground/20 animate-pulse mx-auto mb-4" />
+                <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Loading Requests</p>
+              </div>
+            ) : approvals.length === 0 ? (
+              <div className="py-20 text-center">
+                <div className="w-16 h-16 bg-muted rounded-2xl flex items-center justify-center mx-auto mb-4 border border-border">
+                  <ShieldCheck className="h-8 w-8 text-muted-foreground/20" />
+                </div>
+                <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">No Approval Requests</p>
+              </div>
+            ) : (
+              approvals.map((approval) => (
+                <ApprovalCard
+                  key={approval.id}
+                  approval={approval}
+                  busy={approvalMutation.isPending}
+                  onAction={(action) => approvalMutation.mutate({ id: approval.id, action })}
+                />
+              ))
+            )}
+          </div>
+        )}
+
         {/* Tasks Tab */}
         {rightPanelTab === 'tasks' && (
           <div className="p-4 space-y-3">
@@ -431,6 +503,90 @@ function TaskStatusCard({ task }: { task: TaskSummary }) {
           {(latestRun.error || latestRun.result || 'No output.').slice(0, 500)}
         </pre>
       )}
+    </div>
+  )
+}
+
+function ApprovalCard({
+  approval,
+  busy,
+  onAction,
+}: {
+  approval: ApprovalRequest
+  busy: boolean
+  onAction: (action: 'approve' | 'reject' | 'resume') => void
+}) {
+  const isPending = approval.status === 'pending'
+  const isApproved = approval.status === 'approved'
+  const args = JSON.stringify(approval.arguments || {}, null, 2)
+
+  return (
+    <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4 transition-all hover:border-amber-500/30">
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <ShieldQuestion className="h-4 w-4 text-amber-500" />
+            <span className="truncate text-xs font-bold text-foreground">{approval.tool_name}</span>
+          </div>
+          <div className="mt-1 font-mono text-[10px] text-muted-foreground">{approval.id}</div>
+        </div>
+        <Badge variant={approval.status === 'rejected' ? 'error' : approval.status === 'completed' ? 'success' : 'warning'}>
+          {approval.status}
+        </Badge>
+      </div>
+
+      <p className="mb-3 text-xs leading-5 text-foreground/80">{approval.reason}</p>
+
+      <div className="mb-3 grid grid-cols-2 gap-2">
+        <div className="rounded-xl border border-border bg-background/50 p-2">
+          <div className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Access</div>
+          <div className="mt-1 text-xs font-bold text-foreground">{approval.access_level}</div>
+        </div>
+        <div className="rounded-xl border border-border bg-background/50 p-2">
+          <div className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Agent</div>
+          <div className="mt-1 truncate font-mono text-xs text-foreground">{approval.agent_id}</div>
+        </div>
+      </div>
+
+      <pre className="mb-3 max-h-28 overflow-auto rounded-xl border border-border bg-background/60 p-3 font-mono text-[11px] leading-5 text-muted-foreground">
+        {args}
+      </pre>
+
+      {approval.result && (
+        <pre className="mb-3 max-h-28 overflow-auto rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3 font-mono text-[11px] leading-5 text-emerald-600 dark:text-emerald-400">
+          {approval.result}
+        </pre>
+      )}
+
+      <div className="flex items-center gap-2">
+        {isPending && (
+          <>
+            <button
+              onClick={() => onAction('approve')}
+              disabled={busy}
+              className="flex-1 rounded-xl bg-emerald-500 px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-white transition-all hover:bg-emerald-600 disabled:opacity-50"
+            >
+              Approve
+            </button>
+            <button
+              onClick={() => onAction('reject')}
+              disabled={busy}
+              className="flex-1 rounded-xl bg-rose-500 px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-white transition-all hover:bg-rose-600 disabled:opacity-50"
+            >
+              Reject
+            </button>
+          </>
+        )}
+        {isApproved && (
+          <button
+            onClick={() => onAction('resume')}
+            disabled={busy}
+            className="w-full rounded-xl bg-primary px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-white transition-all hover:bg-primary/90 disabled:opacity-50"
+          >
+            Resume Agent
+          </button>
+        )}
+      </div>
     </div>
   )
 }

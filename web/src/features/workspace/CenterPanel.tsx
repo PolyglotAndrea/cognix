@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Bot,
@@ -19,7 +19,7 @@ import {
 import { api } from '@/shared/api/client'
 import { useAuthStore } from '@/features/auth/store'
 import { useWorkspaceStore } from './store'
-import { Spinner, Badge, RichMessage } from '@/shared/ui'
+import { Spinner, Badge, RichMessage, Panel, PanelHeader } from '@/shared/ui'
 
 interface Agent {
   id: string
@@ -74,7 +74,7 @@ interface PendingAttachment {
   content: string
 }
 
-export function CenterPanel() {
+export function CenterPanel({ dragHandleProps }: { dragHandleProps?: any }) {
   const { selectedAgentId, addToolResult, addLog } = useWorkspaceStore()
   const queryClient = useQueryClient()
   const [messages, setMessages] = useState<Message[]>([])
@@ -98,7 +98,7 @@ export function CenterPanel() {
   })
 
   const {
-    data: workspaces = [],
+    data: workspaces,
     isLoading: workspacesLoading,
     refetch: refetchWorkspaces,
   } = useQuery<WorkspaceInfo[]>({
@@ -106,14 +106,14 @@ export function CenterPanel() {
     queryFn: () => api.get('/workspaces').then((r) => r.data),
   })
 
-  const workspaceId = workspaces[0]?.id || null
+  const workspaceId = workspaces?.[0]?.id || null
   const availableModels = Array.from(
     new Set([agent?.model || 'echo', 'echo', 'gpt-4o-mini', 'gpt-4o', 'claude-3.5-sonnet'])
   )
   const activeModels = selectedModels.length > 0 ? selectedModels : [agent?.model || 'echo']
 
   const {
-    data: chats = [],
+    data: chats,
     isLoading: chatsLoading,
     refetch: refetchChats,
   } = useQuery<ChatSession[]>({
@@ -122,10 +122,16 @@ export function CenterPanel() {
     enabled: !!workspaceId && !!selectedAgentId,
   })
 
-  const agentChats = chats.filter((chat) => chat.metadata?.agent_id === selectedAgentId)
-  const activeChat = agentChats.find((chat) => chat.id === chatId) || null
+  const agentChats = useMemo(() => 
+    (chats || []).filter((chat) => chat.metadata?.agent_id === selectedAgentId),
+    [chats, selectedAgentId]
+  )
+  const activeChat = useMemo(() => 
+    agentChats.find((chat) => chat.id === chatId) || null,
+    [agentChats, chatId]
+  )
 
-  const { data: storedMessages = [], isLoading: messagesLoading } = useQuery<StoredMessage[]>({
+  const { data: storedMessages, isLoading: messagesLoading } = useQuery<StoredMessage[]>({
     queryKey: ['workspace-chat-messages', workspaceId, chatId],
     queryFn: () => api.get(`/workspaces/${workspaceId}/chats/${chatId}/messages`).then((r) => r.data),
     enabled: !!workspaceId && !!chatId && !isStreaming,
@@ -136,7 +142,7 @@ export function CenterPanel() {
   }, [messages])
 
   useEffect(() => {
-    if (workspacesLoading || ensuredWorkspaceRef.current || workspaces.length > 0) return
+    if (workspacesLoading || ensuredWorkspaceRef.current || (workspaces && workspaces.length > 0)) return
     ensuredWorkspaceRef.current = true
     api
       .post('/workspaces', { name: 'Default Workspace' })
@@ -149,7 +155,7 @@ export function CenterPanel() {
           timestamp: Date.now(),
         })
       })
-  }, [addLog, refetchWorkspaces, workspaces.length, workspacesLoading])
+  }, [addLog, refetchWorkspaces, workspaces?.length, workspacesLoading])
 
   useEffect(() => {
     setMessages([])
@@ -171,7 +177,7 @@ export function CenterPanel() {
   }, [agent, agentChats, chatId, chatsLoading, workspaceId])
 
   useEffect(() => {
-    if (isStreaming) return
+    if (isStreaming || !storedMessages) return
     setMessages(storedToMessages(storedMessages))
   }, [isStreaming, storedMessages])
 
@@ -345,6 +351,15 @@ export function CenterPanel() {
                 message: `Calling tool: ${event.name}`,
                 timestamp: Date.now(),
               })
+            } else if (event.type === 'approval_request') {
+              useWorkspaceStore.getState().setRightPanelTab('approvals')
+              addLog({
+                id: '',
+                level: 'warn',
+                message: `Approval requested for ${event.name || event.tool}: ${event.reason}`,
+                timestamp: Date.now(),
+              })
+              queryClient.invalidateQueries({ queryKey: ['approvals', workspaceId] })
             } else if (event.type === 'tool_result') {
               addToolResult({
                 id: '',
@@ -469,53 +484,55 @@ export function CenterPanel() {
   }
 
   return (
-    <div className="flex-1 flex flex-col min-w-0 bg-background relative">
+    <Panel className="flex-1 flex flex-col min-w-0 bg-background relative h-full">
       {/* Header */}
-      <div className="h-14 px-6 border-b border-border bg-card/50 backdrop-blur-md flex items-center justify-between shrink-0 z-20">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-primary/10 rounded-lg flex items-center justify-center border border-primary/20">
-            <Bot className="h-4 w-4 text-primary" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-bold text-foreground">{agent?.name || 'Agent'}</span>
-              <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shadow-sm shadow-emerald-500/50" />
+      <PanelHeader dragHandleProps={dragHandleProps} className="bg-card/50 backdrop-blur-md">
+        <div className="flex items-center justify-between w-full">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 bg-primary/10 rounded-lg flex items-center justify-center border border-primary/20">
+              <Bot className="h-4 w-4 text-primary" />
             </div>
-            <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest">{agent?.model}</p>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-bold text-foreground">{agent?.name || 'Agent'}</span>
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shadow-sm shadow-emerald-500/50" />
+              </div>
+              <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest">{agent?.model}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-4">
+            <button
+              onClick={() => createChat()}
+              disabled={!agent || !workspaceId}
+              className="w-8 h-8 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-30 flex items-center justify-center transition-colors"
+              aria-label="New chat"
+              title="New chat"
+            >
+              <MessageSquarePlus className="h-4 w-4" />
+            </button>
+            <button
+              onClick={() => setSettingsOpen((open) => !open)}
+              className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
+                settingsOpen
+                  ? 'bg-primary/10 text-primary'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-muted'
+              }`}
+              aria-label="Chat settings"
+              title="Chat settings"
+            >
+              <Settings className="h-4 w-4" />
+            </button>
+            {activeModels.length > 1 && (
+              <Badge variant="primary" className="h-6">
+                Compare {activeModels.length}
+              </Badge>
+            )}
+            <Badge variant="primary" className="h-6">
+              {activeChat?.title || 'Session Active'}
+            </Badge>
           </div>
         </div>
-        <div className="flex items-center gap-4">
-          <button
-            onClick={() => createChat()}
-            disabled={!agent || !workspaceId}
-            className="w-8 h-8 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-30 flex items-center justify-center transition-colors"
-            aria-label="New chat"
-            title="New chat"
-          >
-            <MessageSquarePlus className="h-4 w-4" />
-          </button>
-          <button
-            onClick={() => setSettingsOpen((open) => !open)}
-            className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
-              settingsOpen
-                ? 'bg-primary/10 text-primary'
-                : 'text-muted-foreground hover:text-foreground hover:bg-muted'
-            }`}
-            aria-label="Chat settings"
-            title="Chat settings"
-          >
-            <Settings className="h-4 w-4" />
-          </button>
-          {activeModels.length > 1 && (
-            <Badge variant="primary" className="h-6">
-              Compare {activeModels.length}
-            </Badge>
-          )}
-          <Badge variant="primary" className="h-6">
-            {activeChat?.title || 'Session Active'}
-          </Badge>
-        </div>
-      </div>
+      </PanelHeader>
 
       <div className="px-6 py-3 border-b border-border bg-card/30 flex items-center gap-3 shrink-0 overflow-hidden">
         <div className="flex items-center gap-2 mr-1 text-[10px] font-bold uppercase tracking-widest text-muted-foreground shrink-0">
@@ -746,7 +763,7 @@ export function CenterPanel() {
             : 'Multi-agent orchestration active • Tool calling enabled'}
         </p>
       </div>
-    </div>
+    </Panel>
   )
 }
 
@@ -800,7 +817,7 @@ function storedToMessages(storedMessages: StoredMessage[]): Message[] {
           {
             model: message.model || 'assistant',
             content: message.content,
-          },
+          }
         ],
       }
       compareByParent.set(message.parent_id, grouped)
@@ -815,14 +832,5 @@ function storedToMessages(storedMessages: StoredMessage[]): Message[] {
       model: message.model,
     })
   }
-
-  return rendered.map((message) => {
-    if (!message.responses || message.responses.length !== 1) return message
-    return {
-      id: message.id,
-      role: 'assistant',
-      content: message.responses[0].content,
-      model: message.responses[0].model,
-    }
-  })
+  return rendered
 }

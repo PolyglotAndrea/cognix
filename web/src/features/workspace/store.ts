@@ -17,12 +17,12 @@ export interface LogEntry {
 
 interface WorkspaceState {
   selectedAgentId: string | null
-  rightPanelTab: 'tasks' | 'files' | 'events' | 'results' | 'logs' | 'json'
+  rightPanelTab: 'approvals' | 'tasks' | 'files' | 'events' | 'results' | 'logs' | 'json'
   rightPanelOpen: boolean
   toolResults: ToolResult[]
   executionLogs: LogEntry[]
   setSelectedAgent: (id: string | null) => void
-  setRightPanelTab: (tab: 'tasks' | 'files' | 'events' | 'results' | 'logs' | 'json') => void
+  setRightPanelTab: (tab: 'approvals' | 'tasks' | 'files' | 'events' | 'results' | 'logs' | 'json') => void
   addToolResult: (result: ToolResult) => void
   addLog: (log: LogEntry) => void
   clearResults: () => void
