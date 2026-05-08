@@ -65,6 +65,7 @@ class CognixHome:
             "mcp",
             "bots",
             "memory",
+            "runtime",
             "logs",
             "cache",
         ):

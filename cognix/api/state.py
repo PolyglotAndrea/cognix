@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import datetime
@@ -21,6 +22,8 @@ logger = logging.getLogger(__name__)
 event_bus = EventBus()
 agent_registry = AgentRegistry(event_bus=event_bus)
 scheduler_engine: SchedulerEngine | None = None
+runtime_node_id: str | None = None
+runtime_heartbeat_task: asyncio.Task | None = None
 
 
 def agent_from_model(row: AgentModel) -> Agent:
@@ -133,6 +136,49 @@ async def start_scheduler() -> SchedulerEngine:
     engine.start()
     scheduler_engine = engine
     return engine
+
+
+async def start_runtime_node() -> str:
+    """Register this API process in the local runtime node registry."""
+    global runtime_node_id, runtime_heartbeat_task
+
+    from cognix.local.runtime import RuntimeNodeStore
+
+    store = RuntimeNodeStore()
+    node = store.register_current(
+        role="api",
+        capabilities=["rest", "rpc", "websocket", "scheduler", "agent-runtime"],
+    )
+    runtime_node_id = node.id
+    runtime_heartbeat_task = asyncio.create_task(_heartbeat_runtime_node(node.id))
+    return node.id
+
+
+async def _heartbeat_runtime_node(node_id: str) -> None:
+    from cognix.local.runtime import RuntimeNodeStore
+
+    store = RuntimeNodeStore()
+    while True:
+        store.heartbeat(node_id)
+        await asyncio.sleep(30)
+
+
+async def shutdown_runtime_node() -> None:
+    global runtime_node_id, runtime_heartbeat_task
+
+    if runtime_heartbeat_task:
+        runtime_heartbeat_task.cancel()
+        try:
+            await runtime_heartbeat_task
+        except asyncio.CancelledError:
+            pass
+        runtime_heartbeat_task = None
+
+    if runtime_node_id:
+        from cognix.local.runtime import RuntimeNodeStore
+
+        RuntimeNodeStore().mark_status(runtime_node_id, "offline")
+        runtime_node_id = None
 
 
 def get_scheduler_engine() -> SchedulerEngine | None:

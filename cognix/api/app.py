@@ -15,6 +15,7 @@ from cognix.api.routes.billing import router as billing_router
 from cognix.api.routes.bots import router as bots_router
 from cognix.api.routes.memory import router as memory_router
 from cognix.api.routes.rpc import router as rpc_router
+from cognix.api.routes.runtime import router as runtime_router
 from cognix.api.routes.skills import router as skills_router
 from cognix.api.routes.tasks import router as tasks_router
 from cognix.api.routes.workspaces import router as workspaces_router
@@ -23,7 +24,9 @@ from cognix.api.state import (
     event_bus,
     load_agents_from_db,
     set_scheduler_engine,
+    shutdown_runtime_node,
     shutdown_scheduler,
+    start_runtime_node,
     start_scheduler,
 )
 
@@ -35,10 +38,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     await init_db()
     await load_agents_from_db()
+    await start_runtime_node()
     await start_scheduler()
     try:
         yield
     finally:
+        await shutdown_runtime_node()
         await shutdown_scheduler()
         await close_db()
 
@@ -59,6 +64,7 @@ app.include_router(tasks_router)
 app.include_router(skills_router)
 app.include_router(workspaces_router)
 app.include_router(rpc_router)
+app.include_router(runtime_router)
 app.websocket("/ws/agents/{agent_id}/chat")(agent_chat_ws)
 
 
