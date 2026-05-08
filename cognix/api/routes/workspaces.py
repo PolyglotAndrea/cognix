@@ -19,6 +19,7 @@ from cognix.auth.dependencies import (
 )
 from cognix.core.agent import Agent
 from cognix.core.context import Context
+from cognix.core.streaming import encode_sse_event
 from cognix.local.attachments import AttachmentStore, ParsedAttachment
 from cognix.local.chat import AttachmentRef, ChatMessage, ChatStore
 from cognix.local.files import WorkspaceFileStore
@@ -509,8 +510,7 @@ async def stream_chat_message(
         ):
             if event.type == "delta":
                 assistant_content += event.data.get("delta", "")
-            payload = {"type": event.type, "model": model, **event.data}
-            yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            yield encode_sse_event(event, extra={"model": model})
         assistant = store.append_message(
             chat_id,
             role="assistant",

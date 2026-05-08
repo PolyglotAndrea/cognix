@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 from fastapi import APIRouter, Depends, HTTPException, WebSocket
 from pydantic import BaseModel
 from starlette.responses import StreamingResponse
@@ -11,6 +9,7 @@ from starlette.responses import StreamingResponse
 from cognix.api.security import authenticate_websocket
 from cognix.api.state import agent_registry, get_agent_runtime
 from cognix.auth.dependencies import CurrentUser, get_current_user, require_agents_write
+from cognix.core.streaming import encode_sse_event, stream_payload
 
 router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
 
@@ -170,8 +169,7 @@ async def agent_chat_stream(
 
     async def event_generator():
         async for event in agent.stream_events(body.message):
-            payload = {"type": event.type, **event.data}
-            yield f"data: {json.dumps(payload)}\n\n"
+            yield encode_sse_event(event)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
@@ -230,7 +228,7 @@ async def agent_chat_ws(websocket: WebSocket, agent_id: str) -> None:
             data = await websocket.receive_json()
             message = data.get("message", "")
             async for event in agent.stream_events(message):
-                await websocket.send_json({"type": event.type, **event.data})
+                await websocket.send_json(stream_payload(event))
     except Exception as e:
         await websocket.send_json({"type": "error", "message": str(e)})
     finally:

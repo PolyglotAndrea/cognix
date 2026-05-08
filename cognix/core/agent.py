@@ -44,7 +44,7 @@ class AgentChunk:
 
 @dataclass
 class AgentEvent:
-    """Structured runtime event suitable for SSE/WebSocket streaming."""
+    """Structured runtime event using delta/tool_call/tool_result/error/done types."""
 
     type: str
     data: dict[str, Any] = field(default_factory=dict)
@@ -232,7 +232,7 @@ class Agent:
         except Exception as e:
             self.state = AgentState.ERROR
             await self._emit(Events.AGENT_ERROR, {"agent_id": self.id, "error": str(e)})
-            yield AgentEvent("error", {"message": str(e)})
+            yield AgentEvent("error", {"message": str(e), "error": str(e)})
         finally:
             if self.state != AgentState.ERROR:
                 self.state = AgentState.IDLE
