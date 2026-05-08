@@ -22,6 +22,7 @@ class SkillTool:
     description: str
     parameters: dict[str, Any] = field(default_factory=dict)
     handler: Any = None
+    access_level: str = "read"
 
 
 @dataclass
@@ -102,6 +103,7 @@ def load_skill(skill_dir: Path) -> SkillInfo:
                 description=tool_def.get("description", ""),
                 parameters=tool_def.get("parameters", {}),
                 handler=handler_func,
+                access_level=tool_def.get("access_level", tool_def.get("permission", "read")),
             )
         )
 

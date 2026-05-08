@@ -92,6 +92,7 @@ async def get_skill(name: str, user: CurrentUser = Depends(require_skills_read))
                 "name": tool.name,
                 "description": tool.description,
                 "parameters": tool.parameters,
+                "access_level": tool.access_level,
             }
             for tool in skill.tools
         ],

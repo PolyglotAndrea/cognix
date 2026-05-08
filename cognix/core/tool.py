@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import inspect
 import logging
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
-from typing import Any, Callable, Coroutine
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,7 @@ class Tool:
     description: str
     handler: ToolHandler
     parameters: dict[str, Any] = field(default_factory=dict)
+    access_level: str = "read"
 
     async def execute(self, **kwargs: Any) -> Any:
         """Execute the tool with given parameters."""
@@ -54,6 +56,7 @@ class Tool:
         name: str | None = None,
         description: str | None = None,
         parameters: dict[str, Any] | None = None,
+        access_level: str = "read",
     ) -> Tool:
         """Create a Tool from an async function, inferring metadata from signature."""
         tool_name = name or func.__name__
@@ -67,6 +70,7 @@ class Tool:
             description=tool_desc,
             handler=func,
             parameters=parameters,
+            access_level=access_level,
         )
 
 
@@ -112,6 +116,7 @@ def tool(
     name: str | None = None,
     description: str | None = None,
     parameters: dict[str, Any] | None = None,
+    access_level: str = "read",
 ) -> Callable[[ToolHandler], Tool]:
     """Decorator to create a Tool from an async function.
 
@@ -122,6 +127,12 @@ def tool(
     """
 
     def decorator(func: ToolHandler) -> Tool:
-        return Tool.from_function(func, name=name, description=description, parameters=parameters)
+        return Tool.from_function(
+            func,
+            name=name,
+            description=description,
+            parameters=parameters,
+            access_level=access_level,
+        )
 
     return decorator

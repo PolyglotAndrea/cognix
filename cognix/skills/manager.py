@@ -180,6 +180,7 @@ class SkillsManager:
                 "name": t.name,
                 "description": t.description,
                 "parameters": t.parameters,
+                "access_level": t.access_level,
             }
             for t in skill.tools
         ]

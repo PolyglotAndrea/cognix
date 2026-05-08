@@ -13,6 +13,7 @@ from typing import Any
 from cognix.core.context import Context
 from cognix.core.events import EventBus, Events
 from cognix.core.memory import InMemoryBackend, MemoryBackend
+from cognix.core.permissions import decide_permission
 from cognix.core.tool import Tool
 
 logger = logging.getLogger(__name__)
@@ -363,6 +364,25 @@ class Agent:
         if not tool:
             error_msg = f"Tool '{name}' not found"
             await self._emit(Events.TOOL_ERROR, {"tool": name, "error": error_msg})
+            return error_msg
+
+        decision = decide_permission(self.permission_mode, tool.access_level, f"tool '{name}'")
+        if not decision.allowed:
+            error_msg = (
+                f"Permission denied: {decision.reason}"
+                if not decision.requires_approval
+                else f"Approval required: {decision.reason}"
+            )
+            await self._emit(
+                Events.TOOL_ERROR,
+                {
+                    "tool": name,
+                    "error": error_msg,
+                    "permission_mode": self.permission_mode,
+                    "access_level": tool.access_level,
+                    "requires_approval": decision.requires_approval,
+                },
+            )
             return error_msg
 
         await self._emit(Events.TOOL_CALLED, {"tool": name, "arguments": arguments})

@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from cognix.core.permissions import ensure_permission
 from cognix.local.home import CognixHome
 from cognix.local.workspace import WorkspaceManager
 
@@ -22,9 +23,16 @@ class WorkspaceFile:
 class WorkspaceFileStore:
     """Safely read and write files under a workspace's files directory."""
 
-    def __init__(self, workspace_id: str, *, home: CognixHome | None = None) -> None:
+    def __init__(
+        self,
+        workspace_id: str,
+        *,
+        home: CognixHome | None = None,
+        permission_mode: str = "workspace-write",
+    ) -> None:
         self.home = (home or CognixHome.default()).ensure()
         self.workspace_id = workspace_id
+        self.permission_mode = permission_mode
         self.workspace_manager = WorkspaceManager(self.home)
         if not self.workspace_manager.get(workspace_id):
             raise FileNotFoundError(f"Workspace not found: {workspace_id}")
@@ -60,6 +68,7 @@ class WorkspaceFileStore:
         return items
 
     def read_text(self, relative_path: str, *, max_bytes: int = 200_000) -> str:
+        ensure_permission(self.permission_mode, "read", f"read workspace file {relative_path}")
         path = self.resolve(relative_path)
         if not path.exists() or not path.is_file():
             raise FileNotFoundError(f"File not found: {relative_path}")
@@ -72,12 +81,14 @@ class WorkspaceFileStore:
         return raw.decode("utf-8", errors="replace")
 
     def write_text(self, relative_path: str, content: str) -> WorkspaceFile:
+        ensure_permission(self.permission_mode, "write", f"write workspace file {relative_path}")
         path = self.resolve(relative_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
         return self.describe(path)
 
     def delete(self, relative_path: str) -> bool:
+        ensure_permission(self.permission_mode, "write", f"delete workspace file {relative_path}")
         path = self.resolve(relative_path)
         if not path.exists() or not path.is_file():
             return False

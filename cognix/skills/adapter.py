@@ -26,6 +26,7 @@ def skill_tool_to_core_tool(skill: SkillInfo, skill_tool: SkillTool) -> Tool:
         description=skill_tool.description,
         handler=_handler,
         parameters=skill_tool.parameters,
+        access_level=skill_tool.access_level,
     )
 
 
