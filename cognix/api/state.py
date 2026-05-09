@@ -171,7 +171,7 @@ async def _heartbeat_runtime_node(node_id: str) -> None:
 
     store = RuntimeNodeStore()
     while True:
-        store.heartbeat(node_id)
+        store.heartbeat(node_id, metadata=_runtime_node_metadata())
         await asyncio.sleep(30)
 
 
@@ -199,6 +199,16 @@ def get_scheduler_engine() -> SchedulerEngine | None:
 
 def get_task_dispatcher() -> DistributedTaskDispatcher | None:
     return task_dispatcher
+
+
+def _runtime_node_metadata() -> dict[str, Any]:
+    scheduler = get_scheduler_engine()
+    dispatcher = get_task_dispatcher()
+    return {
+        "scheduler_running": bool(scheduler and scheduler.running),
+        "scheduler_jobs": len(scheduler.list_jobs()) if scheduler else 0,
+        "dispatcher": dispatcher.status() if dispatcher else None,
+    }
 
 
 def set_scheduler_engine(engine: SchedulerEngine | None) -> None:

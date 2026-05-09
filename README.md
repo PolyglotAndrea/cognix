@@ -155,7 +155,7 @@ cognix/
 | `GET /api/v1/tasks` | List scheduled tasks |
 | `POST /api/v1/tasks` | Create scheduled task |
 | `GET /api/v1/skills` | List skills |
-| `GET /api/v1/runtime/status` | Inspect scheduler and distributed task dispatcher status |
+| `GET /api/v1/runtime/status` | Inspect scheduler, distributed task dispatcher status, retry settings, and runtime metrics |
 | `GET /api/v1/workspaces/{id}/mcp/servers/{server_id}/tools` | Discover MCP tools for a workspace server |
 | `GET /api/v1/workspaces/{id}/mcp/servers/{server_id}/status` | Check or refresh MCP server discovery status, including stderr tail on errors |
 | `POST /api/v1/workspaces/{id}/mcp/servers/{server_id}/restart` | Clear MCP cache and probe a server again |

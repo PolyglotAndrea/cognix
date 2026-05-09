@@ -102,6 +102,8 @@ async def test_distributed_dispatcher_executes_claimed_due_tasks(tmp_path, monke
 
         assert await dispatcher.dispatch_once() == 1
         assert calls == [("dispatch-task-1", {"message": "hi", "task_type": "agent_call"})]
+        assert dispatcher.status()["metrics"]["claimed_total"] == 1
+        assert dispatcher.status()["metrics"]["success_total"] == 1
         task = await store.get("dispatch-task-1")
         assert task.lease_owner is None
         assert task.next_run is not None
@@ -144,6 +146,8 @@ async def test_distributed_dispatcher_retries_failed_tasks(tmp_path, monkeypatch
         )
 
         assert await dispatcher.dispatch_once() == 1
+        assert dispatcher.status()["metrics"]["failure_total"] == 1
+        assert dispatcher.status()["metrics"]["retry_scheduled_total"] == 1
         task = await store.get("retry-task")
         assert task.state == TaskState.ACTIVE
         assert task.lease_owner is None
@@ -187,6 +191,7 @@ async def test_distributed_dispatcher_marks_exhausted_retry_failed(tmp_path, mon
         )
 
         assert await dispatcher.dispatch_once() == 1
+        assert dispatcher.status()["metrics"]["exhausted_failure_total"] == 1
         task = await store.get("exhausted-task")
         assert task.state == TaskState.FAILED
         assert task.lease_owner is None

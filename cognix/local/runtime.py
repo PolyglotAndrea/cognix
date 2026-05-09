@@ -67,13 +67,22 @@ class RuntimeNodeStore:
         self._write_nodes(nodes.values())
         return node
 
-    def heartbeat(self, node_id: str, *, status: str = "online") -> RuntimeNode | None:
+    def heartbeat(
+        self,
+        node_id: str,
+        *,
+        status: str = "online",
+        metadata: dict[str, Any] | None = None,
+    ) -> RuntimeNode | None:
         nodes = {node.id: node for node in self.list_all(include_stale=True)}
         node = nodes.get(node_id)
         if not node:
             return None
 
-        updated = RuntimeNode(**{**asdict(node), "status": status, "last_seen": _now()})
+        node_data = asdict(node)
+        if metadata:
+            node_data["metadata"] = {**node.metadata, **metadata}
+        updated = RuntimeNode(**{**node_data, "status": status, "last_seen": _now()})
         nodes[node_id] = updated
         self._write_nodes(nodes.values())
         return updated

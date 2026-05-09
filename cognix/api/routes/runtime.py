@@ -30,11 +30,5 @@ async def get_runtime_status(user: CurrentUser = Depends(get_current_user)) -> d
             "node_id": scheduler.node_id if scheduler else None,
             "jobs": scheduler.list_jobs() if scheduler else [],
         },
-        "dispatcher": {
-            "running": bool(dispatcher and dispatcher.running),
-            "node_id": dispatcher.node_id if dispatcher else None,
-            "poll_interval": dispatcher.poll_interval if dispatcher else None,
-            "batch_size": dispatcher.batch_size if dispatcher else None,
-            "lease_ttl_seconds": dispatcher.lease_ttl_seconds if dispatcher else None,
-        },
+        "dispatcher": dispatcher.status() if dispatcher else None,
     }

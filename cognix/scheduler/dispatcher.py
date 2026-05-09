@@ -45,6 +45,15 @@ class DistributedTaskDispatcher:
         self.lease_ttl_seconds = lease_ttl_seconds
         self.retry_base_seconds = retry_base_seconds
         self.retry_max_seconds = retry_max_seconds
+        self.metrics: dict[str, Any] = {
+            "claimed_total": 0,
+            "success_total": 0,
+            "failure_total": 0,
+            "retry_scheduled_total": 0,
+            "exhausted_failure_total": 0,
+            "last_dispatch_at": None,
+            "last_error": "",
+        }
         self._task: asyncio.Task | None = None
 
     @property
@@ -74,6 +83,8 @@ class DistributedTaskDispatcher:
         )
         if not claimed:
             return 0
+        self.metrics["claimed_total"] += len(claimed)
+        self.metrics["last_dispatch_at"] = datetime.now(UTC).isoformat()
         await asyncio.gather(*(self._run_claimed(task) for task in claimed))
         return len(claimed)
 
@@ -93,12 +104,16 @@ class DistributedTaskDispatcher:
             run = await self.executor.execute(task.id, payload) or {}
         except Exception as exc:
             logger.exception("Task %s executor raised outside normal failure handling", task.id)
+            self.metrics["last_error"] = str(exc)
             run = {"status": "failure", "error": str(exc)}
         task_after_run = await self.store.get(task.id)
         if run.get("status") == "failure" and task_after_run:
+            self.metrics["failure_total"] += 1
+            self.metrics["last_error"] = str(run.get("error", ""))
             await self._complete_failed_run(task_after_run)
             return
 
+        self.metrics["success_total"] += 1
         await self.store.complete_lease(
             task.id,
             owner=self.node_id,
@@ -118,6 +133,7 @@ class DistributedTaskDispatcher:
                 owner=self.node_id,
                 next_run=retry_at,
             )
+            self.metrics["retry_scheduled_total"] += 1
             logger.warning(
                 "Task %s failed; retry %s/%s scheduled in %ss",
                 task.id,
@@ -133,7 +149,20 @@ class DistributedTaskDispatcher:
             next_run=None,
             state=TaskState.FAILED,
         )
+        self.metrics["exhausted_failure_total"] += 1
         logger.error("Task %s failed after %s attempts", task.id, attempts)
+
+    def status(self) -> dict[str, Any]:
+        return {
+            "running": self.running,
+            "node_id": self.node_id,
+            "poll_interval": self.poll_interval,
+            "batch_size": self.batch_size,
+            "lease_ttl_seconds": self.lease_ttl_seconds,
+            "retry_base_seconds": self.retry_base_seconds,
+            "retry_max_seconds": self.retry_max_seconds,
+            "metrics": dict(self.metrics),
+        }
 
 
 def _payload_dict(payload: Any) -> dict[str, Any]:
