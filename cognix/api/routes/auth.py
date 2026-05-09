@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import re
 import uuid
-from datetime import datetime, timezone
-from urllib.parse import urlencode
+from datetime import UTC, datetime
 
 import bcrypt
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -225,7 +224,7 @@ async def oauth_callback(
 
     # Redirect to frontend with token
     settings = get_settings()
-    frontend_url = f"http://localhost:5173"  # TODO: configurable
+    frontend_url = settings.auth.frontend_url.rstrip("/")
     return RedirectResponse(f"{frontend_url}/auth/callback?token={token}")
 
 
@@ -265,7 +264,7 @@ async def create_api_key(
             key_hash=key_hash,
             prefix=prefix,
             permissions={},
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         )
         session.add(key_model)
         await session.flush()

@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-import pytest
-
 from cognix.auth.api_key import generate_api_key, verify_api_key
-from cognix.auth.dependencies import has_permission, ROLE_PERMISSIONS
+from cognix.auth.dependencies import has_permission
 from cognix.auth.jwt import create_access_token, create_token, verify_token
-from cognix.auth.oauth import get_provider, PROVIDERS
+from cognix.auth.oauth import PROVIDERS, get_provider
 
 
 class TestJWT:
@@ -97,3 +95,16 @@ class TestOAuth:
     def test_all_providers_registered(self):
         assert "google" in PROVIDERS
         assert "github" in PROVIDERS
+
+
+class TestAuthSettings:
+    def test_frontend_url_is_configurable(self, monkeypatch):
+        import cognix.config as config
+
+        monkeypatch.setenv("COGNIX_AUTH__FRONTEND_URL", "https://app.example.test")
+        config._settings = None
+
+        try:
+            assert config.get_settings().auth.frontend_url == "https://app.example.test"
+        finally:
+            config._settings = None

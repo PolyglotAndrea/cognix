@@ -62,6 +62,10 @@ class AuthSettings(BaseSettings):
     google_client_secret: str | None = None
     github_client_id: str | None = None
     github_client_secret: str | None = None
+    frontend_url: str = Field(
+        default="http://localhost:5173",
+        description="Frontend base URL used for OAuth callback redirects",
+    )
 
 
 class BillingSettings(BaseSettings):

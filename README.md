@@ -57,6 +57,7 @@ COGNIX_DEBUG=true
 COGNIX_DEFAULT_MODEL=gpt-4o
 COGNIX_LLM_API_KEY=sk-...
 COGNIX_AUTH__SECRET_KEY=your-secret-key
+COGNIX_AUTH__FRONTEND_URL=http://localhost:5173
 ```
 
 ### Run
