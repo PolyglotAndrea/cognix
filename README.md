@@ -70,6 +70,8 @@ cognix server start --port 8000
 
 # Web Frontend
 cd web && npm install && npm run dev
+# Optional if your API server is not on 8000:
+# VITE_API_TARGET=http://localhost:8001 npm run dev
 ```
 
 ## Usage

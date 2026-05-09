@@ -29,7 +29,19 @@ export const useAuthStore = create<AuthState>()(
     }),
     {
       name: 'cognix-auth',
-      partialize: (state) => ({ token: state.token }),
+      partialize: (state) => ({
+        token: state.token,
+        user: state.user,
+        isAuthenticated: Boolean(state.token),
+      }),
+      merge: (persistedState, currentState) => {
+        const persisted = persistedState as Partial<AuthState>
+        return {
+          ...currentState,
+          ...persisted,
+          isAuthenticated: Boolean(persisted.token),
+        }
+      },
     }
   )
 )
