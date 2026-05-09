@@ -12,6 +12,7 @@ from typing import Any, Literal
 from cognix.local.home import CognixHome
 
 ApprovalStatus = Literal["pending", "approved", "rejected", "completed"]
+ApprovalKind = Literal["tool_permission", "plan_confirmation", "question"]
 
 
 @dataclass(frozen=True)
@@ -23,7 +24,9 @@ class ApprovalRequest:
     access_level: str
     reason: str
     status: ApprovalStatus = "pending"
+    kind: ApprovalKind = "tool_permission"
     workspace_id: str | None = None
+    response: str = ""
     result: str = ""
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
@@ -57,6 +60,7 @@ class ApprovalStore:
         reason: str,
         workspace_id: str | None = None,
         metadata: dict[str, Any] | None = None,
+        kind: ApprovalKind = "tool_permission",
     ) -> ApprovalRequest:
         request = ApprovalRequest(
             id=uuid.uuid4().hex[:12],
@@ -66,6 +70,7 @@ class ApprovalStore:
             arguments=arguments,
             access_level=access_level,
             reason=reason,
+            kind=kind,
             metadata=metadata or {},
         )
         approvals = self.list_all(include_resolved=True)
@@ -105,6 +110,9 @@ class ApprovalStore:
     def approve(self, approval_id: str) -> ApprovalRequest | None:
         return self._set_status(approval_id, "approved")
 
+    def respond(self, approval_id: str, response: str) -> ApprovalRequest | None:
+        return self._set_status(approval_id, "approved", response=response)
+
     def reject(self, approval_id: str) -> ApprovalRequest | None:
         return self._set_status(approval_id, "rejected")
 
@@ -116,6 +124,7 @@ class ApprovalStore:
         approval_id: str,
         status: ApprovalStatus,
         *,
+        response: str = "",
         result: str = "",
     ) -> ApprovalRequest | None:
         approvals = self.list_all(include_resolved=True)
@@ -127,6 +136,7 @@ class ApprovalStore:
                     **{
                         **asdict(approval),
                         "status": status,
+                        "response": response or approval.response,
                         "result": result or approval.result,
                         "updated_at": datetime.now(UTC).isoformat(),
                     }

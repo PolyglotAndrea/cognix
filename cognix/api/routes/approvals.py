@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 from cognix.api.state import get_agent_runtime
 from cognix.auth.dependencies import CurrentUser, get_current_user, require_agents_write
 from cognix.local.approvals import ApprovalStatus, ApprovalStore
 
 router = APIRouter(prefix="/api/v1/approvals", tags=["approvals"])
+
+
+class ApprovalResponseBody(BaseModel):
+    response: str = ""
 
 
 @router.get("")
@@ -39,6 +44,18 @@ async def approve_request(
     return approval.__dict__
 
 
+@router.post("/{approval_id}/respond")
+async def respond_request(
+    approval_id: str,
+    body: ApprovalResponseBody,
+    user: CurrentUser = Depends(require_agents_write),
+) -> dict:
+    approval = ApprovalStore().respond(approval_id, body.response)
+    if not approval:
+        raise HTTPException(404, "Approval not found")
+    return approval.__dict__
+
+
 @router.post("/{approval_id}/reject")
 async def reject_request(
     approval_id: str,
@@ -53,8 +70,11 @@ async def reject_request(
 @router.post("/{approval_id}/resume")
 async def resume_approval(
     approval_id: str,
+    body: ApprovalResponseBody | None = None,
     user: CurrentUser = Depends(require_agents_write),
 ) -> dict:
+    if body and body.response:
+        ApprovalStore().respond(approval_id, body.response)
     approval = ApprovalStore().get(approval_id)
     if not approval:
         raise HTTPException(404, "Approval not found")

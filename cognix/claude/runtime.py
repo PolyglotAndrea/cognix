@@ -220,6 +220,7 @@ def _build_can_use_tool(
             arguments=arguments,
             access_level=_claude_tool_access_level(tool_name),
             reason=_claude_tool_reason(tool_name, arguments),
+            kind=_claude_approval_kind(tool_name, request.permission_mode),
             metadata={
                 "runtime": "claude-agent-sdk",
                 "permission_mode": request.permission_mode,
@@ -267,6 +268,14 @@ def _claude_tool_reason(tool_name: str, arguments: dict[str, Any]) -> str:
     return f"Claude Agent requests permission to run {tool_name}."
 
 
+def _claude_approval_kind(tool_name: str, permission_mode: str) -> str:
+    if tool_name == "AskUserQuestion":
+        return "question"
+    if normalize_permission_mode(permission_mode) == "plan":
+        return "plan_confirmation"
+    return "tool_permission"
+
+
 def _permission_deny(sdk: Any, message: str) -> Any:
     deny = getattr(sdk, "PermissionResultDeny", None)
     if deny is None:
@@ -295,6 +304,8 @@ def _approval_events(approvals: list[ApprovalRequest]) -> list[AgentEvent]:
                 "access_level": approval.access_level,
                 "reason": approval.reason,
                 "status": approval.status,
+                "kind": approval.kind,
+                "response": approval.response,
                 "metadata": approval.metadata,
             },
         )

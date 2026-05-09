@@ -148,6 +148,7 @@ cognix/
 | `POST /api/v1/agents/{id}/chat` | Chat with agent (SSE streaming) |
 | `GET /api/v1/approvals` | List pending or resolved human approval requests |
 | `POST /api/v1/approvals/{id}/approve` | Approve a pending tool/action request |
+| `POST /api/v1/approvals/{id}/respond` | Answer a pending human question request |
 | `POST /api/v1/approvals/{id}/reject` | Reject a pending tool/action request |
 | `POST /api/v1/approvals/{id}/resume` | Resume an approved Agent or Claude SDK tool call |
 | `GET /api/v1/tasks` | List scheduled tasks |

@@ -404,14 +404,19 @@ class Agent:
                 )
                 self._pending_approval_event = {
                     "approval_id": approval_id,
+                    "id": approval_id,
                     "agent_id": self.id,
                     "workspace_id": self.workspace_id,
                     "tool": name,
                     "name": name,
+                    "tool_name": name,
                     "arguments": arguments,
                     "args": arguments,
                     "access_level": tool.access_level,
                     "reason": decision.reason,
+                    "kind": "plan_confirmation"
+                    if self.permission_mode == "plan"
+                    else "tool_permission",
                     "permission_mode": self.permission_mode,
                 }
                 await self._emit(
@@ -497,6 +502,7 @@ class Agent:
             arguments=arguments,
             access_level=access_level,
             reason=reason,
+            kind="plan_confirmation" if self.permission_mode == "plan" else "tool_permission",
         )
         return request.id
 
