@@ -178,6 +178,50 @@ Agent and workspace chat streaming use a stable data-only SSE JSON payload with:
 
 `approval_request` is emitted when `permission_mode="ask"` or a dangerous tool needs human confirmation. Claude Agent SDK runs use the same approval channel through the SDK `can_use_tool` callback, preserve resume metadata when the SDK exposes it, and can continue through `/api/v1/approvals/{id}/resume/stream`.
 
+### Permission Modes
+
+Cognix normalizes Agent permission modes at runtime:
+
+| Mode | Behavior |
+|------|----------|
+| `read-only` | Allows read tools only; write and dangerous tools are denied. |
+| `workspace-write` | Allows read/write workspace tools; dangerous tools require approval. |
+| `ask` | Read tools run directly; write and dangerous tools create approval requests. |
+| `plan` | Read tools run directly; write and dangerous tools create plan confirmation requests. |
+| `unrestricted` | Allows all tool access levels without approval. |
+
+Approval requests are stored locally and can be typed as `tool_permission`, `plan_confirmation`, or `question`. Approved Cognix core tool calls resume through `/api/v1/approvals/{id}/resume`; Claude SDK approvals can resume as SSE through `/api/v1/approvals/{id}/resume/stream`.
+
+### Claude Agent SDK Mode
+
+Claude Agent SDK mode maps Cognix workspace settings into SDK options:
+
+- Workspace files are scoped to the workspace file directory.
+- `permission_mode` is translated to Claude SDK permission behavior.
+- Workspace MCP servers are passed into the SDK MCP config.
+- SDK `can_use_tool` callbacks create Cognix approval requests and preserve resume/session metadata when available.
+- Human answers, plan confirmations, and approved tool calls use the same approval panel and stream protocol as Cognix core Agents.
+
+### MCP Lifecycle
+
+MCP servers are configured per workspace. Cognix starts stdio MCP processes for discovery/tool calls, caches discovered tools briefly, and records runtime status:
+
+- `status`: `unknown`, `ready`, `error`, `stopped`, or `disabled`
+- `tool_count`: number of discovered tools
+- `error` / `stderr`: startup or protocol diagnostics
+
+The API supports status refresh, restart, stop, and delete operations. MCP tools are adapted into core `Tool` instances and mounted onto Agents before REST, RPC, WebSocket, or workspace chat execution.
+
+### Distributed Scheduler
+
+Scheduled tasks are stored in the database and coordinated with runtime leases:
+
+- Runtime nodes claim due tasks with a lease owner and expiry.
+- Successful runs release the lease and advance `next_run`.
+- Failed runs retry with exponential backoff until `max_retries` is exhausted.
+- Exhausted tasks are marked `failed` and removed from future dispatch.
+- Runtime status exposes dispatcher metrics including claimed, success, failure, retry, exhausted failure, and last error counters.
+
 ### Remote Bot Callbacks
 
 Bot bridge configs can include metadata for asynchronous response writeback:
