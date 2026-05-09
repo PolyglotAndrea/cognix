@@ -133,8 +133,56 @@ class ClaudeAgentRuntime:
             "runtime": "claude-agent-sdk",
             "result": result,
             "resume": resume_token,
+            "resume_request": _run_request_dict(self.resume_request(approval)),
             "status": completed.status if completed else "completed",
         }
+
+    def resume_request(
+        self,
+        approval: ApprovalRequest,
+        *,
+        prompt: str | None = None,
+    ) -> ClaudeAgentRunRequest:
+        """Build a Claude Agent SDK run request from a stored approval."""
+        return ClaudeAgentRunRequest(
+            workspace_id=approval.workspace_id,
+            prompt=prompt or _approval_resume_prompt(approval),
+            agent_id=approval.agent_id,
+            permission_mode=str(approval.metadata.get("permission_mode", "ask")),
+            resume=_approval_resume_token(approval) or None,
+        )
+
+    async def resume_stream(
+        self,
+        approval_id: str,
+        *,
+        response: str = "",
+    ) -> AsyncIterator[AgentEvent]:
+        """Stream a resumed Claude Agent SDK run for an approved Cognix approval."""
+        store = ApprovalStore()
+        if response:
+            store.respond(approval_id, response)
+        approval = store.get(approval_id)
+        if not approval:
+            yield AgentEvent("error", {"message": f"Approval '{approval_id}' not found"})
+            return
+        if approval.metadata.get("runtime") != "claude-agent-sdk":
+            yield AgentEvent(
+                "error",
+                {"message": f"Approval '{approval_id}' is not a Claude Agent SDK request"},
+            )
+            return
+        if approval.status != "approved":
+            yield AgentEvent("error", {"message": f"Approval '{approval_id}' is not approved"})
+            return
+
+        prompt = response or approval.response or _approval_resume_prompt(approval)
+        saw_error = False
+        async for event in self.stream(self.resume_request(approval, prompt=prompt)):
+            saw_error = saw_error or event.type == "error"
+            yield event
+        if not saw_error:
+            store.complete(approval_id, "Claude Agent SDK approval resumed.")
 
 
 def _load_sdk() -> Any:
@@ -225,6 +273,7 @@ def _build_can_use_tool(
                 "runtime": "claude-agent-sdk",
                 "permission_mode": request.permission_mode,
                 "callback_args": [str(item) for item in args],
+                **_extract_callback_metadata(args, kwargs),
             },
         )
         if approval_sink:
@@ -316,11 +365,67 @@ def _approval_events(approvals: list[ApprovalRequest]) -> list[AgentEvent]:
 
 
 def _approval_resume_token(approval: ApprovalRequest) -> str:
-    for key in ("resume", "resume_token", "session_id"):
+    for key in ("resume", "resume_token", "session_id", "conversation_id"):
         value = approval.metadata.get(key)
         if value:
             return str(value)
     return ""
+
+
+def _approval_resume_prompt(approval: ApprovalRequest) -> str:
+    if approval.kind == "question" and approval.response:
+        return approval.response
+    if approval.kind == "plan_confirmation":
+        return "The plan has been confirmed by the user. Continue the run."
+    if approval.status == "approved":
+        return f"The user approved {approval.tool_name}. Continue the run."
+    return "Continue the run."
+
+
+def _run_request_dict(request: ClaudeAgentRunRequest) -> dict[str, Any]:
+    return {
+        "workspace_id": request.workspace_id,
+        "prompt": request.prompt,
+        "agent_id": request.agent_id,
+        "model": request.model,
+        "system_prompt": request.system_prompt,
+        "permission_mode": request.permission_mode,
+        "max_turns": request.max_turns,
+        "resume": request.resume,
+        "allowed_tools": request.allowed_tools,
+        "disallowed_tools": request.disallowed_tools,
+    }
+
+
+def _extract_callback_metadata(args: tuple[Any, ...], kwargs: dict[str, Any]) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    for item in (*args, kwargs):
+        _collect_resume_metadata(item, metadata, depth=0)
+    return metadata
+
+
+def _collect_resume_metadata(value: Any, metadata: dict[str, Any], *, depth: int) -> None:
+    if value is None or depth > 3:
+        return
+    keys = ("resume", "resume_token", "session_id", "conversation_id", "tool_use_id", "request_id")
+    if isinstance(value, dict):
+        for key in keys:
+            if key in value and key not in metadata and _is_metadata_scalar(value[key]):
+                metadata[key] = value[key]
+        for nested in value.values():
+            if isinstance(nested, dict) or hasattr(nested, "__dict__"):
+                _collect_resume_metadata(nested, metadata, depth=depth + 1)
+        return
+    for key in keys:
+        if key in metadata or not hasattr(value, key):
+            continue
+        item = getattr(value, key)
+        if _is_metadata_scalar(item):
+            metadata[key] = item
+
+
+def _is_metadata_scalar(value: Any) -> bool:
+    return isinstance(value, str | int | float | bool)
 
 
 def _message_to_events(message: Any) -> list[AgentEvent]:

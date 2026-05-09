@@ -46,6 +46,11 @@ class FakeSDK:
             yield None
 
 
+@dataclass
+class FakeResultMessage:
+    result: str
+
+
 def test_claude_runtime_maps_read_only_workspace_options(tmp_path, monkeypatch) -> None:
     home = CognixHome(tmp_path / ".cognix")
     workspace = WorkspaceManager(home).create("Claude")
@@ -146,6 +151,35 @@ async def test_claude_runtime_ask_mode_creates_approval_request(tmp_path, monkey
 
 
 @pytest.mark.asyncio
+async def test_claude_runtime_extracts_resume_metadata(tmp_path, monkeypatch) -> None:
+    home = CognixHome(tmp_path / ".cognix")
+    workspace = WorkspaceManager(home).create("Claude")
+    monkeypatch.setenv("COGNIX_HOME", str(home.root))
+
+    options = ClaudeAgentRuntime().build_options(
+        ClaudeAgentRunRequest(
+            workspace_id=workspace.id,
+            agent_id="agent-1",
+            prompt="edit file",
+            permission_mode="ask",
+        ),
+        sdk=FakeSDK,
+    )
+
+    await options.can_use_tool(
+        "Write",
+        {"file_path": "README.md"},
+        {"session_id": "session-2", "tool_use_id": "tool-1"},
+        request_id="request-1",
+    )
+    approvals = ApprovalStore(home).list_all(workspace_id=workspace.id)
+
+    assert approvals[0].metadata["session_id"] == "session-2"
+    assert approvals[0].metadata["tool_use_id"] == "tool-1"
+    assert approvals[0].metadata["request_id"] == "request-1"
+
+
+@pytest.mark.asyncio
 async def test_claude_runtime_resumes_approved_approval(tmp_path, monkeypatch) -> None:
     home = CognixHome(tmp_path / ".cognix")
     workspace = WorkspaceManager(home).create("Claude")
@@ -169,6 +203,48 @@ async def test_claude_runtime_resumes_approved_approval(tmp_path, monkeypatch) -
 
     assert result["runtime"] == "claude-agent-sdk"
     assert result["resume"] == "session-1"
+    assert result["resume_request"]["resume"] == "session-1"
+    assert store.get(approval.id).status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_claude_runtime_resume_stream_uses_resume_token(tmp_path, monkeypatch) -> None:
+    home = CognixHome(tmp_path / ".cognix")
+    workspace = WorkspaceManager(home).create("Claude")
+    monkeypatch.setenv("COGNIX_HOME", str(home.root))
+
+    class ResumeSDK(FakeSDK):
+        @staticmethod
+        async def query(prompt: str, options: FakeOptions):
+            assert prompt == "answered"
+            assert options.resume == "session-1"
+            yield FakeResultMessage(result="continued")
+
+    import cognix.claude.runtime as runtime_module
+
+    monkeypatch.setattr(runtime_module, "_load_sdk", lambda: ResumeSDK)
+
+    store = ApprovalStore(home)
+    approval = store.create(
+        agent_id=f"claude:{workspace.id}",
+        workspace_id=workspace.id,
+        tool_name="AskUserQuestion",
+        arguments={"question": "Proceed?"},
+        access_level="write",
+        reason="Need input",
+        kind="question",
+        metadata={
+            "runtime": "claude-agent-sdk",
+            "permission_mode": "ask",
+            "resume": "session-1",
+        },
+    )
+    store.respond(approval.id, "answered")
+
+    events = [event async for event in ClaudeAgentRuntime().resume_stream(approval.id)]
+
+    assert [event.type for event in events] == ["delta", "done"]
+    assert events[0].data["delta"] == "continued"
     assert store.get(approval.id).status == "completed"
 
 

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from starlette.responses import StreamingResponse
 
 from cognix.api.state import get_agent_runtime
 from cognix.auth.dependencies import CurrentUser, get_current_user, require_agents_write
+from cognix.core.streaming import encode_sse_event
 from cognix.local.approvals import ApprovalStatus, ApprovalStore
 
 router = APIRouter(prefix="/api/v1/approvals", tags=["approvals"])
@@ -97,3 +99,30 @@ async def resume_approval(
         raise HTTPException(400, str(exc)) from exc
 
     return {"approval_id": approval_id, "result": result}
+
+
+@router.post("/{approval_id}/resume/stream")
+async def resume_approval_stream(
+    approval_id: str,
+    body: ApprovalResponseBody | None = None,
+    user: CurrentUser = Depends(require_agents_write),
+) -> StreamingResponse:
+    approval = ApprovalStore().get(approval_id)
+    if not approval:
+        raise HTTPException(404, "Approval not found")
+    if approval.metadata.get("runtime") != "claude-agent-sdk":
+        raise HTTPException(
+            400,
+            "Streaming resume is only available for Claude Agent SDK approvals",
+        )
+
+    async def event_generator():
+        from cognix.claude.runtime import ClaudeAgentRuntime
+
+        async for event in ClaudeAgentRuntime().resume_stream(
+            approval_id,
+            response=body.response if body else "",
+        ):
+            yield encode_sse_event(event, extra={"runtime": "claude-agent-sdk"})
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")

@@ -151,6 +151,7 @@ cognix/
 | `POST /api/v1/approvals/{id}/respond` | Answer a pending human question request |
 | `POST /api/v1/approvals/{id}/reject` | Reject a pending tool/action request |
 | `POST /api/v1/approvals/{id}/resume` | Resume an approved Agent or Claude SDK tool call |
+| `POST /api/v1/approvals/{id}/resume/stream` | Stream a resumed Claude Agent SDK run |
 | `GET /api/v1/tasks` | List scheduled tasks |
 | `POST /api/v1/tasks` | Create scheduled task |
 | `GET /api/v1/skills` | List skills |
@@ -171,7 +172,7 @@ Agent and workspace chat streaming use a stable data-only SSE JSON payload with:
 - `error`
 - `done`
 
-`approval_request` is emitted when `permission_mode="ask"` or a dangerous tool needs human confirmation. Claude Agent SDK runs use the same approval channel through the SDK `can_use_tool` callback.
+`approval_request` is emitted when `permission_mode="ask"` or a dangerous tool needs human confirmation. Claude Agent SDK runs use the same approval channel through the SDK `can_use_tool` callback, preserve resume metadata when the SDK exposes it, and can continue through `/api/v1/approvals/{id}/resume/stream`.
 
 ### Remote Bot Callbacks
 
