@@ -12,9 +12,12 @@ from cognix.local.workspace import WorkspaceManager
 from cognix.local.workspace_config import MCPServerConfig, WorkspaceConfigStore
 from cognix.mcp.adapter import attach_workspace_mcp_tools, mcp_server_to_core_tools
 from cognix.mcp.client import MCPToolSpec
+from cognix.mcp.manager import MCPRuntimeManager
 
 
 class FakeMCPClient:
+    list_calls = 0
+
     def __init__(self, server: MCPServerConfig) -> None:
         self.server = server
 
@@ -25,6 +28,7 @@ class FakeMCPClient:
         return None
 
     async def list_tools(self) -> list[MCPToolSpec]:
+        FakeMCPClient.list_calls += 1
         return [
             MCPToolSpec(
                 name="search",
@@ -71,3 +75,19 @@ async def test_attach_workspace_mcp_tools_adds_tools_to_agent(tmp_path, monkeypa
 
     assert attached == ["mcp_docs_search", "mcp_docs_write_file"]
     assert "mcp_docs_search" in [tool.name for tool in agent.tools]
+
+
+@pytest.mark.asyncio
+async def test_mcp_runtime_manager_caches_discovery() -> None:
+    FakeMCPClient.list_calls = 0
+    server = MCPServerConfig(id="mcp1", name="Docs Server", command="fake")
+    manager = MCPRuntimeManager(client_factory=FakeMCPClient, cache_ttl_seconds=60)
+
+    first = await manager.list_tools(server)
+    second = await manager.list_tools(server)
+    status = manager.status(server)
+
+    assert first == second
+    assert FakeMCPClient.list_calls == 1
+    assert status.status == "ready"
+    assert status.tool_count == 2

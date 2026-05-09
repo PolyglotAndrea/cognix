@@ -213,6 +213,8 @@ async def upsert_workspace_mcp_server(
     body: UpsertMCPServerRequest,
     user: CurrentUser = Depends(require_skills_write),
 ) -> dict:
+    from cognix.mcp.manager import default_mcp_runtime
+
     server = _workspace_config(workspace_id).upsert_mcp_server(
         server_id=body.id,
         name=body.name,
@@ -222,6 +224,7 @@ async def upsert_workspace_mcp_server(
         enabled=body.enabled,
         metadata=body.metadata,
     )
+    default_mcp_runtime.invalidate(server.id)
     return server.__dict__
 
 
@@ -232,12 +235,13 @@ async def list_workspace_mcp_tools(
     user: CurrentUser = Depends(require_skills_read),
 ) -> list[dict]:
     from cognix.mcp.adapter import mcp_server_to_core_tools
+    from cognix.mcp.manager import default_mcp_runtime
 
     servers = _workspace_config(workspace_id).list_mcp_servers()
     server = next((item for item in servers if item.id == server_id), None)
     if not server:
         raise HTTPException(404, "MCP server not found")
-    tools = await mcp_server_to_core_tools(server)
+    tools = await mcp_server_to_core_tools(server, runtime=default_mcp_runtime)
     return [
         {
             "name": tool.name,
@@ -249,14 +253,35 @@ async def list_workspace_mcp_tools(
     ]
 
 
+@router.get("/{workspace_id}/mcp/servers/{server_id}/status")
+async def get_workspace_mcp_server_status(
+    workspace_id: str,
+    server_id: str,
+    refresh: bool = False,
+    user: CurrentUser = Depends(require_skills_read),
+) -> dict:
+    from cognix.mcp.manager import default_mcp_runtime
+
+    servers = _workspace_config(workspace_id).list_mcp_servers()
+    server = next((item for item in servers if item.id == server_id), None)
+    if not server:
+        raise HTTPException(404, "MCP server not found")
+    if refresh:
+        return (await default_mcp_runtime.probe(server)).to_dict()
+    return default_mcp_runtime.status(server).to_dict()
+
+
 @router.delete("/{workspace_id}/mcp/servers/{server_id}")
 async def delete_workspace_mcp_server(
     workspace_id: str,
     server_id: str,
     user: CurrentUser = Depends(require_skills_write),
 ) -> dict:
+    from cognix.mcp.manager import default_mcp_runtime
+
     if not _workspace_config(workspace_id).delete_mcp_server(server_id):
         raise HTTPException(404, "MCP server not found")
+    default_mcp_runtime.invalidate(server_id)
     return {"deleted": server_id}
 
 

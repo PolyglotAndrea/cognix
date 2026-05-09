@@ -9,7 +9,7 @@ A Hermes Agent-based multi-agent collaboration platform built in Python. Cognix 
 - **Multi-Agent Orchestration** — Sequential, Parallel, Router, and Loop patterns via YAML workflow DSL
 - **Scheduled Tasks** — Cron, interval, and one-shot scheduling with APScheduler plus runtime leases, due-task claiming, and DB-backed worker dispatch
 - **JSON-RPC 2.0** — Inter-service communication over HTTP and WebSocket
-- **Skills + MCP Tools** — Local skills, workspace MCP server config, stdio MCP tool discovery, and Agent tool mounting
+- **Skills + MCP Tools** — Local skills, workspace MCP server config, stdio MCP tool discovery/status caching, and Agent tool mounting
 - **Claude Agent SDK Bridge** — Workspace-scoped Claude Agent SDK execution with permission mode, MCP config mapping, and approval callbacks
 - **Remote Bot Bridge** — Lark/Feishu, DingTalk, and WeChat entry points with signature-aware webhook handling, async dispatch, and chat context binding
 - **CLI + API** — Typer CLI and FastAPI REST/WebSocket API
@@ -154,6 +154,7 @@ cognix/
 | `POST /api/v1/tasks` | Create scheduled task |
 | `GET /api/v1/skills` | List skills |
 | `GET /api/v1/workspaces/{id}/mcp/servers/{server_id}/tools` | Discover MCP tools for a workspace server |
+| `GET /api/v1/workspaces/{id}/mcp/servers/{server_id}/status` | Check or refresh MCP server discovery status |
 | `POST /api/v1/workspaces/{id}/claude/stream` | Stream Claude Agent SDK execution events |
 | `POST /rpc` | JSON-RPC endpoint |
 

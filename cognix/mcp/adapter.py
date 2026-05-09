@@ -10,6 +10,7 @@ from cognix.core.agent import Agent
 from cognix.core.tool import Tool
 from cognix.local.workspace_config import MCPServerConfig, WorkspaceConfigStore
 from cognix.mcp.client import MCPClient, MCPToolSpec
+from cognix.mcp.manager import MCPRuntimeManager, default_mcp_runtime
 
 MCPClientFactory = Callable[[MCPServerConfig], MCPClient]
 
@@ -18,12 +19,18 @@ async def mcp_server_to_core_tools(
     server: MCPServerConfig,
     *,
     client_factory: MCPClientFactory = MCPClient,
+    runtime: MCPRuntimeManager | None = None,
+    force_refresh: bool = False,
 ) -> list[Tool]:
     if not server.enabled:
         return []
 
-    async with client_factory(server) as client:
-        specs = await client.list_tools()
+    manager = runtime or (
+        default_mcp_runtime
+        if client_factory is MCPClient
+        else MCPRuntimeManager(client_factory=client_factory)
+    )
+    specs = await manager.list_tools(server, force_refresh=force_refresh)
 
     return [_spec_to_tool(server, spec, client_factory=client_factory) for spec in specs]
 
@@ -33,6 +40,7 @@ async def attach_workspace_mcp_tools(
     workspace_id: str,
     *,
     client_factory: MCPClientFactory = MCPClient,
+    runtime: MCPRuntimeManager | None = None,
 ) -> list[str]:
     """Discover enabled workspace MCP servers and attach their tools to an Agent."""
     attached: list[str] = []
@@ -40,7 +48,11 @@ async def attach_workspace_mcp_tools(
     for server in config.list_mcp_servers():
         if not server.enabled:
             continue
-        for tool in await mcp_server_to_core_tools(server, client_factory=client_factory):
+        for tool in await mcp_server_to_core_tools(
+            server,
+            client_factory=client_factory,
+            runtime=runtime,
+        ):
             if tool.name in [existing.name for existing in agent.tools]:
                 agent.remove_tool(tool.name)
             agent.add_tool(tool)
