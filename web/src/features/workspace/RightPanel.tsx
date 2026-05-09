@@ -82,6 +82,8 @@ interface ApprovalRequest {
   access_level: string
   reason: string
   status: 'pending' | 'approved' | 'rejected' | 'completed'
+  kind?: 'tool_permission' | 'plan_confirmation' | 'question'
+  response?: string
   result?: string
   created_at: string
   updated_at: string
@@ -150,8 +152,15 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: any }) {
   })
 
   const approvalMutation = useMutation({
-    mutationFn: ({ id, action }: { id: string; action: 'approve' | 'reject' | 'resume' }) =>
-      api.post(`/approvals/${id}/${action}`),
+    mutationFn: ({
+      id,
+      action,
+      response,
+    }: {
+      id: string
+      action: 'approve' | 'reject' | 'resume' | 'respond'
+      response?: string
+    }) => api.post(`/approvals/${id}/${action}`, response ? { response } : undefined),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['approvals', workspaceId] })
       queryClient.invalidateQueries({ queryKey: ['workspace-events', workspaceId] })
@@ -231,7 +240,9 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: any }) {
                   key={approval.id}
                   approval={approval}
                   busy={approvalMutation.isPending}
-                  onAction={(action) => approvalMutation.mutate({ id: approval.id, action })}
+                  onAction={(action, response) =>
+                    approvalMutation.mutate({ id: approval.id, action, response })
+                  }
                 />
               ))
             )}
@@ -514,11 +525,15 @@ function ApprovalCard({
 }: {
   approval: ApprovalRequest
   busy: boolean
-  onAction: (action: 'approve' | 'reject' | 'resume') => void
+  onAction: (action: 'approve' | 'reject' | 'resume' | 'respond', response?: string) => void
 }) {
+  const [response, setResponse] = useState(approval.response || '')
   const isPending = approval.status === 'pending'
   const isApproved = approval.status === 'approved'
+  const isQuestion = approval.kind === 'question'
+  const isPlan = approval.kind === 'plan_confirmation'
   const args = JSON.stringify(approval.arguments || {}, null, 2)
+  const kindLabel = isQuestion ? 'Question' : isPlan ? 'Plan' : 'Tool'
 
   return (
     <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4 transition-all hover:border-amber-500/30">
@@ -528,7 +543,12 @@ function ApprovalCard({
             <ShieldQuestion className="h-4 w-4 text-amber-500" />
             <span className="truncate text-xs font-bold text-foreground">{approval.tool_name}</span>
           </div>
-          <div className="mt-1 font-mono text-[10px] text-muted-foreground">{approval.id}</div>
+          <div className="mt-1 flex items-center gap-2">
+            <span className="font-mono text-[10px] text-muted-foreground">{approval.id}</span>
+            <span className="rounded-full border border-border bg-background/60 px-2 py-0.5 text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
+              {kindLabel}
+            </span>
+          </div>
         </div>
         <Badge variant={approval.status === 'rejected' ? 'error' : approval.status === 'completed' ? 'success' : 'warning'}>
           {approval.status}
@@ -536,6 +556,21 @@ function ApprovalCard({
       </div>
 
       <p className="mb-3 text-xs leading-5 text-foreground/80">{approval.reason}</p>
+
+      {isQuestion && isPending && (
+        <textarea
+          value={response}
+          onChange={(event) => setResponse(event.target.value)}
+          className="mb-3 min-h-24 w-full resize-none rounded-xl border border-border bg-background/80 p-3 text-xs leading-5 text-foreground outline-none transition-all focus:border-primary"
+          placeholder="Answer the Agent question..."
+        />
+      )}
+
+      {approval.response && (
+        <div className="mb-3 rounded-xl border border-primary/20 bg-primary/5 p-3 text-xs leading-5 text-foreground">
+          {approval.response}
+        </div>
+      )}
 
       <div className="mb-3 grid grid-cols-2 gap-2">
         <div className="rounded-xl border border-border bg-background/50 p-2">
@@ -562,11 +597,11 @@ function ApprovalCard({
         {isPending && (
           <>
             <button
-              onClick={() => onAction('approve')}
-              disabled={busy}
+              onClick={() => (isQuestion ? onAction('respond', response) : onAction('approve'))}
+              disabled={busy || (isQuestion && !response.trim())}
               className="flex-1 rounded-xl bg-emerald-500 px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-white transition-all hover:bg-emerald-600 disabled:opacity-50"
             >
-              Approve
+              {isQuestion ? 'Answer' : isPlan ? 'Confirm' : 'Approve'}
             </button>
             <button
               onClick={() => onAction('reject')}
@@ -579,7 +614,7 @@ function ApprovalCard({
         )}
         {isApproved && (
           <button
-            onClick={() => onAction('resume')}
+            onClick={() => onAction('resume', response)}
             disabled={busy}
             className="w-full rounded-xl bg-primary px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-white transition-all hover:bg-primary/90 disabled:opacity-50"
           >
