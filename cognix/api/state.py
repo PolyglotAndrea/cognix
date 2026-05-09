@@ -57,6 +57,23 @@ async def load_agents_from_db() -> None:
             agent_registry.register(agent_from_model(row))
 
 
+async def list_agent_runtimes() -> list[dict[str, Any]]:
+    """List persisted agents and hydrate any missing local runtime instances."""
+    from sqlalchemy import select
+
+    from cognix.storage.database import get_session
+
+    async with get_session() as session:
+        result = await session.execute(select(AgentModel).order_by(AgentModel.created_at.desc()))
+        agents = []
+        for row in result.scalars():
+            agent = agent_registry.get(row.id) or agent_from_model(row)
+            if not agent_registry.get(row.id):
+                agent_registry.register(agent)
+            agents.append(agent.to_dict())
+        return agents
+
+
 async def get_agent_runtime(agent_id: str) -> Agent | None:
     """Get an agent from this process or lazily hydrate it from the DB.
 

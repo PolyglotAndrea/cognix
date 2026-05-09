@@ -72,21 +72,9 @@ async def _agent_chat(params: dict, registry: AgentRegistry) -> dict:
 
 @rpc_method("agent.list")
 async def _agent_list(params: dict, registry: AgentRegistry) -> list[dict]:
-    from sqlalchemy import select
+    from cognix.api.state import list_agent_runtimes
 
-    from cognix.api.state import agent_from_model, agent_registry
-    from cognix.storage.database import get_session
-    from cognix.storage.models import AgentModel
-
-    async with get_session() as session:
-        result = await session.execute(select(AgentModel))
-        agents = []
-        for row in result.scalars():
-            agent = registry.get(row.id) or agent_from_model(row)
-            if not registry.get(row.id):
-                agent_registry.register(agent)
-            agents.append(agent.to_dict())
-        return agents
+    return await list_agent_runtimes()
 
 
 @rpc_method("agent.create")

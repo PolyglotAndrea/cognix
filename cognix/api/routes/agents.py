@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from starlette.responses import StreamingResponse
 
 from cognix.api.security import authenticate_websocket
-from cognix.api.state import agent_registry, get_agent_runtime
+from cognix.api.state import agent_registry, get_agent_runtime, list_agent_runtimes
 from cognix.auth.dependencies import CurrentUser, get_current_user, require_agents_write
 from cognix.core.streaming import encode_sse_event, stream_payload
 
@@ -44,7 +44,7 @@ class ChatRequest(BaseModel):
 
 @router.get("")
 async def list_agents(user: CurrentUser = Depends(get_current_user)) -> list[dict]:
-    return agent_registry.list_all()
+    return await list_agent_runtimes()
 
 
 @router.post("", status_code=201)
