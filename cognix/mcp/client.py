@@ -35,6 +35,8 @@ class MCPClient:
         self.server = server
         self.timeout = timeout
         self._process: asyncio.subprocess.Process | None = None
+        self._stderr_task: asyncio.Task | None = None
+        self._stderr_lines: list[str] = []
         self._request_id = 0
 
     async def __aenter__(self) -> MCPClient:
@@ -47,7 +49,12 @@ class MCPClient:
             stderr=asyncio.subprocess.PIPE,
             env=env,
         )
-        await self.initialize()
+        self._stderr_task = asyncio.create_task(self._capture_stderr())
+        try:
+            await self.initialize()
+        except Exception:
+            await self.__aexit__(None, None, None)
+            raise
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
@@ -60,7 +67,18 @@ class MCPClient:
             except TimeoutError:
                 self._process.kill()
                 await self._process.wait()
+        if self._stderr_task:
+            self._stderr_task.cancel()
+            try:
+                await self._stderr_task
+            except asyncio.CancelledError:
+                pass
+            self._stderr_task = None
         self._process = None
+
+    @property
+    def stderr_tail(self) -> str:
+        return "\n".join(self._stderr_lines[-20:])
 
     async def initialize(self) -> dict[str, Any]:
         return await self.request(
@@ -144,6 +162,18 @@ class MCPClient:
             raise MCPError("MCP response missing Content-Length")
         body = await process.stdout.readexactly(length)
         return json.loads(body.decode("utf-8"))
+
+    async def _capture_stderr(self) -> None:
+        process = self._require_process()
+        if not process.stderr:
+            return
+        while True:
+            line = await process.stderr.readline()
+            if not line:
+                return
+            self._stderr_lines.append(line.decode("utf-8", errors="replace").rstrip())
+            if len(self._stderr_lines) > 100:
+                del self._stderr_lines[:-100]
 
 
 def _content_to_text(content: Any) -> str:

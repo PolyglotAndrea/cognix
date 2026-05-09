@@ -47,6 +47,21 @@ class FakeMCPClient:
         return f"{name}:{arguments}"
 
 
+class FailingMCPClient:
+    def __init__(self, server: MCPServerConfig) -> None:
+        self.server = server
+        self.stderr_tail = "server failed to start"
+
+    async def __aenter__(self) -> FailingMCPClient:
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    async def list_tools(self) -> list[MCPToolSpec]:
+        raise RuntimeError("boom")
+
+
 @pytest.mark.asyncio
 async def test_mcp_server_to_core_tools_maps_specs_and_access_levels() -> None:
     server = MCPServerConfig(id="mcp1", name="Docs Server", command="fake")
@@ -91,3 +106,22 @@ async def test_mcp_runtime_manager_caches_discovery() -> None:
     assert FakeMCPClient.list_calls == 1
     assert status.status == "ready"
     assert status.tool_count == 2
+
+
+@pytest.mark.asyncio
+async def test_mcp_runtime_manager_tracks_errors_and_stop_restart() -> None:
+    server = MCPServerConfig(id="mcp1", name="Docs Server", command="fake")
+    manager = MCPRuntimeManager(client_factory=FailingMCPClient, cache_ttl_seconds=60)
+
+    status = await manager.probe(server)
+
+    assert status.status == "error"
+    assert status.error == "boom"
+    assert status.stderr == "server failed to start"
+
+    stopped = manager.stop(server)
+    assert stopped.status == "stopped"
+    assert manager.status(server).status == "stopped"
+
+    restarted = await manager.restart(server)
+    assert restarted.status == "error"

@@ -157,7 +157,9 @@ cognix/
 | `GET /api/v1/skills` | List skills |
 | `GET /api/v1/runtime/status` | Inspect scheduler and distributed task dispatcher status |
 | `GET /api/v1/workspaces/{id}/mcp/servers/{server_id}/tools` | Discover MCP tools for a workspace server |
-| `GET /api/v1/workspaces/{id}/mcp/servers/{server_id}/status` | Check or refresh MCP server discovery status |
+| `GET /api/v1/workspaces/{id}/mcp/servers/{server_id}/status` | Check or refresh MCP server discovery status, including stderr tail on errors |
+| `POST /api/v1/workspaces/{id}/mcp/servers/{server_id}/restart` | Clear MCP cache and probe a server again |
+| `POST /api/v1/workspaces/{id}/mcp/servers/{server_id}/stop` | Stop local MCP runtime cache for a server |
 | `POST /api/v1/workspaces/{id}/claude/stream` | Stream Claude Agent SDK execution events |
 | `POST /rpc` | JSON-RPC endpoint |
 

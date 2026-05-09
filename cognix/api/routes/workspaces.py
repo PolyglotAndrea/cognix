@@ -271,6 +271,36 @@ async def get_workspace_mcp_server_status(
     return default_mcp_runtime.status(server).to_dict()
 
 
+@router.post("/{workspace_id}/mcp/servers/{server_id}/restart")
+async def restart_workspace_mcp_server(
+    workspace_id: str,
+    server_id: str,
+    user: CurrentUser = Depends(require_skills_write),
+) -> dict:
+    from cognix.mcp.manager import default_mcp_runtime
+
+    servers = _workspace_config(workspace_id).list_mcp_servers()
+    server = next((item for item in servers if item.id == server_id), None)
+    if not server:
+        raise HTTPException(404, "MCP server not found")
+    return (await default_mcp_runtime.restart(server)).to_dict()
+
+
+@router.post("/{workspace_id}/mcp/servers/{server_id}/stop")
+async def stop_workspace_mcp_server(
+    workspace_id: str,
+    server_id: str,
+    user: CurrentUser = Depends(require_skills_write),
+) -> dict:
+    from cognix.mcp.manager import default_mcp_runtime
+
+    servers = _workspace_config(workspace_id).list_mcp_servers()
+    server = next((item for item in servers if item.id == server_id), None)
+    if not server:
+        raise HTTPException(404, "MCP server not found")
+    return default_mcp_runtime.stop(server).to_dict()
+
+
 @router.delete("/{workspace_id}/mcp/servers/{server_id}")
 async def delete_workspace_mcp_server(
     workspace_id: str,

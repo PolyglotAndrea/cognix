@@ -18,6 +18,7 @@ class MCPServerStatus:
     status: str
     tool_count: int = 0
     error: str = ""
+    stderr: str = ""
     checked_at: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
@@ -61,16 +62,21 @@ class MCPRuntimeManager:
             return cached[1]
 
         checked_at = time.time()
+        stderr = ""
         try:
-            async with self.client_factory(server) as client:
+            client = self.client_factory(server)
+            async with client:
                 specs = await client.list_tools()
+            stderr = str(getattr(client, "stderr_tail", "") or "")
         except Exception as exc:
+            stderr = str(getattr(locals().get("client", None), "stderr_tail", "") or "")
             self._status_cache[server.id] = MCPServerStatus(
                 server_id=server.id,
                 name=server.name,
                 enabled=True,
                 status="error",
                 error=str(exc),
+                stderr=stderr,
                 checked_at=checked_at,
             )
             if isinstance(exc, MCPError):
@@ -84,6 +90,7 @@ class MCPRuntimeManager:
             enabled=True,
             status="ready",
             tool_count=len(specs),
+            stderr=stderr,
             checked_at=checked_at,
         )
         return specs
@@ -131,6 +138,28 @@ class MCPRuntimeManager:
             for key, value in self._tool_cache.items()
             if not key.startswith(f"{server_id}:")
         }
+
+    async def restart(self, server: MCPServerConfig) -> MCPServerStatus:
+        """Clear cached discovery data and probe the server again."""
+        self.invalidate(server.id)
+        return await self.probe(server, force_refresh=True)
+
+    def stop(self, server: MCPServerConfig) -> MCPServerStatus:
+        """Drop local runtime cache for a server.
+
+        MCP processes are short-lived in the current runtime, so stop means
+        clearing cached tools/status and marking the server idle for callers.
+        """
+        self.invalidate(server.id)
+        status = MCPServerStatus(
+            server_id=server.id,
+            name=server.name,
+            enabled=server.enabled,
+            status="stopped" if server.enabled else "disabled",
+            checked_at=time.time(),
+        )
+        self._status_cache[server.id] = status
+        return status
 
     @staticmethod
     def _cache_key(server: MCPServerConfig) -> str:
