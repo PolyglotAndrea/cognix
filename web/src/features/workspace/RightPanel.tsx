@@ -17,6 +17,7 @@ import {
   ShieldCheck,
 } from 'lucide-react'
 import { api } from '@/shared/api/client'
+import { useAuthStore } from '@/features/auth/store'
 import { useWorkspaceStore } from './store'
 import { Panel, PanelHeader, PanelBody, Badge } from '@/shared/ui'
 
@@ -85,13 +86,23 @@ interface ApprovalRequest {
   kind?: 'tool_permission' | 'plan_confirmation' | 'question'
   response?: string
   result?: string
+  metadata?: Record<string, unknown>
   created_at: string
   updated_at: string
 }
 
 export function RightPanel({ dragHandleProps }: { dragHandleProps?: any }) {
   const queryClient = useQueryClient()
-  const { rightPanelTab, setRightPanelTab, rightPanelOpen, toggleRightPanel, toolResults, executionLogs } =
+  const {
+    rightPanelTab,
+    setRightPanelTab,
+    rightPanelOpen,
+    toggleRightPanel,
+    toolResults,
+    executionLogs,
+    addLog,
+    addToolResult,
+  } =
     useWorkspaceStore()
   const logsEndRef = useRef<HTMLDivElement>(null)
   const [currentDir, setCurrentDir] = useState('')
@@ -153,14 +164,19 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: any }) {
 
   const approvalMutation = useMutation({
     mutationFn: ({
-      id,
+      approval,
       action,
       response,
     }: {
-      id: string
+      approval: ApprovalRequest
       action: 'approve' | 'reject' | 'resume' | 'respond'
       response?: string
-    }) => api.post(`/approvals/${id}/${action}`, response ? { response } : undefined),
+    }): Promise<unknown> => {
+      if (action === 'resume' && approval.metadata?.runtime === 'claude-agent-sdk') {
+        return streamClaudeApprovalResume(approval, response, addLog, addToolResult)
+      }
+      return api.post(`/approvals/${approval.id}/${action}`, response ? { response } : undefined)
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['approvals', workspaceId] })
       queryClient.invalidateQueries({ queryKey: ['workspace-events', workspaceId] })
@@ -241,7 +257,7 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: any }) {
                   approval={approval}
                   busy={approvalMutation.isPending}
                   onAction={(action, response) =>
-                    approvalMutation.mutate({ id: approval.id, action, response })
+                    approvalMutation.mutate({ approval, action, response })
                   }
                 />
               ))
@@ -624,6 +640,85 @@ function ApprovalCard({
       </div>
     </div>
   )
+}
+
+async function streamClaudeApprovalResume(
+  approval: ApprovalRequest,
+  response: string | undefined,
+  addLog: (log: { id: string; level: 'info' | 'warn' | 'error'; message: string; timestamp: number }) => void,
+  addToolResult: (result: {
+    id: string
+    name: string
+    args?: Record<string, unknown>
+    result: unknown
+    timestamp: number
+  }) => void
+) {
+  const token = useAuthStore.getState().token
+  const stream = await fetch(`/api/v1/approvals/${approval.id}/resume/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify(response ? { response } : {}),
+  })
+  if (!stream.ok) throw new Error(`HTTP ${stream.status}`)
+
+  const reader = stream.body?.getReader()
+  if (!reader) throw new Error('No approval resume stream')
+
+  const decoder = new TextDecoder()
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+
+    const text = decoder.decode(value, { stream: true })
+    for (const line of text.split('\n')) {
+      if (!line.startsWith('data: ')) continue
+      const jsonStr = line.slice(6).trim()
+      if (!jsonStr) continue
+
+      const event = JSON.parse(jsonStr)
+      if (event.type === 'delta' && event.delta) {
+        addLog({
+          id: '',
+          level: 'info',
+          message: `Claude resumed: ${String(event.delta).slice(0, 140)}`,
+          timestamp: Date.now(),
+        })
+      } else if (event.type === 'tool_call') {
+        addLog({
+          id: '',
+          level: 'info',
+          message: `Claude calling tool: ${event.name}`,
+          timestamp: Date.now(),
+        })
+      } else if (event.type === 'tool_result') {
+        addToolResult({
+          id: '',
+          name: event.name,
+          args: event.args,
+          result: event.result,
+          timestamp: Date.now(),
+        })
+      } else if (event.type === 'approval_request') {
+        addLog({
+          id: '',
+          level: 'warn',
+          message: `Claude requested another approval: ${event.reason}`,
+          timestamp: Date.now(),
+        })
+      } else if (event.type === 'error') {
+        addLog({
+          id: '',
+          level: 'error',
+          message: event.message || event.error || 'Claude resume failed',
+          timestamp: Date.now(),
+        })
+      }
+    }
+  }
 }
 
 function ToolResultCard({ result }: { result: { name: string; timestamp: number; result: unknown } }) {
