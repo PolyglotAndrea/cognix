@@ -101,6 +101,7 @@ def _claude_permission_mode(mode: str) -> str:
         "read-only": "dontAsk",
         "workspace-write": "acceptEdits",
         "ask": "default",
+        "plan": "plan",
         "unrestricted": "bypassPermissions",
     }[normalized]
 
@@ -111,7 +112,7 @@ def _allowed_tools(mode: str) -> list[str]:
         return ["Read", "Glob", "Grep"]
     if normalized == "workspace-write":
         return ["Read", "Glob", "Grep", "Edit", "Write"]
-    if normalized == "ask":
+    if normalized in ("ask", "plan"):
         return ["Read", "Glob", "Grep", "AskUserQuestion"]
     return ["Read", "Glob", "Grep", "Edit", "Write", "Bash", "WebSearch", "WebFetch"]
 
@@ -150,7 +151,7 @@ def _build_can_use_tool(
     sdk: Any,
     approval_sink: Callable[[ApprovalRequest], None] | None = None,
 ) -> Callable[..., Any] | None:
-    if normalize_permission_mode(request.permission_mode) != "ask":
+    if normalize_permission_mode(request.permission_mode) not in {"ask", "plan"}:
         return None
 
     async def can_use_tool(

@@ -20,6 +20,11 @@ def test_decide_permission_modes() -> None:
     assert ask_decision.allowed is False
     assert ask_decision.requires_approval is True
 
+    plan_decision = decide_permission("plan", "write", "write file")
+    assert plan_decision.allowed is False
+    assert plan_decision.requires_approval is True
+    assert "plan confirmation" in plan_decision.reason
+
     dangerous = decide_permission("workspace-write", "dangerous", "shell")
     assert dangerous.allowed is False
     assert dangerous.requires_approval is True

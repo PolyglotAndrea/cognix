@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-PermissionMode = Literal["read-only", "workspace-write", "ask", "unrestricted"]
+PermissionMode = Literal["read-only", "workspace-write", "ask", "plan", "unrestricted"]
 AccessLevel = Literal["read", "write", "dangerous"]
 
 
@@ -21,7 +21,7 @@ class PermissionDecision:
 
 
 def normalize_permission_mode(mode: str | None) -> PermissionMode:
-    if mode in ("read-only", "workspace-write", "ask", "unrestricted"):
+    if mode in ("read-only", "workspace-write", "ask", "plan", "unrestricted"):
         return mode
     return "workspace-write"
 
@@ -59,6 +59,15 @@ def decide_permission(
             allowed=False,
             requires_approval=True,
             reason=f"{operation} requires approval for {normalized_access} access",
+        )
+
+    if normalized_mode == "plan":
+        if normalized_access == "read":
+            return PermissionDecision(allowed=True)
+        return PermissionDecision(
+            allowed=False,
+            requires_approval=True,
+            reason=f"{operation} requires plan confirmation for {normalized_access} access",
         )
 
     if normalized_access == "dangerous":

@@ -89,6 +89,25 @@ def test_claude_runtime_maps_workspace_mcp_servers(tmp_path, monkeypatch) -> Non
     assert options.strict_mcp_config is True
 
 
+def test_claude_runtime_maps_plan_mode(tmp_path, monkeypatch) -> None:
+    home = CognixHome(tmp_path / ".cognix")
+    workspace = WorkspaceManager(home).create("Claude")
+    monkeypatch.setenv("COGNIX_HOME", str(home.root))
+
+    options = ClaudeAgentRuntime().build_options(
+        ClaudeAgentRunRequest(
+            workspace_id=workspace.id,
+            prompt="make a plan",
+            permission_mode="plan",
+        ),
+        sdk=FakeSDK,
+    )
+
+    assert options.permission_mode == "plan"
+    assert options.allowed_tools == ["Read", "Glob", "Grep", "AskUserQuestion"]
+    assert options.can_use_tool is not None
+
+
 @pytest.mark.asyncio
 async def test_claude_runtime_ask_mode_creates_approval_request(tmp_path, monkeypatch) -> None:
     home = CognixHome(tmp_path / ".cognix")
