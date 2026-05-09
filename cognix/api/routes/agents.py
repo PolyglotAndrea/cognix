@@ -9,6 +9,7 @@ from starlette.responses import StreamingResponse
 from cognix.api.security import authenticate_websocket
 from cognix.api.state import agent_registry, get_agent_runtime, list_agent_runtimes
 from cognix.auth.dependencies import CurrentUser, get_current_user, require_agents_write
+from cognix.core.permissions import normalize_permission_mode
 from cognix.core.streaming import encode_sse_event, stream_payload
 
 router = APIRouter(prefix="/api/v1/agents", tags=["agents"])
@@ -116,6 +117,8 @@ async def update_agent(
         raise HTTPException(404, "Agent not found")
 
     changes = body.model_dump(exclude_unset=True)
+    if "permission_mode" in changes:
+        changes["permission_mode"] = normalize_permission_mode(changes["permission_mode"])
     for key, value in changes.items():
         setattr(agent, key, value)
 

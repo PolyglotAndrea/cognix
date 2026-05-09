@@ -133,7 +133,7 @@ cognix/
 |--------|------------|
 | `agent.py` | Agent class — stateful runtime with IDLE/RUNNING/WAITING/ERROR states |
 | `tool.py` | Tool class + `@tool` decorator — async callables with JSON Schema |
-| `permissions.py` | Runtime permission policy for read-only, workspace-write, ask, and unrestricted modes |
+| `permissions.py` | Runtime permission policy for read-only, workspace-write, ask, plan, and unrestricted modes |
 | `events.py` | EventBus — async pub/sub with well-known event types |
 | `memory.py` | MemoryBackend — in-memory with TTL support |
 | `context.py` | Context — carries conversation state through execution |

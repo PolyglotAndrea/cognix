@@ -13,7 +13,7 @@ from typing import Any
 from cognix.core.context import Context
 from cognix.core.events import EventBus, Events
 from cognix.core.memory import InMemoryBackend, MemoryBackend
-from cognix.core.permissions import decide_permission
+from cognix.core.permissions import decide_permission, normalize_permission_mode
 from cognix.core.tool import Tool
 
 logger = logging.getLogger(__name__)
@@ -76,6 +76,7 @@ class Agent:
     _pending_approval_event: dict[str, Any] | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
+        self.permission_mode = normalize_permission_mode(self.permission_mode)
         self._tool_map = {t.name: t for t in self.tools}
 
     def set_event_bus(self, bus: EventBus) -> None:

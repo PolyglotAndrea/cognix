@@ -21,6 +21,12 @@ def test_agent_to_dict_includes_workspace_and_permission_mode() -> None:
     assert data["permission_mode"] == "read-only"
 
 
+def test_agent_normalizes_invalid_permission_mode() -> None:
+    agent = Agent(name="worker", permission_mode="oops")
+
+    assert agent.permission_mode == "workspace-write"
+
+
 def test_agent_from_model_hydrates_runtime_config() -> None:
     row = SimpleNamespace(
         id="agent-1",
