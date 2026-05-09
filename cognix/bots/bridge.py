@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any
+
+import httpx
 
 from cognix.api.state import get_agent_runtime
 from cognix.core.context import Context
 from cognix.local.bots import BotConfig, BotConfigStore
 from cognix.local.workspace import WorkspaceManager
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -72,6 +77,7 @@ class BotBridgeService:
             },
         )
         response = await agent.run(message.text, context=context)
+        await self.post_response_callback(bot, message, response.content)
 
         try:
             WorkspaceManager().append_event(
@@ -92,6 +98,39 @@ class BotBridgeService:
             pass
 
         return response.content
+
+    async def post_response_callback(
+        self,
+        bot: BotConfig,
+        message: BotMessage,
+        response_text: str,
+    ) -> None:
+        """Write the Agent response back to an external bot callback URL when configured."""
+        response_url = str(bot.metadata.get("response_url", "")).strip()
+        if not response_url:
+            return
+
+        method = str(bot.metadata.get("response_method", "POST")).upper()
+        headers = bot.metadata.get("response_headers", {})
+        if not isinstance(headers, dict):
+            headers = {}
+        timeout = float(bot.metadata.get("response_timeout", 10))
+        payload = self.callback_payload(bot, message, response_text)
+
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                await client.request(
+                    method,
+                    response_url,
+                    headers={str(key): str(value) for key, value in headers.items()},
+                    json=payload,
+                )
+        except Exception as exc:
+            logger.warning("Bot response callback failed for %s: %s", bot.id, exc)
+            self._append_callback_event(bot, message, ok=False, error=str(exc))
+            return
+
+        self._append_callback_event(bot, message, ok=True)
 
     @staticmethod
     def extract_message(provider: str, payload: dict[str, Any]) -> BotMessage:
@@ -147,6 +186,25 @@ class BotBridgeService:
         return {"text": text}
 
     @staticmethod
+    def callback_payload(
+        bot: BotConfig,
+        message: BotMessage,
+        response_text: str,
+    ) -> dict[str, Any]:
+        return {
+            "provider": bot.provider,
+            "bot_id": bot.id,
+            "agent_id": bot.agent_id,
+            "workspace_id": bot.workspace_id,
+            "sender": message.sender,
+            "chat_id": message.chat_id,
+            "session_key": BotBridgeService.session_key(bot, message),
+            "message": message.text,
+            "response": response_text,
+            "formatted_response": BotBridgeService.format_response(bot.provider, response_text),
+        }
+
+    @staticmethod
     def remote_user_content(bot: BotConfig, message: BotMessage) -> str:
         """Build the user message seen by the Agent with remote chat context."""
         return "\n".join(
@@ -165,3 +223,28 @@ class BotBridgeService:
         return None
 
     _challenge_response = challenge_response
+
+    @staticmethod
+    def _append_callback_event(
+        bot: BotConfig,
+        message: BotMessage,
+        *,
+        ok: bool,
+        error: str = "",
+    ) -> None:
+        try:
+            WorkspaceManager().append_event(
+                bot.workspace_id,
+                {
+                    "type": "bot.callback",
+                    "provider": bot.provider,
+                    "bot_id": bot.id,
+                    "agent_id": bot.agent_id,
+                    "chat_id": message.chat_id,
+                    "session_key": BotBridgeService.session_key(bot, message),
+                    "ok": ok,
+                    "error": error,
+                },
+            )
+        except Exception:
+            logger.exception("Failed to append bot callback event")

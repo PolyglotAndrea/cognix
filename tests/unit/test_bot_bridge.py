@@ -7,8 +7,10 @@ import hmac
 import json
 from datetime import UTC, datetime
 
+import pytest
+
 from cognix.bots.bridge import BotBridgeService
-from cognix.local.bots import BotConfigStore
+from cognix.local.bots import BotConfig, BotConfigStore
 from cognix.local.home import CognixHome
 
 
@@ -117,3 +119,112 @@ def test_bot_bridge_formats_provider_responses():
         "msg_type": "text",
         "content": "ok",
     }
+
+
+def test_bot_bridge_builds_callback_payload():
+    bot = BotConfig(
+        id="bot-1",
+        name="Lark",
+        provider="lark",
+        workspace_id="workspace-1",
+        agent_id="agent-1",
+        secret_hash="hash",
+    )
+    message = BotBridgeService.extract_message(
+        "lark",
+        {
+            "event": {
+                "sender": {"sender_id": {"open_id": "ou_1"}},
+                "message": {"chat_id": "oc_1", "content": "{\"text\":\"hello\"}"},
+            }
+        },
+    )
+
+    payload = BotBridgeService.callback_payload(bot, message, "ok")
+
+    assert payload["session_key"] == "lark:bot-1:oc_1"
+    assert payload["response"] == "ok"
+    assert payload["formatted_response"] == {
+        "msg_type": "text",
+        "content": {"text": "ok"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_bot_bridge_posts_response_callback(tmp_path, monkeypatch):
+    requests = []
+    events = []
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def request(self, method, url, *, headers, json):
+            requests.append(
+                {
+                    "method": method,
+                    "url": url,
+                    "headers": headers,
+                    "json": json,
+                    "timeout": self.timeout,
+                }
+            )
+
+    class FakeWorkspaceManager:
+        def append_event(self, workspace_id, event):
+            events.append((workspace_id, event))
+
+    monkeypatch.setattr("cognix.bots.bridge.httpx.AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr("cognix.bots.bridge.WorkspaceManager", FakeWorkspaceManager)
+
+    bot = BotConfig(
+        id="bot-1",
+        name="Ding",
+        provider="dingtalk",
+        workspace_id="workspace-1",
+        agent_id="agent-1",
+        secret_hash="hash",
+        metadata={
+            "response_url": "https://example.test/callback",
+            "response_headers": {"Authorization": "Bearer token"},
+            "response_timeout": 3,
+        },
+    )
+    message = BotBridgeService.extract_message(
+        "dingtalk",
+        {"senderNick": "Ada", "conversationId": "cid", "text": {"content": "hi"}},
+    )
+
+    store = BotConfigStore(home=CognixHome(tmp_path / ".cognix").ensure())
+    await BotBridgeService(store=store).post_response_callback(bot, message, "ok")
+
+    assert requests == [
+        {
+            "method": "POST",
+            "url": "https://example.test/callback",
+            "headers": {"Authorization": "Bearer token"},
+            "json": BotBridgeService.callback_payload(bot, message, "ok"),
+            "timeout": 3.0,
+        }
+    ]
+    assert events == [
+        (
+            "workspace-1",
+            {
+                "type": "bot.callback",
+                "provider": "dingtalk",
+                "bot_id": "bot-1",
+                "agent_id": "agent-1",
+                "chat_id": "cid",
+                "session_key": "dingtalk:bot-1:cid",
+                "ok": True,
+                "error": "",
+            },
+        )
+    ]

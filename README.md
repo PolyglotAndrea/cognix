@@ -11,7 +11,7 @@ A Hermes Agent-based multi-agent collaboration platform built in Python. Cognix 
 - **JSON-RPC 2.0** — Inter-service communication over HTTP and WebSocket
 - **Skills + MCP Tools** — Local skills, workspace MCP server config, stdio MCP tool discovery/status caching, and Agent tool mounting
 - **Claude Agent SDK Bridge** — Workspace-scoped Claude Agent SDK execution with permission mode, MCP config mapping, and approval callbacks
-- **Remote Bot Bridge** — Lark/Feishu, DingTalk, and WeChat entry points with signature-aware webhook handling, async dispatch, and chat context binding
+- **Remote Bot Bridge** — Lark/Feishu, DingTalk, and WeChat entry points with signature-aware webhook handling, async dispatch, chat context binding, and response callbacks
 - **CLI + API** — Typer CLI and FastAPI REST/WebSocket API
 - **OAuth2 Authentication** — Google and GitHub providers with JWT tokens and API keys
 - **RBAC Permissions** — Admin, user, and viewer roles
@@ -172,6 +172,20 @@ Agent and workspace chat streaming use a stable data-only SSE JSON payload with:
 - `done`
 
 `approval_request` is emitted when `permission_mode="ask"` or a dangerous tool needs human confirmation. Claude Agent SDK runs use the same approval channel through the SDK `can_use_tool` callback.
+
+### Remote Bot Callbacks
+
+Bot bridge configs can include metadata for asynchronous response writeback:
+
+```json
+{
+  "response_url": "https://example.com/bot/callback",
+  "response_headers": {"Authorization": "Bearer ..."},
+  "response_timeout": 10
+}
+```
+
+When configured, Cognix posts the Agent response, provider-specific formatted response, sender/chat identifiers, and session key to `response_url` after dispatch.
 
 ### Authentication
 
