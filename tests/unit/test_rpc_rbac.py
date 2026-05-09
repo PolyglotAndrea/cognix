@@ -51,6 +51,12 @@ def test_rpc_permission_mapping_documents_mutating_methods() -> None:
     assert rpc_permission("system.ping") is None
 
 
+def test_rpc_router_exposes_websocket_transport() -> None:
+    from cognix.api.routes.rpc import router
+
+    assert any(getattr(route, "path", "") == "/rpc/ws" for route in router.routes)
+
+
 @pytest.mark.asyncio
 async def test_rpc_agent_chat_attaches_workspace_mcp_tools(monkeypatch) -> None:
     calls = []

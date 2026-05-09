@@ -162,6 +162,7 @@ cognix/
 | `POST /api/v1/workspaces/{id}/mcp/servers/{server_id}/stop` | Stop local MCP runtime cache for a server |
 | `POST /api/v1/workspaces/{id}/claude/stream` | Stream Claude Agent SDK execution events |
 | `POST /rpc` | JSON-RPC endpoint |
+| `WS /rpc/ws` | Authenticated JSON-RPC WebSocket endpoint |
 
 ### Streaming Events
 
