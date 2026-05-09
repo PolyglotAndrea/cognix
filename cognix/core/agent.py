@@ -118,12 +118,23 @@ class Agent:
                 ctx.add_message("assistant", response.content, tool_calls=response.tool_calls)
                 for tc in response.tool_calls:
                     tool_result = await self._execute_tool(tc)
+                    approval_event = self._consume_pending_approval_event()
                     ctx.add_message(
                         "tool",
                         tool_result,
                         tool_call_id=tc.get("id", ""),
                         name=tc.get("name", ""),
                     )
+                    if approval_event:
+                        return AgentResponse(
+                            content=tool_result,
+                            tool_calls=response.tool_calls,
+                            metadata={
+                                "finish_reason": "waiting_for_approval",
+                                "approval_id": approval_event["approval_id"],
+                            },
+                            usage=response.usage,
+                        )
 
             # Max iterations reached
             self.state = AgentState.ERROR
@@ -249,7 +260,7 @@ class Agent:
             await self._emit(Events.AGENT_ERROR, {"agent_id": self.id, "error": str(e)})
             yield AgentEvent("error", {"message": str(e), "error": str(e)})
         finally:
-            if self.state != AgentState.ERROR:
+            if self.state not in (AgentState.ERROR, AgentState.WAITING):
                 self.state = AgentState.IDLE
 
     async def _call_llm(self, ctx: Context) -> AgentResponse:

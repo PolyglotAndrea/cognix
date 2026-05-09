@@ -8,6 +8,7 @@ import pytest
 from sqlalchemy import update
 
 from cognix.scheduler.dispatcher import DistributedTaskDispatcher
+from cognix.scheduler.engine import SchedulerEngine
 from cognix.scheduler.store import TaskStore
 from cognix.storage.database import close_db, get_session, init_db
 from cognix.storage.models import ScheduledTaskModel, TaskState, TaskType
@@ -196,6 +197,47 @@ async def test_distributed_dispatcher_marks_exhausted_retry_failed(tmp_path, mon
         assert task.state == TaskState.FAILED
         assert task.lease_owner is None
         assert task.next_run is None
+        assert task.run_count == 1
+    finally:
+        await close_db()
+
+
+@pytest.mark.asyncio
+async def test_scheduler_engine_retries_failed_task_with_lease(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("COGNIX_DATABASE__URL", f"sqlite+aiosqlite:///{tmp_path}/state.db")
+    await init_db()
+    try:
+        store = TaskStore()
+        await store.create(
+            task_id="scheduler-retry",
+            name="Scheduler Retry",
+            task_type=TaskType.AGENT_CALL,
+            schedule="every 1m",
+            payload={"message": "hi"},
+            max_retries=1,
+        )
+        await store.set_next_run("scheduler-retry", datetime.now(UTC) - timedelta(seconds=1))
+
+        class FailingExecutor:
+            async def execute(self, task_id, payload):
+                async with get_session() as session:
+                    await session.execute(
+                        update(ScheduledTaskModel)
+                        .where(ScheduledTaskModel.id == task_id)
+                        .values(run_count=ScheduledTaskModel.run_count + 1)
+                    )
+                return {"status": "failure", "error": "boom"}
+
+        engine = SchedulerEngine()
+        engine.retry_base_seconds = 5
+        engine.set_executor(FailingExecutor())
+
+        await engine._execute_task("scheduler-retry", {"task_type": "agent_call"})
+
+        task = await store.get("scheduler-retry")
+        assert task.state == TaskState.ACTIVE
+        assert task.lease_owner is None
+        assert task.next_run is not None
         assert task.run_count == 1
     finally:
         await close_db()

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -26,6 +26,8 @@ class SchedulerEngine:
         self.node_id = (
             os.environ.get("COGNIX_RUNTIME_NODE_ID") or f"scheduler-{uuid.uuid4().hex[:8]}"
         )
+        self.retry_base_seconds = 30
+        self.retry_max_seconds = 3600
 
     def set_executor(self, executor: Any) -> None:
         """Set the task executor."""
@@ -193,10 +195,41 @@ class SchedulerEngine:
             return
 
         try:
-            await self._executor.execute(task_id, payload)
+            run = await self._executor.execute(task_id, payload) or {}
         except Exception as e:
             logger.exception("Task %s failed: %s", task_id, e)
-        finally:
-            job = self._scheduler.get_job(task_id)
-            next_run = job.next_run_time if job else None
-            await store.complete_lease(task_id, owner=self.node_id, next_run=next_run)
+            run = {"status": "failure", "error": str(e)}
+
+        task = await store.get(task_id)
+        if run.get("status") == "failure" and task:
+            attempts = max(task.run_count, 1)
+            if attempts <= task.max_retries:
+                delay_seconds = min(
+                    self.retry_base_seconds * (2 ** (attempts - 1)),
+                    self.retry_max_seconds,
+                )
+                retry_at = datetime.now(UTC) + timedelta(seconds=delay_seconds)
+                await store.complete_lease(task_id, owner=self.node_id, next_run=retry_at)
+                logger.warning(
+                    "Task %s failed; scheduler retry %s/%s scheduled in %ss",
+                    task_id,
+                    attempts,
+                    task.max_retries,
+                    delay_seconds,
+                )
+                return
+
+            from cognix.storage.models import TaskState
+
+            await store.complete_lease(
+                task_id,
+                owner=self.node_id,
+                next_run=None,
+                state=TaskState.FAILED,
+            )
+            logger.error("Task %s failed after %s scheduler attempts", task_id, attempts)
+            return
+
+        job = self._scheduler.get_job(task_id)
+        next_run = job.next_run_time if job else None
+        await store.complete_lease(task_id, owner=self.node_id, next_run=next_run)

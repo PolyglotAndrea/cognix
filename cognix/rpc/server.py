@@ -66,6 +66,7 @@ async def _agent_chat(params: dict, registry: AgentRegistry) -> dict:
     agent = await get_agent_runtime(params["agent_id"])
     if not agent:
         raise RPCError(METHOD_NOT_FOUND, f"Agent '{params['agent_id']}' not found")
+    await _attach_runtime_mcp_tools(agent)
     response = await agent.run(params["message"])
     return {"content": response.content, "usage": response.usage}
 
@@ -412,6 +413,14 @@ def _payload_dict(payload: Any) -> dict[str, Any]:
         except json.JSONDecodeError:
             return {}
     return payload or {}
+
+
+async def _attach_runtime_mcp_tools(agent) -> None:
+    if not getattr(agent, "workspace_id", None):
+        return
+    from cognix.mcp.adapter import attach_workspace_mcp_tools
+
+    await attach_workspace_mcp_tools(agent, agent.workspace_id)
 
 
 def _error_response(
