@@ -9,6 +9,7 @@ from typing import Any
 
 from sqlalchemy import and_, or_, select, update
 
+from cognix.scheduler.schedules import next_run_time
 from cognix.storage.database import get_session
 from cognix.storage.models import ScheduledTaskModel, TaskRunModel, TaskState, TaskType
 
@@ -37,6 +38,7 @@ class TaskStore:
                 payload=json.dumps(payload),
                 state=TaskState.ACTIVE,
                 max_retries=max_retries,
+                next_run=next_run_time(schedule),
             )
             session.add(task)
             logger.info("Created task %s: %s", task_id, name)
@@ -189,6 +191,31 @@ class TaskStore:
                     )
                 )
                 .values(lease_owner=None, lease_expires_at=None)
+            )
+            return result.rowcount > 0
+
+    async def complete_lease(
+        self,
+        task_id: str,
+        *,
+        owner: str,
+        next_run: datetime | None,
+    ) -> bool:
+        """Release an owned lease and advance the persisted next run time."""
+        async with get_session() as session:
+            result = await session.execute(
+                update(ScheduledTaskModel)
+                .where(
+                    and_(
+                        ScheduledTaskModel.id == task_id,
+                        ScheduledTaskModel.lease_owner == owner,
+                    )
+                )
+                .values(
+                    lease_owner=None,
+                    lease_expires_at=None,
+                    next_run=next_run,
+                )
             )
             return result.rowcount > 0
 

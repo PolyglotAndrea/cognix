@@ -5,15 +5,16 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime
 from typing import Any
 
 from cognix.core.agent import Agent
 from cognix.core.events import EventBus
 from cognix.core.memory import SQLiteBackend
 from cognix.core.registry import AgentRegistry
+from cognix.scheduler.dispatcher import DistributedTaskDispatcher
 from cognix.scheduler.engine import SchedulerEngine
 from cognix.scheduler.executor import TaskExecutor
+from cognix.scheduler.schedules import parse_schedule
 from cognix.scheduler.store import TaskStore
 from cognix.storage.models import AgentModel, TaskState
 
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 event_bus = EventBus()
 agent_registry = AgentRegistry(event_bus=event_bus)
 scheduler_engine: SchedulerEngine | None = None
+task_dispatcher: DistributedTaskDispatcher | None = None
 runtime_node_id: str | None = None
 runtime_heartbeat_task: asyncio.Task | None = None
 
@@ -83,20 +85,6 @@ async def get_agent_runtime(agent_id: str) -> Agent | None:
     return agent
 
 
-def _parse_schedule(schedule: str) -> tuple[str, Any]:
-    """Parse a persisted schedule into an engine schedule type and value."""
-    schedule = schedule.strip()
-    if " " in schedule and len(schedule.split()) == 5:
-        return "cron", schedule
-    if schedule.startswith("every "):
-        parts = schedule.split()
-        val = int(parts[1][:-1])
-        unit = parts[1][-1]
-        seconds = val * {"s": 1, "m": 60, "h": 3600}.get(unit, 1)
-        return "interval", seconds
-    return "once", datetime.fromisoformat(schedule)
-
-
 def schedule_task_in_engine(
     engine: SchedulerEngine,
     task_id: str,
@@ -105,7 +93,7 @@ def schedule_task_in_engine(
     name: str = "",
 ) -> None:
     """Register a task with the in-process scheduler."""
-    schedule_type, value = _parse_schedule(schedule)
+    schedule_type, value = parse_schedule(schedule)
     if schedule_type == "cron":
         engine.add_cron(task_id, value, payload, name=name)
     elif schedule_type == "interval":
@@ -130,11 +118,14 @@ async def restore_active_tasks(engine: SchedulerEngine) -> None:
 
 async def start_scheduler() -> SchedulerEngine:
     """Create, configure, restore, and start the process scheduler."""
-    global scheduler_engine
+    global scheduler_engine, task_dispatcher
     engine = SchedulerEngine()
-    engine.set_executor(TaskExecutor(agent_registry=agent_registry))
+    executor = TaskExecutor(agent_registry=agent_registry)
+    engine.set_executor(executor)
     await restore_active_tasks(engine)
     engine.start()
+    task_dispatcher = DistributedTaskDispatcher(executor=executor, node_id=engine.node_id)
+    task_dispatcher.start()
     scheduler_engine = engine
     return engine
 
@@ -195,7 +186,10 @@ def set_scheduler_engine(engine: SchedulerEngine | None) -> None:
 
 
 async def shutdown_scheduler() -> None:
-    global scheduler_engine
+    global scheduler_engine, task_dispatcher
+    if task_dispatcher:
+        await task_dispatcher.stop()
+        task_dispatcher = None
     if scheduler_engine:
         scheduler_engine.shutdown()
         scheduler_engine = None

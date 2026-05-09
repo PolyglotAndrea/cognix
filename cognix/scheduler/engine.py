@@ -197,4 +197,6 @@ class SchedulerEngine:
         except Exception as e:
             logger.exception("Task %s failed: %s", task_id, e)
         finally:
-            await store.release_lease(task_id, owner=self.node_id)
+            job = self._scheduler.get_job(task_id)
+            next_run = job.next_run_time if job else None
+            await store.complete_lease(task_id, owner=self.node_id, next_run=next_run)
