@@ -548,22 +548,40 @@ function ApprovalCard({
   const isApproved = approval.status === 'approved'
   const isQuestion = approval.kind === 'question'
   const isPlan = approval.kind === 'plan_confirmation'
+  const isClaude = approval.metadata?.runtime === 'claude-agent-sdk'
+  const resumeToken = approvalResumeToken(approval)
   const args = JSON.stringify(approval.arguments || {}, null, 2)
   const kindLabel = isQuestion ? 'Question' : isPlan ? 'Plan' : 'Tool'
+  const statusLabel = approvalStatusLabel(approval, busy)
+  const primaryLabel = isQuestion ? 'Answer' : isPlan ? 'Confirm Plan' : 'Approve Tool'
+  const description = isQuestion
+    ? 'The Agent needs a human answer before it can continue.'
+    : isPlan
+      ? 'Review and confirm the proposed plan before execution resumes.'
+      : 'Approve this tool call so the Agent can continue the task.'
 
   return (
     <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4 transition-all hover:border-amber-500/30">
       <div className="mb-3 flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <ShieldQuestion className="h-4 w-4 text-amber-500" />
+            {isPlan ? (
+              <ShieldCheck className="h-4 w-4 text-amber-500" />
+            ) : (
+              <ShieldQuestion className="h-4 w-4 text-amber-500" />
+            )}
             <span className="truncate text-xs font-bold text-foreground">{approval.tool_name}</span>
           </div>
-          <div className="mt-1 flex items-center gap-2">
+          <div className="mt-1 flex flex-wrap items-center gap-2">
             <span className="font-mono text-[10px] text-muted-foreground">{approval.id}</span>
             <span className="rounded-full border border-border bg-background/60 px-2 py-0.5 text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
               {kindLabel}
             </span>
+            {isClaude && (
+              <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-widest text-primary">
+                Claude SDK
+              </span>
+            )}
           </div>
         </div>
         <Badge variant={approval.status === 'rejected' ? 'error' : approval.status === 'completed' ? 'success' : 'warning'}>
@@ -571,18 +589,46 @@ function ApprovalCard({
         </Badge>
       </div>
 
+      <div className="mb-3 rounded-xl border border-border bg-background/50 p-3">
+        <div className="mb-1 text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
+          Continue status
+        </div>
+        <div className="text-xs font-bold text-foreground">{statusLabel}</div>
+        <p className="mt-1 text-[11px] leading-5 text-muted-foreground">{description}</p>
+      </div>
+
       <p className="mb-3 text-xs leading-5 text-foreground/80">{approval.reason}</p>
 
-      {isQuestion && isPending && (
-        <textarea
-          value={response}
-          onChange={(event) => setResponse(event.target.value)}
-          className="mb-3 min-h-24 w-full resize-none rounded-xl border border-border bg-background/80 p-3 text-xs leading-5 text-foreground outline-none transition-all focus:border-primary"
-          placeholder="Answer the Agent question..."
-        />
+      {isQuestion && (
+        <div className="mb-3 rounded-xl border border-primary/20 bg-primary/5 p-3">
+          <div className="mb-2 text-[9px] font-bold uppercase tracking-widest text-primary">
+            Human answer
+          </div>
+          {isPending ? (
+            <textarea
+              value={response}
+              onChange={(event) => setResponse(event.target.value)}
+              className="min-h-24 w-full resize-none rounded-xl border border-border bg-background/80 p-3 text-xs leading-5 text-foreground outline-none transition-all focus:border-primary"
+              placeholder="Answer the Agent question..."
+            />
+          ) : (
+            <div className="text-xs leading-5 text-foreground">{approval.response || 'No answer recorded.'}</div>
+          )}
+        </div>
       )}
 
-      {approval.response && (
+      {isPlan && (
+        <div className="mb-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3">
+          <div className="mb-2 text-[9px] font-bold uppercase tracking-widest text-amber-600 dark:text-amber-300">
+            Plan confirmation
+          </div>
+          <p className="text-xs leading-5 text-foreground/80">
+            Confirming this request lets the Agent continue from the approval checkpoint.
+          </p>
+        </div>
+      )}
+
+      {!isQuestion && approval.response && (
         <div className="mb-3 rounded-xl border border-primary/20 bg-primary/5 p-3 text-xs leading-5 text-foreground">
           {approval.response}
         </div>
@@ -598,6 +644,13 @@ function ApprovalCard({
           <div className="mt-1 truncate font-mono text-xs text-foreground">{approval.agent_id}</div>
         </div>
       </div>
+
+      {resumeToken && (
+        <div className="mb-3 rounded-xl border border-border bg-background/50 p-2">
+          <div className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Resume token</div>
+          <div className="mt-1 truncate font-mono text-xs text-foreground">{resumeToken}</div>
+        </div>
+      )}
 
       <pre className="mb-3 max-h-28 overflow-auto rounded-xl border border-border bg-background/60 p-3 font-mono text-[11px] leading-5 text-muted-foreground">
         {args}
@@ -617,7 +670,7 @@ function ApprovalCard({
               disabled={busy || (isQuestion && !response.trim())}
               className="flex-1 rounded-xl bg-emerald-500 px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-white transition-all hover:bg-emerald-600 disabled:opacity-50"
             >
-              {isQuestion ? 'Answer' : isPlan ? 'Confirm' : 'Approve'}
+              {primaryLabel}
             </button>
             <button
               onClick={() => onAction('reject')}
@@ -634,12 +687,32 @@ function ApprovalCard({
             disabled={busy}
             className="w-full rounded-xl bg-primary px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-white transition-all hover:bg-primary/90 disabled:opacity-50"
           >
-            Resume Agent
+            {busy ? 'Continuing...' : isClaude ? 'Resume Claude Run' : 'Resume Agent'}
           </button>
         )}
       </div>
     </div>
   )
+}
+
+function approvalResumeToken(approval: ApprovalRequest) {
+  const metadata = approval.metadata || {}
+  for (const key of ['resume', 'resume_token', 'session_id', 'conversation_id']) {
+    const value = metadata[key]
+    if (typeof value === 'string' && value.trim()) return value
+    if (typeof value === 'number') return String(value)
+  }
+  return ''
+}
+
+function approvalStatusLabel(approval: ApprovalRequest, busy: boolean) {
+  if (busy && approval.status === 'approved') return 'Continuing task from approval checkpoint'
+  if (approval.status === 'completed') return 'Continuation completed'
+  if (approval.status === 'rejected') return 'Rejected by human reviewer'
+  if (approval.status === 'approved') return 'Approved and ready to resume'
+  if (approval.kind === 'question') return 'Waiting for human answer'
+  if (approval.kind === 'plan_confirmation') return 'Waiting for plan confirmation'
+  return 'Waiting for tool permission'
 }
 
 async function streamClaudeApprovalResume(
