@@ -7,13 +7,13 @@ import json
 import logging
 import os
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from cognix.scheduler.executor import TaskExecutor
 from cognix.scheduler.schedules import next_run_time
 from cognix.scheduler.store import TaskStore
-from cognix.storage.models import ScheduledTaskModel
+from cognix.storage.models import ScheduledTaskModel, TaskState
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,8 @@ class DistributedTaskDispatcher:
         poll_interval: float = 5.0,
         batch_size: int = 10,
         lease_ttl_seconds: int = 120,
+        retry_base_seconds: int = 30,
+        retry_max_seconds: int = 3600,
     ) -> None:
         self.executor = executor
         self.store = store or TaskStore()
@@ -41,6 +43,8 @@ class DistributedTaskDispatcher:
         self.poll_interval = poll_interval
         self.batch_size = batch_size
         self.lease_ttl_seconds = lease_ttl_seconds
+        self.retry_base_seconds = retry_base_seconds
+        self.retry_max_seconds = retry_max_seconds
         self._task: asyncio.Task | None = None
 
     @property
@@ -86,13 +90,50 @@ class DistributedTaskDispatcher:
         if task.task_type and "task_type" not in payload:
             payload["task_type"] = task.task_type.value
         try:
-            await self.executor.execute(task.id, payload)
-        finally:
+            run = await self.executor.execute(task.id, payload) or {}
+        except Exception as exc:
+            logger.exception("Task %s executor raised outside normal failure handling", task.id)
+            run = {"status": "failure", "error": str(exc)}
+        task_after_run = await self.store.get(task.id)
+        if run.get("status") == "failure" and task_after_run:
+            await self._complete_failed_run(task_after_run)
+            return
+
+        await self.store.complete_lease(
+            task.id,
+            owner=self.node_id,
+            next_run=next_run_time(task.schedule),
+        )
+
+    async def _complete_failed_run(self, task: ScheduledTaskModel) -> None:
+        attempts = max(task.run_count, 1)
+        if attempts <= task.max_retries:
+            delay_seconds = min(
+                self.retry_base_seconds * (2 ** (attempts - 1)),
+                self.retry_max_seconds,
+            )
+            retry_at = datetime.now(UTC) + timedelta(seconds=delay_seconds)
             await self.store.complete_lease(
                 task.id,
                 owner=self.node_id,
-                next_run=next_run_time(task.schedule),
+                next_run=retry_at,
             )
+            logger.warning(
+                "Task %s failed; retry %s/%s scheduled in %ss",
+                task.id,
+                attempts,
+                task.max_retries,
+                delay_seconds,
+            )
+            return
+
+        await self.store.complete_lease(
+            task.id,
+            owner=self.node_id,
+            next_run=None,
+            state=TaskState.FAILED,
+        )
+        logger.error("Task %s failed after %s attempts", task.id, attempts)
 
 
 def _payload_dict(payload: Any) -> dict[str, Any]:

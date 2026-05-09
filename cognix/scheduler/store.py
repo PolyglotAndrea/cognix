@@ -200,8 +200,17 @@ class TaskStore:
         *,
         owner: str,
         next_run: datetime | None,
+        state: TaskState | None = None,
     ) -> bool:
         """Release an owned lease and advance the persisted next run time."""
+        values = {
+            "lease_owner": None,
+            "lease_expires_at": None,
+            "next_run": next_run,
+        }
+        if state is not None:
+            values["state"] = state
+
         async with get_session() as session:
             result = await session.execute(
                 update(ScheduledTaskModel)
@@ -211,11 +220,7 @@ class TaskStore:
                         ScheduledTaskModel.lease_owner == owner,
                     )
                 )
-                .values(
-                    lease_owner=None,
-                    lease_expires_at=None,
-                    next_run=next_run,
-                )
+                .values(**values)
             )
             return result.rowcount > 0
 

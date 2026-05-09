@@ -7,7 +7,7 @@ A Hermes Agent-based multi-agent collaboration platform built in Python. Cognix 
 - **Agent Runtime** — Stateful agents with tool calling, memory, and event system
 - **Human-in-the-loop Approvals** — `ask` and `plan` permission modes, approval requests, approve/reject/resume API, and SSE approval events
 - **Multi-Agent Orchestration** — Sequential, Parallel, Router, and Loop patterns via YAML workflow DSL
-- **Scheduled Tasks** — Cron, interval, and one-shot scheduling with APScheduler plus runtime leases, due-task claiming, and DB-backed worker dispatch
+- **Scheduled Tasks** — Cron, interval, and one-shot scheduling with APScheduler plus runtime leases, due-task claiming, DB-backed worker dispatch, and retry backoff
 - **JSON-RPC 2.0** — Inter-service communication over HTTP and WebSocket
 - **Skills + MCP Tools** — Local skills, workspace MCP server config, stdio MCP tool discovery/status caching, and Agent tool mounting
 - **Claude Agent SDK Bridge** — Workspace-scoped Claude Agent SDK execution with permission mode, MCP config mapping, and approval callbacks
@@ -113,7 +113,7 @@ cognix rpc call agent.chat --params '{"agent_id":"test","message":"hi"}'
 cognix/
 ├── core/           # Agent runtime, tools, events, memory, context
 ├── orchestrator/   # Multi-agent patterns (Sequential, Parallel, Router, Loop)
-├── scheduler/      # APScheduler-based task engine
+├── scheduler/      # APScheduler + DB-backed dispatcher with leases and retry backoff
 ├── rpc/            # JSON-RPC 2.0 server/client
 ├── skills/         # Skills system (local + marketplace)
 ├── mcp/            # MCP stdio client and Tool adapter
