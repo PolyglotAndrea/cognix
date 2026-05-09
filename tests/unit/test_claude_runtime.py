@@ -137,3 +137,30 @@ async def test_claude_runtime_ask_mode_creates_approval_request(tmp_path, monkey
     assert approvals[0].access_level == "write"
     assert approvals[0].metadata["runtime"] == "claude-agent-sdk"
     assert pending == approvals
+
+
+@pytest.mark.asyncio
+async def test_claude_runtime_resumes_approved_approval(tmp_path, monkeypatch) -> None:
+    home = CognixHome(tmp_path / ".cognix")
+    workspace = WorkspaceManager(home).create("Claude")
+    monkeypatch.setenv("COGNIX_HOME", str(home.root))
+    store = ApprovalStore(home)
+    approval = store.create(
+        agent_id=f"claude:{workspace.id}",
+        workspace_id=workspace.id,
+        tool_name="Write",
+        arguments={"file_path": "README.md"},
+        access_level="write",
+        reason="Needs write access",
+        metadata={
+            "runtime": "claude-agent-sdk",
+            "resume": "session-1",
+        },
+    )
+    store.approve(approval.id)
+
+    result = await ClaudeAgentRuntime().resume_approval(approval.id)
+
+    assert result["runtime"] == "claude-agent-sdk"
+    assert result["resume"] == "session-1"
+    assert store.get(approval.id).status == "completed"

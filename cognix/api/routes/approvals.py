@@ -59,6 +59,14 @@ async def resume_approval(
     if not approval:
         raise HTTPException(404, "Approval not found")
 
+    if approval.metadata.get("runtime") == "claude-agent-sdk":
+        from cognix.claude.runtime import ClaudeAgentRuntime
+
+        try:
+            return await ClaudeAgentRuntime().resume_approval(approval_id)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
     agent = await get_agent_runtime(approval.agent_id)
     if not agent:
         raise HTTPException(404, "Agent not found")

@@ -149,7 +149,7 @@ cognix/
 | `GET /api/v1/approvals` | List pending or resolved human approval requests |
 | `POST /api/v1/approvals/{id}/approve` | Approve a pending tool/action request |
 | `POST /api/v1/approvals/{id}/reject` | Reject a pending tool/action request |
-| `POST /api/v1/approvals/{id}/resume` | Resume an approved Agent tool call |
+| `POST /api/v1/approvals/{id}/resume` | Resume an approved Agent or Claude SDK tool call |
 | `GET /api/v1/tasks` | List scheduled tasks |
 | `POST /api/v1/tasks` | Create scheduled task |
 | `GET /api/v1/skills` | List skills |

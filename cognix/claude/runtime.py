@@ -84,6 +84,35 @@ class ClaudeAgentRuntime:
             resume=request.resume,
         )
 
+    async def resume_approval(self, approval_id: str) -> dict[str, Any]:
+        """Complete an approved Claude SDK permission request in Cognix."""
+        store = ApprovalStore()
+        approval = store.get(approval_id)
+        if not approval:
+            raise ValueError(f"Approval '{approval_id}' not found")
+        if approval.metadata.get("runtime") != "claude-agent-sdk":
+            raise ValueError(f"Approval '{approval_id}' is not a Claude Agent SDK request")
+        if approval.status != "approved":
+            raise ValueError(f"Approval '{approval_id}' is not approved")
+
+        resume_token = _approval_resume_token(approval)
+        result = (
+            f"Claude Agent SDK approval acknowledged for {approval.tool_name}."
+            if not resume_token
+            else (
+                f"Claude Agent SDK approval acknowledged for {approval.tool_name}. "
+                f"Resume token: {resume_token}"
+            )
+        )
+        completed = store.complete(approval_id, result)
+        return {
+            "approval_id": approval_id,
+            "runtime": "claude-agent-sdk",
+            "result": result,
+            "resume": resume_token,
+            "status": completed.status if completed else "completed",
+        }
+
 
 def _load_sdk() -> Any:
     try:
@@ -250,6 +279,14 @@ def _approval_events(approvals: list[ApprovalRequest]) -> list[AgentEvent]:
     ]
     approvals.clear()
     return events
+
+
+def _approval_resume_token(approval: ApprovalRequest) -> str:
+    for key in ("resume", "resume_token", "session_id"):
+        value = approval.metadata.get(key)
+        if value:
+            return str(value)
+    return ""
 
 
 def _message_to_events(message: Any) -> list[AgentEvent]:
