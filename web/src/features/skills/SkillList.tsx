@@ -1,6 +1,16 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { PlugZap, Puzzle, Server, Trash2, Wrench, type LucideIcon } from 'lucide-react'
+import {
+  Activity,
+  PlugZap,
+  Puzzle,
+  RefreshCw,
+  Server,
+  Square,
+  Trash2,
+  Wrench,
+  type LucideIcon,
+} from 'lucide-react'
 import { api } from '@/shared/api/client'
 import { Badge, Button, Input, Spinner } from '@/shared/ui'
 
@@ -26,6 +36,17 @@ interface MCPServer {
   args: string[]
   env: Record<string, string>
   enabled: boolean
+}
+
+interface MCPServerStatus {
+  server_id: string
+  name: string
+  enabled: boolean
+  status: string
+  tool_count: number
+  error?: string
+  stderr?: string
+  checked_at?: number
 }
 
 export default function SkillList() {
@@ -208,25 +229,13 @@ export default function SkillList() {
                 <EmptyPanel icon={Server} title="No MCP Servers" text="Add a local or remote MCP server for this workspace." />
               ) : (
                 servers.map((server) => (
-                  <div key={server.id} className="flex items-start justify-between gap-4 px-5 py-4">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <h4 className="text-sm font-bold text-foreground">{server.name}</h4>
-                        <Badge variant={server.enabled ? 'success' : 'default'}>{server.enabled ? 'On' : 'Off'}</Badge>
-                      </div>
-                      <p className="mt-2 truncate font-mono text-xs text-muted-foreground">
-                        {server.command} {server.args.join(' ')}
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => deleteServerMutation.mutate(server.id)}
-                      disabled={deleteServerMutation.isPending}
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-rose-500 disabled:opacity-40"
-                      aria-label={`Delete ${server.name}`}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
+                  <MCPServerRow
+                    key={server.id}
+                    workspaceId={workspace.id}
+                    server={server}
+                    onDelete={() => deleteServerMutation.mutate(server.id)}
+                    deleting={deleteServerMutation.isPending}
+                  />
                 ))
               )}
             </div>
@@ -234,6 +243,137 @@ export default function SkillList() {
         </div>
       )}
     </div>
+  )
+}
+
+function MCPServerRow({
+  workspaceId,
+  server,
+  onDelete,
+  deleting,
+}: {
+  workspaceId: string
+  server: MCPServer
+  onDelete: () => void
+  deleting: boolean
+}) {
+  const queryClient = useQueryClient()
+  const statusKey = ['workspace-mcp-server-status', workspaceId, server.id]
+  const { data: status, isFetching } = useQuery<MCPServerStatus>({
+    queryKey: statusKey,
+    queryFn: () =>
+      api
+        .get(`/workspaces/${workspaceId}/mcp/servers/${server.id}/status`)
+        .then((response) => response.data),
+    enabled: !!workspaceId && !!server.id,
+    refetchInterval: 10000,
+  })
+
+  const refreshMutation = useMutation({
+    mutationFn: () =>
+      api
+        .get(`/workspaces/${workspaceId}/mcp/servers/${server.id}/status`, {
+          params: { refresh: true },
+        })
+        .then((response) => response.data),
+    onSuccess: (data) => queryClient.setQueryData(statusKey, data),
+  })
+
+  const restartMutation = useMutation({
+    mutationFn: () => api.post(`/workspaces/${workspaceId}/mcp/servers/${server.id}/restart`),
+    onSuccess: (response) => queryClient.setQueryData(statusKey, response.data),
+  })
+
+  const stopMutation = useMutation({
+    mutationFn: () => api.post(`/workspaces/${workspaceId}/mcp/servers/${server.id}/stop`),
+    onSuccess: (response) => queryClient.setQueryData(statusKey, response.data),
+  })
+
+  const statusText = status?.status || 'unknown'
+  const busy = isFetching || refreshMutation.isPending || restartMutation.isPending || stopMutation.isPending
+
+  return (
+    <div className="px-5 py-4">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h4 className="text-sm font-bold text-foreground">{server.name}</h4>
+            <Badge variant={server.enabled ? 'success' : 'default'}>{server.enabled ? 'On' : 'Off'}</Badge>
+            <Badge variant={statusText === 'ready' ? 'success' : statusText === 'error' ? 'error' : 'default'}>
+              {statusText}
+            </Badge>
+            {typeof status?.tool_count === 'number' && (
+              <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                {status.tool_count} tools
+              </span>
+            )}
+          </div>
+          <p className="mt-2 truncate font-mono text-xs text-muted-foreground">
+            {server.command} {server.args.join(' ')}
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <IconButton
+            icon={Activity}
+            label={`Probe ${server.name}`}
+            disabled={busy}
+            onClick={() => refreshMutation.mutate()}
+          />
+          <IconButton
+            icon={RefreshCw}
+            label={`Restart ${server.name}`}
+            disabled={busy}
+            onClick={() => restartMutation.mutate()}
+          />
+          <IconButton
+            icon={Square}
+            label={`Stop ${server.name}`}
+            disabled={busy}
+            onClick={() => stopMutation.mutate()}
+          />
+          <IconButton
+            icon={Trash2}
+            label={`Delete ${server.name}`}
+            disabled={deleting}
+            danger
+            onClick={onDelete}
+          />
+        </div>
+      </div>
+      {(status?.error || status?.stderr) && (
+        <pre className="mt-3 max-h-24 overflow-auto rounded-xl border border-rose-500/20 bg-rose-500/5 p-3 font-mono text-[11px] leading-5 text-rose-600 dark:text-rose-300">
+          {[status.error, status.stderr].filter(Boolean).join('\n')}
+        </pre>
+      )}
+    </div>
+  )
+}
+
+function IconButton({
+  icon: Icon,
+  label,
+  onClick,
+  disabled,
+  danger = false,
+}: {
+  icon: LucideIcon
+  label: string
+  onClick: () => void
+  disabled?: boolean
+  danger?: boolean
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted disabled:opacity-40 ${
+        danger ? 'hover:text-rose-500' : 'hover:text-foreground'
+      }`}
+      aria-label={label}
+      title={label}
+    >
+      <Icon className="h-4 w-4" />
+    </button>
   )
 }
 

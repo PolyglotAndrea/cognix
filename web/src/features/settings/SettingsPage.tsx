@@ -34,6 +34,7 @@ interface RemoteBot {
   agent_id: string
   enabled: boolean
   webhook_path: string
+  metadata?: Record<string, unknown>
 }
 
 interface HotMemory {
@@ -60,6 +61,8 @@ export default function SettingsPage() {
   const [botName, setBotName] = useState('')
   const [botProvider, setBotProvider] = useState('lark')
   const [botSecret, setBotSecret] = useState('')
+  const [botResponseUrl, setBotResponseUrl] = useState('')
+  const [botRequireSignature, setBotRequireSignature] = useState(false)
   const [selectedAgentId, setSelectedAgentId] = useState('')
   const [hotDraft, setHotDraft] = useState<HotMemory | null>(null)
   const [memoryContent, setMemoryContent] = useState('')
@@ -136,10 +139,16 @@ export default function SettingsPage() {
         agent_id: selectedAgentId || agents[0]?.id,
         secret: botSecret,
         enabled: true,
+        metadata: {
+          ...(botResponseUrl.trim() ? { response_url: botResponseUrl.trim() } : {}),
+          require_signature: botRequireSignature,
+        },
       }),
     onSuccess: () => {
       setBotName('')
       setBotSecret('')
+      setBotResponseUrl('')
+      setBotRequireSignature(false)
       queryClient.invalidateQueries({ queryKey: ['remote-bots'] })
     },
   })
@@ -417,6 +426,22 @@ export default function SettingsPage() {
           >
             Add
           </Button>
+          <div className="lg:col-span-5 grid grid-cols-1 gap-3 lg:grid-cols-[1fr_auto]">
+            <Input
+              placeholder="Optional response callback URL"
+              value={botResponseUrl}
+              onChange={(event) => setBotResponseUrl(event.target.value)}
+            />
+            <label className="flex items-center gap-2 rounded-xl border border-border bg-muted px-4 py-2 text-sm text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={botRequireSignature}
+                onChange={(event) => setBotRequireSignature(event.target.checked)}
+                className="h-4 w-4 rounded border-border accent-primary"
+              />
+              Require signature
+            </label>
+          </div>
         </div>
 
         <div className="divide-y divide-border">
@@ -436,6 +461,11 @@ export default function SettingsPage() {
                         <Badge variant={bot.enabled ? 'success' : 'default'}>{bot.provider}</Badge>
                       </div>
                       <p className="mt-1 text-xs text-muted-foreground">Agent: {bot.agent_id}</p>
+                      {typeof bot.metadata?.response_url === 'string' && (
+                        <p className="mt-1 max-w-xl truncate text-xs text-muted-foreground">
+                          Callback: {bot.metadata.response_url}
+                        </p>
+                      )}
                     </div>
                     <button
                       onClick={() => deleteBotMutation.mutate(bot.id)}
