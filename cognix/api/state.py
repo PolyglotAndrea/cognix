@@ -180,6 +180,10 @@ def get_scheduler_engine() -> SchedulerEngine | None:
     return scheduler_engine
 
 
+def get_task_dispatcher() -> DistributedTaskDispatcher | None:
+    return task_dispatcher
+
+
 def set_scheduler_engine(engine: SchedulerEngine | None) -> None:
     global scheduler_engine
     scheduler_engine = engine

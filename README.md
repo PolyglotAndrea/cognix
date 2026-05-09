@@ -153,6 +153,7 @@ cognix/
 | `GET /api/v1/tasks` | List scheduled tasks |
 | `POST /api/v1/tasks` | Create scheduled task |
 | `GET /api/v1/skills` | List skills |
+| `GET /api/v1/runtime/status` | Inspect scheduler and distributed task dispatcher status |
 | `GET /api/v1/workspaces/{id}/mcp/servers/{server_id}/tools` | Discover MCP tools for a workspace server |
 | `GET /api/v1/workspaces/{id}/mcp/servers/{server_id}/status` | Check or refresh MCP server discovery status |
 | `POST /api/v1/workspaces/{id}/claude/stream` | Stream Claude Agent SDK execution events |
