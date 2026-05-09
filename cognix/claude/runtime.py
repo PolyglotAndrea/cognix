@@ -38,6 +38,8 @@ class ClaudeAgentRuntime:
     async def stream(self, request: ClaudeAgentRunRequest) -> AsyncIterator[AgentEvent]:
         sdk = _load_sdk()
         pending_approvals: list[ApprovalRequest] = []
+        waiting_approval_id = ""
+        done_emitted = False
         options = self.build_options(
             request,
             sdk=sdk,
@@ -46,14 +48,35 @@ class ClaudeAgentRuntime:
         try:
             async for message in sdk.query(prompt=request.prompt, options=options):
                 for event in _approval_events(pending_approvals):
+                    waiting_approval_id = str(event.data.get("id") or "")
                     yield event
                 for event in _message_to_events(message):
+                    done_emitted = done_emitted or event.type == "done"
                     yield event
             for event in _approval_events(pending_approvals):
+                waiting_approval_id = str(event.data.get("id") or "")
                 yield event
+            if waiting_approval_id and not done_emitted:
+                yield AgentEvent(
+                    "done",
+                    {
+                        "finish_reason": "waiting_for_approval",
+                        "approval_id": waiting_approval_id,
+                    },
+                )
         except Exception as exc:
             for event in _approval_events(pending_approvals):
+                waiting_approval_id = str(event.data.get("id") or "")
                 yield event
+            if waiting_approval_id:
+                yield AgentEvent(
+                    "done",
+                    {
+                        "finish_reason": "waiting_for_approval",
+                        "approval_id": waiting_approval_id,
+                    },
+                )
+                return
             yield AgentEvent("error", {"message": str(exc), "error": str(exc)})
 
     def build_options(

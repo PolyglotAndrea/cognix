@@ -39,6 +39,12 @@ class FakeSDK:
     ClaudeAgentOptions = FakeOptions
     PermissionResultDeny = FakePermissionResultDeny
 
+    @staticmethod
+    async def query(prompt: str, options: FakeOptions):
+        await options.can_use_tool("Write", {"file_path": "README.md"})
+        if False:
+            yield None
+
 
 def test_claude_runtime_maps_read_only_workspace_options(tmp_path, monkeypatch) -> None:
     home = CognixHome(tmp_path / ".cognix")
@@ -164,3 +170,32 @@ async def test_claude_runtime_resumes_approved_approval(tmp_path, monkeypatch) -
     assert result["runtime"] == "claude-agent-sdk"
     assert result["resume"] == "session-1"
     assert store.get(approval.id).status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_claude_runtime_stream_finishes_waiting_for_approval(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    home = CognixHome(tmp_path / ".cognix")
+    workspace = WorkspaceManager(home).create("Claude")
+    monkeypatch.setenv("COGNIX_HOME", str(home.root))
+
+    import cognix.claude.runtime as runtime_module
+
+    monkeypatch.setattr(runtime_module, "_load_sdk", lambda: FakeSDK)
+
+    events = [
+        event
+        async for event in ClaudeAgentRuntime().stream(
+            ClaudeAgentRunRequest(
+                workspace_id=workspace.id,
+                prompt="edit",
+                permission_mode="ask",
+            )
+        )
+    ]
+
+    assert [event.type for event in events] == ["approval_request", "done"]
+    assert events[-1].data["finish_reason"] == "waiting_for_approval"
+    assert events[-1].data["approval_id"] == events[0].data["id"]
