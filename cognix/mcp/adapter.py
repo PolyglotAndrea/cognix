@@ -32,7 +32,12 @@ async def mcp_server_to_core_tools(
     )
     specs = await manager.list_tools(server, force_refresh=force_refresh)
 
-    return [_spec_to_tool(server, spec, client_factory=client_factory) for spec in specs]
+    disabled_tools = set(_disabled_tools(server))
+    return [
+        _spec_to_tool(server, spec, client_factory=client_factory)
+        for spec in specs
+        if spec.name not in disabled_tools
+    ]
 
 
 async def attach_workspace_mcp_tools(
@@ -96,6 +101,13 @@ def _mcp_access_level(server: MCPServerConfig, spec: MCPToolSpec) -> str:
     if any(token in lowered for token in ("write", "create", "update", "edit", "save")):
         return "write"
     return "read"
+
+
+def _disabled_tools(server: MCPServerConfig) -> list[str]:
+    disabled = server.metadata.get("disabled_tools", [])
+    if isinstance(disabled, list):
+        return [str(item) for item in disabled]
+    return []
 
 
 def _safe_name(value: str) -> str:

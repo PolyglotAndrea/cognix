@@ -69,6 +69,11 @@ class UpsertMCPServerRequest(BaseModel):
     metadata: dict = Field(default_factory=dict)
 
 
+class InvokeMCPToolRequest(BaseModel):
+    arguments: dict = Field(default_factory=dict)
+    permission_mode: str = "workspace-write"
+
+
 class ClaudeAgentRunRequestBody(BaseModel):
     prompt: str
     agent_id: str | None = None
@@ -251,6 +256,53 @@ async def list_workspace_mcp_tools(
         }
         for tool in tools
     ]
+
+
+@router.post("/{workspace_id}/mcp/servers/{server_id}/tools/{tool_name}/call")
+async def call_workspace_mcp_tool(
+    workspace_id: str,
+    server_id: str,
+    tool_name: str,
+    body: InvokeMCPToolRequest,
+    user: CurrentUser = Depends(require_skills_write),
+) -> dict:
+    from cognix.core.permissions import PermissionDeniedError, ensure_permission
+    from cognix.mcp.adapter import mcp_server_to_core_tools
+    from cognix.mcp.manager import default_mcp_runtime
+
+    servers = _workspace_config(workspace_id).list_mcp_servers()
+    server = next((item for item in servers if item.id == server_id), None)
+    if not server:
+        raise HTTPException(404, "MCP server not found")
+
+    tools = await mcp_server_to_core_tools(server, runtime=default_mcp_runtime)
+    tool = next(
+        (
+            item
+            for item in tools
+            if item.name == tool_name or item.name.endswith(f"_{tool_name}") or tool_name == item.name.split("_")[-1]
+        ),
+        None,
+    )
+    if not tool:
+        raise HTTPException(404, "MCP tool not found or disabled")
+
+    try:
+        ensure_permission(
+            body.permission_mode,
+            tool.access_level,
+            f"call MCP tool '{tool.name}'",
+        )
+    except PermissionDeniedError as exc:
+        raise HTTPException(403, str(exc)) from None
+
+    result = await tool.execute(**body.arguments)
+    return {
+        "server_id": server.id,
+        "tool": tool.name,
+        "access_level": tool.access_level,
+        "result": result,
+    }
 
 
 @router.get("/{workspace_id}/mcp/servers/{server_id}/status")

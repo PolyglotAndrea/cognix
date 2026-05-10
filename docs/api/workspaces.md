@@ -149,3 +149,15 @@ GET /api/v1/workspaces/{workspace_id}/events?limit=50
 ```
 
 **Response (200):** Array of workspace events.
+
+---
+
+### MCP Tools
+
+```
+GET /api/v1/workspaces/{workspace_id}/mcp/servers/{server_id}/tools
+POST /api/v1/workspaces/{workspace_id}/mcp/servers/{server_id}/tools/{tool_name}/call
+```
+
+Tool calls require skills write permission and apply `permission_mode` checks before execution.
+Set `metadata.disabled_tools` on a workspace MCP server to hide individual tools from Agent mounting and debug calls.

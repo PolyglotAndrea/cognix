@@ -158,6 +158,7 @@ cognix/
 | `GET /api/v1/skills` | List skills |
 | `GET /api/v1/runtime/status` | Inspect scheduler, distributed task dispatcher status, retry settings, and runtime metrics |
 | `GET /api/v1/workspaces/{id}/mcp/servers/{server_id}/tools` | Discover MCP tools for a workspace server |
+| `POST /api/v1/workspaces/{id}/mcp/servers/{server_id}/tools/{tool_name}/call` | Invoke a discovered MCP tool with permission checks for validation/debugging |
 | `GET /api/v1/workspaces/{id}/mcp/servers/{server_id}/status` | Check or refresh MCP server discovery status, including stderr tail on errors |
 | `POST /api/v1/workspaces/{id}/mcp/servers/{server_id}/restart` | Clear MCP cache and probe a server again |
 | `POST /api/v1/workspaces/{id}/mcp/servers/{server_id}/stop` | Stop local MCP runtime cache for a server |
@@ -210,7 +211,7 @@ MCP servers are configured per workspace. Cognix starts stdio MCP processes for 
 - `tool_count`: number of discovered tools
 - `error` / `stderr`: startup or protocol diagnostics
 
-The API supports status refresh, restart, stop, and delete operations. Workspace skills and MCP tools are adapted into core `Tool` instances through a shared runtime mount helper before REST, RPC, WebSocket, workspace chat, workflow, scheduled task, or remote bot execution.
+The API supports status refresh, restart, stop, delete, and permission-checked tool test calls. Server metadata can set `disabled_tools` to hide individual MCP tools from core Agent mounting. Workspace skills and MCP tools are adapted into core `Tool` instances through a shared runtime mount helper before REST, RPC, WebSocket, workspace chat, workflow, scheduled task, or remote bot execution.
 
 ### Distributed Scheduler
 
