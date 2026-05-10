@@ -45,6 +45,11 @@ interface HotMemory {
   workspace_memory: string
 }
 
+interface DeepMemory {
+  content: string
+  path: string
+}
+
 interface ColdMemory {
   id: string
   content: string
@@ -78,6 +83,7 @@ export default function SettingsPage() {
   const [botRequireSignature, setBotRequireSignature] = useState(false)
   const [selectedAgentId, setSelectedAgentId] = useState('')
   const [hotDraft, setHotDraft] = useState<HotMemory | null>(null)
+  const [deepDraft, setDeepDraft] = useState<string | null>(null)
   const [memoryContent, setMemoryContent] = useState('')
   const [memorySummary, setMemorySummary] = useState('')
   const [memorySearch, setMemorySearch] = useState('')
@@ -110,6 +116,11 @@ export default function SettingsPage() {
     queryFn: () =>
       api.get('/memory/hot', { params: { workspace_id: workspace?.id } }).then((r) => r.data),
     enabled: !!workspace,
+  })
+
+  const { data: deepMemory } = useQuery<DeepMemory>({
+    queryKey: ['deep-memory'],
+    queryFn: () => api.get('/memory/deep').then((r) => r.data),
   })
 
   const { data: memoryResults = [], refetch: refetchMemory } = useQuery<ColdMemory[]>({
@@ -180,6 +191,17 @@ export default function SettingsPage() {
     },
   })
 
+  const saveDeepMemoryMutation = useMutation({
+    mutationFn: () =>
+      api.patch('/memory/deep', {
+        content: deepDraft ?? deepMemory?.content ?? '',
+      }),
+    onSuccess: (response) => {
+      setDeepDraft(response.data.content)
+      queryClient.invalidateQueries({ queryKey: ['deep-memory'] })
+    },
+  })
+
   const rememberMutation = useMutation({
     mutationFn: () =>
       api.post('/memory/remember', {
@@ -217,6 +239,7 @@ export default function SettingsPage() {
     global_memory: '',
     workspace_memory: '',
   }
+  const activeDeep = deepDraft ?? deepMemory?.content ?? ''
 
   return (
     <div className="flex h-[640px] -m-6 bg-background rounded-2xl overflow-hidden">
@@ -278,13 +301,28 @@ export default function SettingsPage() {
                  <MemoryEditor label="Global MEMORY.md" value={activeHot.global_memory} onChange={(v) => setHotDraft({ ...activeHot, global_memory: v })} />
                  <MemoryEditor label="Workspace MEMORY.md" value={activeHot.workspace_memory} onChange={(v) => setHotDraft({ ...activeHot, workspace_memory: v })} />
                </div>
-               <Button
-                  className="w-fit h-10 px-6 shadow-lg shadow-primary/20"
-                  disabled={!hotDraft || saveHotMemoryMutation.isPending}
-                  onClick={() => saveHotMemoryMutation.mutate()}
-               >
-                 {saveHotMemoryMutation.isPending ? 'Synchronizing...' : 'Update Context Memory'}
-               </Button>
+               <div className="flex items-center gap-3">
+                 <Button
+                    className="h-10 px-6 shadow-lg shadow-primary/20"
+                    disabled={!hotDraft || saveHotMemoryMutation.isPending}
+                    onClick={() => saveHotMemoryMutation.mutate()}
+                 >
+                   {saveHotMemoryMutation.isPending ? 'Synchronizing...' : 'Update Context Memory'}
+                 </Button>
+                 <Button
+                    variant="secondary"
+                    className="h-10 px-6"
+                    disabled={saveDeepMemoryMutation.isPending}
+                    onClick={() => saveDeepMemoryMutation.mutate()}
+                 >
+                   Save Deep Memory
+                 </Button>
+               </div>
+               <MemoryEditor
+                 label="Deep User Model"
+                 value={activeDeep}
+                 onChange={setDeepDraft}
+               />
              </div>
 
              <div className="rounded-2xl border border-border bg-card overflow-hidden shadow-sm">
