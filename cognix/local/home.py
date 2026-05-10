@@ -18,6 +18,11 @@ DEFAULT_MEMORY_MD = """# Cognix Memory
 Add stable global context and current state here.
 """
 
+DEFAULT_DEEP_MEMORY_MD = """# Deep User Model
+
+Add durable user preferences, working style, and long-term behavioral notes here.
+"""
+
 
 @dataclass(frozen=True)
 class CognixHome:
@@ -39,6 +44,10 @@ class CognixHome:
     @property
     def memory_file(self) -> Path:
         return self.root / "MEMORY.md"
+
+    @property
+    def deep_memory_file(self) -> Path:
+        return self.root / "memory" / "DEEP_MEMORY.md"
 
     @property
     def state_db(self) -> Path:
@@ -74,6 +83,7 @@ class CognixHome:
 
         self._write_default(self.user_file, DEFAULT_USER_MD)
         self._write_default(self.memory_file, DEFAULT_MEMORY_MD)
+        self._write_default(self.deep_memory_file, DEFAULT_DEEP_MEMORY_MD)
         self.events_file.touch(exist_ok=True)
         return self
 

@@ -551,6 +551,7 @@ class Agent:
                     include_hot_memory=memory_options.get("include_hot_memory", True),
                     include_cold_memory=memory_options.get("include_cold_memory", True),
                     include_skills=memory_options.get("include_skills", True),
+                    include_deep_memory=memory_options.get("include_deep_memory", False),
                 )
                 rendered = pack.render_system_context()
                 if rendered:

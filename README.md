@@ -5,6 +5,7 @@ A Hermes Agent-based multi-agent collaboration platform built in Python. Cognix 
 ## Features
 
 - **Agent Runtime** — Stateful agents with tool calling, memory, and event system
+- **Four-Pipeline Memory** — Hot `USER.md`/`MEMORY.md`, cold SQLite recall, procedural skill snippets, and optional deep user model injection
 - **Human-in-the-loop Approvals** — `ask` and `plan` permission modes, approval requests, approve/reject/resume API, and SSE approval events
 - **Multi-Agent Orchestration** — Sequential, Parallel, Router, and Loop patterns via YAML workflow DSL
 - **Scheduled Tasks** — Cron, interval, and one-shot scheduling with APScheduler plus runtime leases, due-task claiming, DB-backed worker dispatch, and retry backoff

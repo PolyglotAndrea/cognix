@@ -67,6 +67,7 @@ class WorkspaceConfigStore:
                 "include_hot_memory": True,
                 "include_cold_memory": True,
                 "include_skills": True,
+                "include_deep_memory": False,
             },
         }
 

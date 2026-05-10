@@ -19,6 +19,10 @@ class UpdateHotMemoryRequest(BaseModel):
     workspace_memory: str | None = None
 
 
+class UpdateDeepMemoryRequest(BaseModel):
+    content: str
+
+
 class RememberRequest(BaseModel):
     content: str
     workspace_id: str | None = None
@@ -38,6 +42,7 @@ class ContextPreviewRequest(BaseModel):
     message: str
     workspace_id: str | None = None
     include_skills: bool = True
+    include_deep_memory: bool = False
     token_budget: int = 8000
 
 
@@ -53,6 +58,25 @@ async def get_hot_memory(
         "global_memory": hot.global_memory,
         "workspace_memory": hot.workspace_memory,
     }
+
+
+@router.get("/deep")
+async def get_deep_memory(user: CurrentUser = Depends(get_current_user)) -> dict:
+    home = CognixHome.default().ensure()
+    return {
+        "content": ContextBuilder(home).load_deep_memory(),
+        "path": str(home.deep_memory_file),
+    }
+
+
+@router.patch("/deep")
+async def update_deep_memory(
+    body: UpdateDeepMemoryRequest,
+    user: CurrentUser = Depends(require_agents_write),
+) -> dict:
+    home = CognixHome.default().ensure()
+    home.deep_memory_file.write_text(body.content, encoding="utf-8")
+    return {"content": body.content, "path": str(home.deep_memory_file)}
 
 
 @router.patch("/hot")
@@ -124,6 +148,7 @@ async def context_preview(
         body.message,
         workspace_id=body.workspace_id,
         include_skills=body.include_skills,
+        include_deep_memory=body.include_deep_memory,
         token_budget=body.token_budget,
     )
     return {

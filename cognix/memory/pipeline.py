@@ -272,6 +272,7 @@ class ContextBuilder:
         include_hot_memory: bool = True,
         include_cold_memory: bool = True,
         include_skills: bool = True,
+        include_deep_memory: bool = False,
         token_budget: int = 8000,
         deep_memory: str = "",
     ) -> ContextPack:
@@ -286,6 +287,8 @@ class ContextBuilder:
         skills = self.search_procedural_memory(user_message, workspace_id=workspace_id, limit=3)
         if not include_skills:
             skills = []
+        if include_deep_memory and not deep_memory:
+            deep_memory = self.load_deep_memory()
         return ContextPack(
             hot_memory=hot,
             cold_memories=cold,
@@ -304,6 +307,9 @@ class ContextBuilder:
             global_memory=self._read_text(self.home.memory_file),
             workspace_memory=workspace_memory,
         )
+
+    def load_deep_memory(self) -> str:
+        return self._read_text(self.home.deep_memory_file)
 
     def search_procedural_memory(
         self,
