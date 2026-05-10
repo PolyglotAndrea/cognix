@@ -34,7 +34,7 @@ async def mcp_server_to_core_tools(
 
     disabled_tools = set(_disabled_tools(server))
     return [
-        _spec_to_tool(server, spec, client_factory=client_factory)
+        _spec_to_tool(server, spec, client_factory=client_factory, runtime=manager)
         for spec in specs
         if spec.name not in disabled_tools
     ]
@@ -70,11 +70,15 @@ def _spec_to_tool(
     spec: MCPToolSpec,
     *,
     client_factory: MCPClientFactory,
+    runtime: MCPRuntimeManager | None = None,
 ) -> Tool:
     tool_name = f"mcp_{_safe_name(server.name)}_{_safe_name(spec.name)}"
     original_name = spec.name
 
     async def _handler(**kwargs: Any) -> Any:
+        # Use persistent connection via runtime manager when available
+        if runtime is not None:
+            return await runtime.call_tool(server, original_name, kwargs)
         async with client_factory(server) as client:
             return await client.call_tool(original_name, kwargs)
 

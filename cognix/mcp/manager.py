@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import asdict, dataclass
 from typing import Any
@@ -38,6 +39,8 @@ class MCPRuntimeManager:
         self.cache_ttl_seconds = cache_ttl_seconds
         self._tool_cache: dict[str, tuple[float, list[MCPToolSpec]]] = {}
         self._status_cache: dict[str, MCPServerStatus] = {}
+        self._persistent_clients: dict[str, MCPClient] = {}
+        self._persistent_locks: dict[str, asyncio.Lock] = {}
 
     async def list_tools(
         self,
@@ -127,7 +130,9 @@ class MCPRuntimeManager:
             ),
         )
 
-    def invalidate(self, server_id: str | None = None) -> None:
+    async def invalidate(self, server_id: str | None = None) -> None:
+        """Clear caches and close persistent connections."""
+        await self.close_persistent(server_id)
         if server_id is None:
             self._tool_cache.clear()
             self._status_cache.clear()
@@ -140,17 +145,13 @@ class MCPRuntimeManager:
         }
 
     async def restart(self, server: MCPServerConfig) -> MCPServerStatus:
-        """Clear cached discovery data and probe the server again."""
-        self.invalidate(server.id)
+        """Clear cached discovery data, close persistent connection, and probe again."""
+        await self.invalidate(server.id)
         return await self.probe(server, force_refresh=True)
 
-    def stop(self, server: MCPServerConfig) -> MCPServerStatus:
-        """Drop local runtime cache for a server.
-
-        MCP processes are short-lived in the current runtime, so stop means
-        clearing cached tools/status and marking the server idle for callers.
-        """
-        self.invalidate(server.id)
+    async def stop(self, server: MCPServerConfig) -> MCPServerStatus:
+        """Close persistent connection and drop local runtime cache for a server."""
+        await self.invalidate(server.id)
         status = MCPServerStatus(
             server_id=server.id,
             name=server.name,
@@ -160,6 +161,43 @@ class MCPRuntimeManager:
         )
         self._status_cache[server.id] = status
         return status
+
+    async def call_tool(
+        self,
+        server: MCPServerConfig,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> Any:
+        """Call a tool on an MCP server, reusing a persistent connection if available."""
+        if not server.enabled:
+            raise MCPError(f"MCP server '{server.name}' is disabled")
+        client = await self._get_persistent_client(server)
+        return await client.call_tool(tool_name, arguments)
+
+    async def _get_persistent_client(self, server: MCPServerConfig) -> MCPClient:
+        """Get or create a persistent client connection for a server."""
+        lock = self._persistent_locks.setdefault(server.id, asyncio.Lock())
+        async with lock:
+            client = self._persistent_clients.get(server.id)
+            if client is not None and client._process is not None and client._process.returncode is None:
+                return client
+            # Create new persistent connection
+            client = self.client_factory(server)
+            await client.__aenter__()
+            self._persistent_clients[server.id] = client
+            return client
+
+    async def close_persistent(self, server_id: str | None = None) -> None:
+        """Close persistent client connections."""
+        if server_id:
+            client = self._persistent_clients.pop(server_id, None)
+            if client:
+                await client.__aexit__(None, None, None)
+        else:
+            for client in self._persistent_clients.values():
+                await client.__aexit__(None, None, None)
+            self._persistent_clients.clear()
+        self._persistent_locks.pop(server_id, None) if server_id else self._persistent_locks.clear()
 
     @staticmethod
     def _cache_key(server: MCPServerConfig) -> str:

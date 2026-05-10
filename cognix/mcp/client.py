@@ -31,9 +31,10 @@ class MCPClient:
     predictable and safe for local-first execution.
     """
 
-    def __init__(self, server: MCPServerConfig, *, timeout: float = 20.0) -> None:
+    def __init__(self, server: MCPServerConfig, *, timeout: float | None = None) -> None:
         self.server = server
-        self.timeout = timeout
+        # Per-server timeout from metadata, falling back to global default
+        self.timeout = timeout or float(server.metadata.get("timeout_seconds", 20.0))
         self._process: asyncio.subprocess.Process | None = None
         self._stderr_task: asyncio.Task | None = None
         self._stderr_lines: list[str] = []

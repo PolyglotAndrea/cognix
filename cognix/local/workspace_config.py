@@ -141,6 +141,41 @@ class WorkspaceConfigStore:
         self._write_json(self.mcp_servers_path, [asdict(item) for item in remaining])
         return True
 
+    def set_mcp_tool_enabled(
+        self, server_id: str, tool_name: str, enabled: bool
+    ) -> MCPServerConfig | None:
+        """Enable or disable a specific tool on an MCP server."""
+        servers = self.list_mcp_servers()
+        for server in servers:
+            if server.id != server_id:
+                continue
+            disabled = list(server.metadata.get("disabled_tools", []))
+            if not enabled and tool_name not in disabled:
+                disabled.append(tool_name)
+            elif enabled and tool_name in disabled:
+                disabled.remove(tool_name)
+            else:
+                return server  # no change needed
+            new_metadata = {**server.metadata, "disabled_tools": disabled}
+            updated = MCPServerConfig(
+                id=server.id,
+                name=server.name,
+                command=server.command,
+                args=server.args,
+                env=server.env,
+                enabled=server.enabled,
+                created_at=server.created_at,
+                updated_at=datetime.now(UTC).isoformat(),
+                metadata=new_metadata,
+            )
+            remaining = [s for s in servers if s.id != server_id]
+            remaining.append(updated)
+            self._write_json(
+                self.mcp_servers_path, [asdict(item) for item in remaining]
+            )
+            return updated
+        return None
+
     @staticmethod
     def _write_json(path: Path, data: Any) -> None:
         path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
