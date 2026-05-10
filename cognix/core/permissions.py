@@ -84,3 +84,36 @@ def ensure_permission(mode: str | None, access_level: str | None, operation: str
     decision = decide_permission(mode, access_level, operation)
     if not decision.allowed:
         raise PermissionDeniedError(decision.reason)
+
+
+# ── Role-based permission_mode ceiling ──────────────────────────────
+
+# Ordered from least to most permissive
+_MODE_RANK: dict[str, int] = {
+    "read-only": 0,
+    "workspace-write": 1,
+    "ask": 2,
+    "plan": 3,
+    "unrestricted": 4,
+}
+
+# Maximum permission_mode each role may request
+MAX_PERMISSION_BY_ROLE: dict[str, str] = {
+    "admin": "unrestricted",
+    "user": "plan",
+    "viewer": "read-only",
+}
+
+
+def clamp_permission_mode(requested: str, role) -> str:
+    """Clamp a requested permission_mode to the ceiling allowed by the user's role.
+
+    Returns the effective mode (may be lower than requested).
+    """
+    role_value = getattr(role, "value", str(role))
+    ceiling = MAX_PERMISSION_BY_ROLE.get(role_value, "workspace-write")
+    requested_rank = _MODE_RANK.get(normalize_permission_mode(requested), 1)
+    ceiling_rank = _MODE_RANK.get(ceiling, 1)
+    if requested_rank > ceiling_rank:
+        return ceiling
+    return normalize_permission_mode(requested)

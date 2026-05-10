@@ -33,7 +33,7 @@ FORBIDDEN = -32003
 # Method registry
 _handlers: dict[str, Any] = {}
 _method_permissions: dict[str, str] = {
-    "agent.chat": "agents:read",
+    "agent.chat": "agents:write",
     "agent.create": "agents:write",
     "agent.delete": "agents:write",
     "agent.list": "agents:read",

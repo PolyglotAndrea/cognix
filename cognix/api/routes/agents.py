@@ -157,7 +157,7 @@ async def delete_agent(
 async def agent_chat(
     agent_id: str,
     body: ChatRequest,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_agents_write),
 ) -> dict:
     agent = await get_agent_runtime(agent_id)
     if not agent:
@@ -172,7 +172,7 @@ async def agent_chat(
 async def agent_chat_stream(
     agent_id: str,
     body: ChatRequest,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_agents_write),
 ) -> StreamingResponse:
     """SSE endpoint using the stable AgentEvent protocol."""
     agent = await get_agent_runtime(agent_id)
@@ -230,7 +230,10 @@ async def _attach_runtime_mcp_tools(agent) -> None:
 async def agent_chat_ws(websocket: WebSocket, agent_id: str) -> None:
     """Authenticated WebSocket endpoint for agent chat with event streaming."""
     try:
-        await authenticate_websocket(websocket)
+        user = await authenticate_websocket(websocket)
+        # Check write permission — chat triggers agent execution
+        from cognix.api.security import ensure_permission as _ensure_perm
+        _ensure_perm(user, "agents:write")
     except HTTPException as exc:
         await websocket.accept()
         await websocket.send_json({"type": "error", "message": exc.detail})

@@ -108,6 +108,9 @@ class ApprovalStore:
         return sorted(approvals, key=lambda item: item.created_at, reverse=True)
 
     def approve(self, approval_id: str) -> ApprovalRequest | None:
+        existing = self.get(approval_id)
+        if existing and existing.status != "pending":
+            return existing  # no-op for already resolved
         return self._set_status(approval_id, "approved")
 
     def respond(self, approval_id: str, response: str) -> ApprovalRequest | None:

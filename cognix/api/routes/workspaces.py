@@ -14,6 +14,7 @@ from starlette.responses import StreamingResponse
 from cognix.auth.dependencies import (
     CurrentUser,
     get_current_user,
+    require_agents_write,
     require_skills_read,
     require_skills_write,
 )
@@ -74,6 +75,11 @@ class InvokeMCPToolRequest(BaseModel):
     permission_mode: str = "workspace-write"
 
 
+class ToggleMCPToolRequest(BaseModel):
+    tool_name: str
+    enabled: bool = True
+
+
 class ClaudeAgentRunRequestBody(BaseModel):
     prompt: str
     agent_id: str | None = None
@@ -126,7 +132,7 @@ async def list_workspaces(user: CurrentUser = Depends(get_current_user)) -> list
 @router.post("", status_code=201)
 async def create_workspace(
     body: CreateWorkspaceRequest,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_agents_write),
 ) -> dict:
     workspace = WorkspaceManager().create(body.name, description=body.description)
     return workspace.__dict__
@@ -229,7 +235,7 @@ async def upsert_workspace_mcp_server(
         enabled=body.enabled,
         metadata=body.metadata,
     )
-    default_mcp_runtime.invalidate(server.id)
+    await default_mcp_runtime.invalidate(server.id)
     return server.__dict__
 
 
@@ -305,6 +311,47 @@ async def call_workspace_mcp_tool(
     }
 
 
+@router.put("/{workspace_id}/mcp/servers/{server_id}/tools/{tool_name}")
+async def toggle_workspace_mcp_tool(
+    workspace_id: str,
+    server_id: str,
+    tool_name: str,
+    body: ToggleMCPToolRequest,
+    user: CurrentUser = Depends(require_skills_write),
+) -> dict:
+    from cognix.mcp.manager import default_mcp_runtime
+
+    config_store = _workspace_config(workspace_id)
+    server = next(
+        (s for s in config_store.list_mcp_servers() if s.id == server_id), None
+    )
+    if not server:
+        raise HTTPException(404, "MCP server not found")
+
+    # Verify the tool actually exists on the server
+    try:
+        specs = await default_mcp_runtime.list_tools(server, force_refresh=True)
+    except Exception as exc:
+        raise HTTPException(502, f"Failed to discover tools from MCP server: {exc}") from exc
+    known_names = {spec.name for spec in specs}
+    if tool_name not in known_names:
+        raise HTTPException(
+            404,
+            f"Tool '{tool_name}' not found on server. Available: {sorted(known_names)}",
+        )
+
+    updated = config_store.set_mcp_tool_enabled(server_id, tool_name, body.enabled)
+    if not updated:
+        raise HTTPException(404, f"Tool '{tool_name}' not found on server")
+    await default_mcp_runtime.invalidate(server_id)
+    return {
+        "server_id": server_id,
+        "tool_name": tool_name,
+        "enabled": body.enabled,
+        "disabled_tools": updated.metadata.get("disabled_tools", []),
+    }
+
+
 @router.get("/{workspace_id}/mcp/servers/{server_id}/status")
 async def get_workspace_mcp_server_status(
     workspace_id: str,
@@ -350,7 +397,7 @@ async def stop_workspace_mcp_server(
     server = next((item for item in servers if item.id == server_id), None)
     if not server:
         raise HTTPException(404, "MCP server not found")
-    return default_mcp_runtime.stop(server).to_dict()
+    return (await default_mcp_runtime.stop(server)).to_dict()
 
 
 @router.delete("/{workspace_id}/mcp/servers/{server_id}")
@@ -363,7 +410,7 @@ async def delete_workspace_mcp_server(
 
     if not _workspace_config(workspace_id).delete_mcp_server(server_id):
         raise HTTPException(404, "MCP server not found")
-    default_mcp_runtime.invalidate(server_id)
+    await default_mcp_runtime.invalidate(server_id)
     return {"deleted": server_id}
 
 
@@ -371,12 +418,16 @@ async def delete_workspace_mcp_server(
 async def stream_claude_agent(
     workspace_id: str,
     body: ClaudeAgentRunRequestBody,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_agents_write),
 ) -> StreamingResponse:
     from cognix.claude.runtime import ClaudeAgentRunRequest, ClaudeAgentRuntime
+    from cognix.core.permissions import clamp_permission_mode
 
     if not WorkspaceManager().get(workspace_id):
         raise HTTPException(404, "Workspace not found")
+
+    # Server-side ceiling: prevent client from escalating beyond role-allowed level
+    effective_mode = clamp_permission_mode(body.permission_mode, user.role)
 
     request = ClaudeAgentRunRequest(
         workspace_id=workspace_id,
@@ -384,7 +435,7 @@ async def stream_claude_agent(
         agent_id=body.agent_id,
         model=body.model,
         system_prompt=body.system_prompt,
-        permission_mode=body.permission_mode,
+        permission_mode=effective_mode,
         max_turns=body.max_turns,
         resume=body.resume,
         allowed_tools=body.allowed_tools,
@@ -541,7 +592,7 @@ async def list_chats(
 async def create_chat(
     workspace_id: str,
     body: CreateChatRequest,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_agents_write),
 ) -> dict:
     store = _chat_store(workspace_id)
     chat = store.create(
@@ -571,7 +622,7 @@ async def update_chat(
     workspace_id: str,
     chat_id: str,
     body: UpdateChatRequest,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_agents_write),
 ) -> dict:
     store = _chat_store(workspace_id)
     try:
@@ -606,7 +657,7 @@ async def send_chat_message(
     workspace_id: str,
     chat_id: str,
     body: SendChatMessageRequest,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_agents_write),
 ) -> dict:
     store = _chat_store(workspace_id)
     chat = store.get(chat_id)
@@ -650,7 +701,7 @@ async def stream_chat_message(
     workspace_id: str,
     chat_id: str,
     body: SendChatMessageRequest,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(require_agents_write),
 ) -> StreamingResponse:
     store = _chat_store(workspace_id)
     chat = store.get(chat_id)
