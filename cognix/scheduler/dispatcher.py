@@ -95,19 +95,36 @@ class DistributedTaskDispatcher:
         return len(claimed)
 
     async def _run_loop(self) -> None:
+        reap_counter = 0
         while True:
             try:
                 await self.dispatch_once()
             except Exception:
                 logger.exception("Distributed task dispatch cycle failed")
+            # Reap orphaned leases every 10 cycles (~50s at default 5s interval)
+            reap_counter += 1
+            if reap_counter >= 10:
+                reap_counter = 0
+                try:
+                    reaped = await self.store.reap_orphaned_leases(now=datetime.now(UTC))
+                    if reaped:
+                        logger.info("Reaped %d orphaned task leases", reaped)
+                except Exception:
+                    logger.exception("Orphan lease reaper failed")
             await asyncio.sleep(self.poll_interval)
 
     async def _run_claimed(self, task: ScheduledTaskModel) -> None:
         self._active_task_ids.add(task.id)
         payload = _payload_dict(task.payload)
+        heartbeat_task: asyncio.Task | None = None
         try:
             if task.task_type and "task_type" not in payload:
                 payload["task_type"] = task.task_type.value
+            # Start lease heartbeat for long-running tasks
+            heartbeat_interval = max(self.lease_ttl_seconds // 3, 10)
+            heartbeat_task = asyncio.create_task(
+                self._lease_heartbeat_loop(task.id, heartbeat_interval)
+            )
             try:
                 run = await self.executor.execute(task.id, payload) or {}
             except Exception as exc:
@@ -115,6 +132,12 @@ class DistributedTaskDispatcher:
                 self.metrics["last_error"] = str(exc)
                 run = {"status": "failure", "error": str(exc)}
         finally:
+            if heartbeat_task:
+                heartbeat_task.cancel()
+                try:
+                    await heartbeat_task
+                except asyncio.CancelledError:
+                    pass
             self._active_task_ids.discard(task.id)
         task_after_run = await self.store.get(task.id)
         if run.get("status") == "failure" and task_after_run:
@@ -129,6 +152,22 @@ class DistributedTaskDispatcher:
             owner=self.node_id,
             next_run=next_run_time(task.schedule),
         )
+
+    async def _lease_heartbeat_loop(self, task_id: str, interval: int) -> None:
+        """Periodically extend the lease to prevent expiry during long-running tasks."""
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                ok = await self.store.extend_lease(
+                    task_id,
+                    owner=self.node_id,
+                    ttl_seconds=self.lease_ttl_seconds,
+                )
+                if not ok:
+                    logger.warning("Task %s heartbeat: lease extension failed (lost lease?)", task_id)
+                    return
+            except Exception:
+                logger.exception("Task %s heartbeat error", task_id)
 
     async def _complete_failed_run(self, task: ScheduledTaskModel) -> None:
         attempts = max(task.run_count, 1)

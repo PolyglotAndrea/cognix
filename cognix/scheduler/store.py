@@ -224,6 +224,27 @@ class TaskStore:
             )
             return result.rowcount > 0
 
+    async def reap_orphaned_leases(self, *, now: datetime | None = None) -> int:
+        """Release expired leases so other nodes can claim orphaned tasks.
+
+        Returns the number of leases released.
+        """
+        now = now or datetime.now(UTC)
+        async with get_session() as session:
+            result = await session.execute(
+                update(ScheduledTaskModel)
+                .where(
+                    and_(
+                        ScheduledTaskModel.state == TaskState.ACTIVE,
+                        ScheduledTaskModel.lease_owner.is_not(None),
+                        ScheduledTaskModel.lease_expires_at.is_not(None),
+                        ScheduledTaskModel.lease_expires_at < now,
+                    )
+                )
+                .values(lease_owner=None, lease_expires_at=None)
+            )
+            return result.rowcount
+
     async def delete(self, task_id: str) -> bool:
         """Delete a task."""
         from sqlalchemy import delete
