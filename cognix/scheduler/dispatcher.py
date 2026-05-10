@@ -29,6 +29,7 @@ class DistributedTaskDispatcher:
         node_id: str | None = None,
         poll_interval: float = 5.0,
         batch_size: int = 10,
+        max_concurrent: int = 3,
         lease_ttl_seconds: int = 120,
         retry_base_seconds: int = 30,
         retry_max_seconds: int = 3600,
@@ -42,6 +43,7 @@ class DistributedTaskDispatcher:
         )
         self.poll_interval = poll_interval
         self.batch_size = batch_size
+        self.max_concurrent = max(1, max_concurrent)
         self.lease_ttl_seconds = lease_ttl_seconds
         self.retry_base_seconds = retry_base_seconds
         self.retry_max_seconds = retry_max_seconds
@@ -55,6 +57,7 @@ class DistributedTaskDispatcher:
             "last_error": "",
         }
         self._task: asyncio.Task | None = None
+        self._active_task_ids: set[str] = set()
 
     @property
     def running(self) -> bool:
@@ -75,9 +78,12 @@ class DistributedTaskDispatcher:
         self._task = None
 
     async def dispatch_once(self) -> int:
+        available_slots = max(0, self.max_concurrent - len(self._active_task_ids))
+        if available_slots <= 0:
+            return 0
         claimed = await self.store.claim_due_tasks(
             owner=self.node_id,
-            limit=self.batch_size,
+            limit=min(self.batch_size, available_slots),
             ttl_seconds=self.lease_ttl_seconds,
             now=datetime.now(UTC),
         )
@@ -97,15 +103,19 @@ class DistributedTaskDispatcher:
             await asyncio.sleep(self.poll_interval)
 
     async def _run_claimed(self, task: ScheduledTaskModel) -> None:
+        self._active_task_ids.add(task.id)
         payload = _payload_dict(task.payload)
-        if task.task_type and "task_type" not in payload:
-            payload["task_type"] = task.task_type.value
         try:
-            run = await self.executor.execute(task.id, payload) or {}
-        except Exception as exc:
-            logger.exception("Task %s executor raised outside normal failure handling", task.id)
-            self.metrics["last_error"] = str(exc)
-            run = {"status": "failure", "error": str(exc)}
+            if task.task_type and "task_type" not in payload:
+                payload["task_type"] = task.task_type.value
+            try:
+                run = await self.executor.execute(task.id, payload) or {}
+            except Exception as exc:
+                logger.exception("Task %s executor raised outside normal failure handling", task.id)
+                self.metrics["last_error"] = str(exc)
+                run = {"status": "failure", "error": str(exc)}
+        finally:
+            self._active_task_ids.discard(task.id)
         task_after_run = await self.store.get(task.id)
         if run.get("status") == "failure" and task_after_run:
             self.metrics["failure_total"] += 1
@@ -158,6 +168,9 @@ class DistributedTaskDispatcher:
             "node_id": self.node_id,
             "poll_interval": self.poll_interval,
             "batch_size": self.batch_size,
+            "max_concurrent": self.max_concurrent,
+            "active_count": len(self._active_task_ids),
+            "active_task_ids": sorted(self._active_task_ids),
             "lease_ttl_seconds": self.lease_ttl_seconds,
             "retry_base_seconds": self.retry_base_seconds,
             "retry_max_seconds": self.retry_max_seconds,

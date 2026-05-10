@@ -221,7 +221,8 @@ Scheduled tasks are stored in the database and coordinated with runtime leases:
 - Successful runs release the lease and advance `next_run`.
 - Failed runs retry with exponential backoff until `max_retries` is exhausted.
 - Exhausted tasks are marked `failed` and removed from future dispatch.
-- Runtime status exposes dispatcher metrics including claimed, success, failure, retry, exhausted failure, and last error counters.
+- Each runtime node respects dispatcher capacity settings, including `dispatcher_batch_size` and `dispatcher_max_concurrent`.
+- Runtime status exposes dispatcher metrics including active task ids, claimed, success, failure, retry, exhausted failure, and last error counters.
 
 ### Remote Bot Callbacks
 

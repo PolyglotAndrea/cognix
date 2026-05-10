@@ -137,4 +137,7 @@ Cognix supports distributed task scheduling with lease-based locking:
 | `lease_owner` | ID of the server instance that owns the task |
 | `lease_expires_at` | When the lease expires (heartbeat-based) |
 
-This prevents duplicate execution when running multiple Cognix instances.
+This prevents duplicate execution when running multiple Cognix instances. Each node also applies
+`COGNIX_SCHEDULER__DISPATCHER_BATCH_SIZE`,
+`COGNIX_SCHEDULER__DISPATCHER_MAX_CONCURRENT`, and
+`COGNIX_SCHEDULER__DISPATCHER_LEASE_TTL_SECONDS` to limit local worker pressure.

@@ -135,13 +135,27 @@ async def restore_active_tasks(engine: SchedulerEngine) -> None:
 
 async def start_scheduler() -> SchedulerEngine:
     """Create, configure, restore, and start the process scheduler."""
+    from cognix.config import get_settings
+
     global scheduler_engine, task_dispatcher
+    settings = get_settings().scheduler
     engine = SchedulerEngine()
     executor = TaskExecutor(agent_registry=agent_registry)
+    engine.retry_base_seconds = settings.retry_base_seconds
+    engine.retry_max_seconds = settings.retry_max_seconds
     engine.set_executor(executor)
     await restore_active_tasks(engine)
     engine.start()
-    task_dispatcher = DistributedTaskDispatcher(executor=executor, node_id=engine.node_id)
+    task_dispatcher = DistributedTaskDispatcher(
+        executor=executor,
+        node_id=engine.node_id,
+        poll_interval=settings.dispatcher_poll_interval,
+        batch_size=settings.dispatcher_batch_size,
+        max_concurrent=settings.dispatcher_max_concurrent,
+        lease_ttl_seconds=settings.dispatcher_lease_ttl_seconds,
+        retry_base_seconds=settings.retry_base_seconds,
+        retry_max_seconds=settings.retry_max_seconds,
+    )
     task_dispatcher.start()
     scheduler_engine = engine
     return engine

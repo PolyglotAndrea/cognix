@@ -24,6 +24,12 @@ class SchedulerSettings(BaseSettings):
     misfire_grace_time: int = Field(
         default=60, description="Seconds after misfire to still execute"
     )
+    dispatcher_poll_interval: float = Field(default=5.0, description="Distributed dispatcher poll interval")
+    dispatcher_batch_size: int = Field(default=10, description="Max tasks claimed per dispatcher poll")
+    dispatcher_max_concurrent: int = Field(default=3, description="Max concurrent distributed task runs per node")
+    dispatcher_lease_ttl_seconds: int = Field(default=120, description="Distributed task lease TTL")
+    retry_base_seconds: int = Field(default=30, description="Initial distributed task retry delay")
+    retry_max_seconds: int = Field(default=3600, description="Maximum distributed task retry delay")
 
 
 class RPCSettings(BaseSettings):
