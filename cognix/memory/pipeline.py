@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -75,6 +76,7 @@ class ContextPack:
     procedural_memories: list[ProceduralMemory] = field(default_factory=list)
     deep_memory: str = ""
     token_budget: int = 8000
+    sources: list[dict[str, Any]] = field(default_factory=list)
 
     def render_system_context(self) -> str:
         sections = []
@@ -92,6 +94,25 @@ class ContextPack:
         if self.deep_memory.strip():
             sections.append("# User Model\n" + self.deep_memory.strip())
         return "\n\n".join(sections)
+
+    def source_summary(self) -> list[dict[str, Any]]:
+        """Return a list of memory sources used in this context pack."""
+        if self.sources:
+            return self.sources
+        sources: list[dict[str, Any]] = []
+        if self.hot_memory.user.strip():
+            sources.append({"type": "hot", "name": "USER.md", "chars": len(self.hot_memory.user.strip())})
+        if self.hot_memory.global_memory.strip():
+            sources.append({"type": "hot", "name": "MEMORY.md", "chars": len(self.hot_memory.global_memory.strip())})
+        if self.hot_memory.workspace_memory.strip():
+            sources.append({"type": "hot", "name": "workspace/MEMORY.md", "chars": len(self.hot_memory.workspace_memory.strip())})
+        for m in self.cold_memories:
+            sources.append({"type": "cold", "id": m.id, "kind": m.kind, "chars": len(m.content), "created_at": m.created_at})
+        for s in self.procedural_memories:
+            sources.append({"type": "procedural", "name": s.name, "chars": len(s.content)})
+        if self.deep_memory.strip():
+            sources.append({"type": "deep", "name": "DEEP_MEMORY.md", "chars": len(self.deep_memory.strip())})
+        return sources
 
 
 class ColdMemoryStore:
@@ -254,6 +275,81 @@ class ColdMemoryStore:
             metadata=json.loads(row["metadata_json"] or "{}"),
             created_at=row["created_at"],
         )
+
+    async def compress(
+        self,
+        *,
+        workspace_id: str | None = None,
+        older_than_days: int = 7,
+        limit: int = 50,
+    ) -> list[ColdMemoryRecord]:
+        """Summarize old memories using the LLM to reduce token usage.
+
+        Returns the compressed records (updated with new summaries).
+        """
+        await self.init()
+        cutoff = (datetime.now(UTC) - timedelta(days=older_than_days)).isoformat()
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            where = "WHERE created_at < ? AND (summary = '' OR summary IS NULL)"
+            params: list[Any] = [cutoff]
+            if workspace_id:
+                where += " AND (workspace_id = ? OR workspace_id IS NULL)"
+                params.append(workspace_id)
+            params.append(limit)
+            cursor = await db.execute(
+                f"SELECT * FROM cold_memory {where} ORDER BY created_at ASC LIMIT ?",
+                params,
+            )
+            rows = list(await cursor.fetchall())
+
+        if not rows:
+            return []
+
+        records = [self._row_to_record(row) for row in rows]
+        # Try LLM summarization, fall back to truncation
+        try:
+            summaries = await self._llm_summarize_batch(records)
+        except Exception:
+            summaries = [r.content[:200] for r in records]
+
+        for record, summary in zip(records, summaries):
+            record.summary = summary
+            await self.add(record)
+
+        return records
+
+    async def _llm_summarize_batch(self, records: list[ColdMemoryRecord]) -> list[str]:
+        """Summarize a batch of memories using LiteLLM."""
+        import litellm
+
+        prompts = []
+        for r in records:
+            prompts.append(
+                f"Summarize this memory in one sentence (max 100 chars):\n{r.content[:500]}"
+            )
+
+        summaries: list[str] = []
+        # Process in small batches to avoid rate limits
+        batch_size = 5
+        for i in range(0, len(prompts), batch_size):
+            batch = prompts[i : i + batch_size]
+            responses = await asyncio.gather(
+                *[
+                    litellm.acompletion(
+                        model="gpt-4o-mini",
+                        messages=[{"role": "user", "content": p}],
+                        max_tokens=60,
+                        temperature=0.3,
+                    )
+                    for p in batch
+                ]
+            )
+            for resp in responses:
+                text = resp.choices[0].message.content.strip() if resp.choices else ""
+                summaries.append(text[:200])
+
+        return summaries
 
 
 class ContextBuilder:

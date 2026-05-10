@@ -156,4 +156,29 @@ async def context_preview(
         "cold_memories": [record.__dict__ for record in pack.cold_memories],
         "procedural_memories": [memory.__dict__ for memory in pack.procedural_memories],
         "token_budget": pack.token_budget,
+        "sources": pack.source_summary(),
+    }
+
+
+class CompressMemoryRequest(BaseModel):
+    workspace_id: str | None = None
+    older_than_days: int = 7
+    limit: int = 50
+
+
+@router.post("/compress")
+async def compress_memory(
+    body: CompressMemoryRequest,
+    user: CurrentUser = Depends(require_agents_write),
+) -> dict:
+    home = CognixHome.default().ensure()
+    store = ColdMemoryStore(home.state_db)
+    compressed = await store.compress(
+        workspace_id=body.workspace_id,
+        older_than_days=body.older_than_days,
+        limit=body.limit,
+    )
+    return {
+        "compressed_count": len(compressed),
+        "records": [r.__dict__ for r in compressed[:10]],  # return first 10 for preview
     }
