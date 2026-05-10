@@ -688,35 +688,14 @@ def _chat_agent(*, workspace_id: str, name: str, model: str, system_prompt: str)
         system_prompt=system_prompt,
         workspace_id=workspace_id,
     )
-    _attach_workspace_skills(agent, workspace_id)
     return agent
 
 
 async def _prepare_chat_agent(agent: Agent, workspace_id: str) -> Agent:
-    from cognix.mcp.adapter import attach_workspace_mcp_tools
+    from cognix.core.mounts import attach_workspace_runtime_tools
 
-    await attach_workspace_mcp_tools(agent, workspace_id)
+    await attach_workspace_runtime_tools(agent, workspace_id)
     return agent
-
-
-def _attach_workspace_skills(agent: Agent, workspace_id: str) -> None:
-    from cognix.config import get_settings
-    from cognix.skills.adapter import skill_to_core_tools
-    from cognix.skills.manager import SkillsManager
-
-    enabled_skills = _workspace_config(workspace_id).get_settings().get("enabled_skills", [])
-    if not enabled_skills:
-        return
-
-    manager = SkillsManager(local_dir=get_settings().skills.local_dir)
-    for skill_name in enabled_skills:
-        skill = manager.load(skill_name)
-        if not skill:
-            continue
-        for tool in skill_to_core_tools(skill):
-            if tool.name in [existing.name for existing in agent.tools]:
-                agent.remove_tool(tool.name)
-            agent.add_tool(tool)
 
 
 async def _run_model_response(

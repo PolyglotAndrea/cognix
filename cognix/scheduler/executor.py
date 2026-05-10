@@ -114,6 +114,7 @@ class TaskExecutor:
         if not agent:
             raise ValueError(f"Agent '{agent_id}' not found")
 
+        await self._attach_workspace_runtime_tools(agent)
         response = await agent.run(message)
         return response.content
 
@@ -179,6 +180,11 @@ class TaskExecutor:
         if not tool:
             raise ValueError(f"Tool '{tool_name}' not found in skill '{skill_name}'")
 
+        self._ensure_tool_allowed(
+            permission_mode=payload.get("permission_mode", "workspace-write"),
+            access_level=tool.access_level,
+            operation=f"scheduled skill tool '{tool.name}'",
+        )
         return await tool.execute(**args)
 
     async def _execute_workflow(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -257,3 +263,15 @@ class TaskExecutor:
             WorkspaceManager().append_event(workspace_id, event)
         except Exception:
             logger.exception("Failed to append workspace task event")
+
+    @staticmethod
+    async def _attach_workspace_runtime_tools(agent) -> None:
+        from cognix.core.mounts import attach_workspace_runtime_tools
+
+        await attach_workspace_runtime_tools(agent)
+
+    @staticmethod
+    def _ensure_tool_allowed(*, permission_mode: str, access_level: str, operation: str) -> None:
+        from cognix.core.permissions import ensure_permission
+
+        ensure_permission(permission_mode, access_level, operation)

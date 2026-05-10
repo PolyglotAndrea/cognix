@@ -45,6 +45,7 @@ class Sequential(Pattern):
 
         for i, agent in enumerate(self.agents):
             logger.info("Sequential step %d/%d: agent=%s", i + 1, len(self.agents), agent.name)
+            await _prepare_agent(agent)
             response = await agent.run(current_input, context=ctx)
 
             steps.append({
@@ -74,6 +75,7 @@ class Parallel(Pattern):
         ctx = context or Context()
 
         async def _run_agent(agent: Agent) -> dict[str, Any]:
+            await _prepare_agent(agent)
             response = await agent.run(message, context=ctx)
             return {
                 "agent": agent.name,
@@ -120,6 +122,7 @@ class Router(Pattern):
         )
 
         # Classify
+        await _prepare_agent(self.classifier)
         classify_response = await self.classifier.run(classify_prompt, context=ctx)
         chosen = classify_response.content.strip().lower()
 
@@ -140,6 +143,7 @@ class Router(Pattern):
         logger.info("Router selected agent: %s", chosen)
 
         # Run chosen agent
+        await _prepare_agent(target_agent)
         response = await target_agent.run(message, context=ctx)
 
         return OrchestrationResult(
@@ -177,6 +181,7 @@ class Loop(Pattern):
 
         for i in range(self.max_iterations):
             logger.info("Loop iteration %d/%d: agent=%s", i + 1, self.max_iterations, self.agent.name)
+            await _prepare_agent(self.agent)
             response = await self.agent.run(current_input, context=ctx)
 
             steps.append({
@@ -199,3 +204,11 @@ class Loop(Pattern):
             steps=steps,
             metadata={"pattern": self.name, "iterations": len(steps)},
         )
+
+
+async def _prepare_agent(agent: Agent) -> None:
+    if not getattr(agent, "workspace_id", None):
+        return
+    from cognix.core.mounts import attach_workspace_runtime_tools
+
+    await attach_workspace_runtime_tools(agent)

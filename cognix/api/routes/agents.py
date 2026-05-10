@@ -221,9 +221,9 @@ async def attach_skill(
 async def _attach_runtime_mcp_tools(agent) -> None:
     if not getattr(agent, "workspace_id", None):
         return
-    from cognix.mcp.adapter import attach_workspace_mcp_tools
+    from cognix.core.mounts import attach_workspace_runtime_tools
 
-    await attach_workspace_mcp_tools(agent, agent.workspace_id)
+    await attach_workspace_runtime_tools(agent, agent.workspace_id)
 
 
 @router.websocket("/{agent_id}/chat/ws")

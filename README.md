@@ -210,7 +210,7 @@ MCP servers are configured per workspace. Cognix starts stdio MCP processes for 
 - `tool_count`: number of discovered tools
 - `error` / `stderr`: startup or protocol diagnostics
 
-The API supports status refresh, restart, stop, and delete operations. MCP tools are adapted into core `Tool` instances and mounted onto Agents before REST, RPC, WebSocket, or workspace chat execution.
+The API supports status refresh, restart, stop, and delete operations. Workspace skills and MCP tools are adapted into core `Tool` instances through a shared runtime mount helper before REST, RPC, WebSocket, workspace chat, workflow, scheduled task, or remote bot execution.
 
 ### Distributed Scheduler
 

@@ -62,6 +62,7 @@ class BotBridgeService:
         if not agent:
             raise ValueError(f"Agent '{bot.agent_id}' not found")
         agent.workspace_id = bot.workspace_id
+        await self.attach_workspace_runtime_tools(agent)
         session_key = self.session_key(bot, message)
         context = Context(
             conversation_id=session_key,
@@ -221,6 +222,12 @@ class BotBridgeService:
         if provider in ("lark", "feishu") and "challenge" in payload:
             return {"challenge": payload["challenge"]}
         return None
+
+    @staticmethod
+    async def attach_workspace_runtime_tools(agent) -> None:
+        from cognix.core.mounts import attach_workspace_runtime_tools
+
+        await attach_workspace_runtime_tools(agent)
 
     _challenge_response = challenge_response
 
