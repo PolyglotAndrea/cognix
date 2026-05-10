@@ -25,11 +25,13 @@ type ModalType = 'tasks' | 'billing' | 'settings' | null
 export function TopBar() {
   const [search, setSearch] = useState('')
   const [open, setOpen] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [themeMenuOpen, setThemeMenuOpen] = useState(false)
   const [activeModal, setActiveModal] = useState<ModalType>(null)
   
   const dropdownRef = useRef<HTMLDivElement>(null)
   const themeRef = useRef<HTMLDivElement>(null)
+  const settingsRef = useRef<HTMLDivElement>(null)
   const user = useAuthStore((s) => s.user)
   const { logout } = useAuthStore()
   const { theme, setTheme } = useThemeStore()
@@ -61,6 +63,9 @@ export function TopBar() {
       }
       if (themeRef.current && !themeRef.current.contains(e.target as Node)) {
         setThemeMenuOpen(false)
+      }
+      if (settingsRef.current && !settingsRef.current.contains(e.target as Node)) {
+        setSettingsOpen(false)
       }
     }
     document.addEventListener('mousedown', handleClickOutside)
@@ -160,12 +165,12 @@ export function TopBar() {
         </div>
 
         {/* Right: theme + nav links + user */}
-        <div className="flex items-center gap-2 shrink-0">
-          <div className="flex items-center gap-1 mr-2 px-2 py-1 bg-muted rounded-xl border border-border">
+        <div className="flex items-center gap-4 shrink-0">
+          <div className="flex items-center gap-1 px-1.5 py-1 bg-muted/50 rounded-xl border border-border/50">
             <div className="relative" ref={themeRef}>
               <button
                 onClick={() => setThemeMenuOpen(!themeMenuOpen)}
-                className={`p-2 rounded-lg transition-colors ${themeMenuOpen ? 'bg-background text-primary' : 'text-muted-foreground hover:text-foreground hover:bg-background'}`}
+                className={`p-2 rounded-lg transition-all ${themeMenuOpen ? 'bg-background text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-background/80'}`}
                 title="Switch theme"
               >
                 <CurrentThemeIcon className="h-4 w-4" />
@@ -173,7 +178,7 @@ export function TopBar() {
 
               {themeMenuOpen && (
                 <div className="absolute top-full right-0 mt-3 w-44 bg-card border border-border rounded-2xl shadow-2xl z-[90] p-1.5 animate-in fade-in zoom-in-95 slide-in-from-top-2 duration-200">
-                  <div className="px-3 py-2 text-[10px] font-bold text-muted-foreground uppercase tracking-widest border-b border-border mb-1">
+                  <div className="px-3 py-2 text-[10px] font-bold text-muted-foreground uppercase tracking-widest border-b border-border/50 mb-1">
                     Appearance
                   </div>
                   {(['light', 'dark', 'system'] as const).map((t) => {
@@ -200,41 +205,102 @@ export function TopBar() {
               )}
             </div>
 
-            <div className="w-px h-4 bg-border mx-1" />
+            <div className="w-px h-4 bg-border/50 mx-1" />
 
-            {[
-              { type: 'tasks' as const, icon: Clock, title: 'Tasks' },
-              { type: 'billing' as const, icon: CreditCard, title: 'Billing' },
-              { type: 'settings' as const, icon: Settings, title: 'Settings' },
-            ].map((item) => (
+            <div className="relative" ref={settingsRef}>
               <button
-                key={item.type}
-                onClick={() => setActiveModal(item.type)}
-                className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-background transition-colors"
-                title={item.title}
+                onClick={() => setSettingsOpen(!settingsOpen)}
+                className={`p-2 rounded-lg transition-all ${settingsOpen ? 'bg-background text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-background/80'}`}
+                title="Settings & Tools"
               >
-                <item.icon className="h-4 w-4" />
+                <Settings className="h-4 w-4" />
               </button>
-            ))}
+
+              {settingsOpen && (
+                <div className="absolute top-full right-0 mt-3 w-56 bg-card border border-border rounded-2xl shadow-2xl z-[90] p-1.5 animate-in fade-in zoom-in-95 slide-in-from-top-2 duration-200">
+                  <div className="px-3 py-2 text-[10px] font-bold text-muted-foreground uppercase tracking-widest border-b border-border/50 mb-1">
+                    Platform Modules
+                  </div>
+                  <div className="space-y-0.5">
+                    <button
+                      onClick={() => {
+                        setActiveModal('tasks')
+                        setSettingsOpen(false)
+                      }}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted transition-all group"
+                    >
+                      <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-500 group-hover:bg-blue-500 group-hover:text-white transition-colors shadow-sm">
+                        <Clock className="h-4 w-4" />
+                      </div>
+                      <div className="flex-1 text-left">
+                        <div className="font-bold">Scheduled Tasks</div>
+                        <div className="text-[10px] font-medium opacity-60">Automation & Cron</div>
+                      </div>
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setActiveModal('billing')
+                        setSettingsOpen(false)
+                      }}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted transition-all group"
+                    >
+                      <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-500 group-hover:bg-emerald-500 group-hover:text-white transition-colors shadow-sm">
+                        <CreditCard className="h-4 w-4" />
+                      </div>
+                      <div className="flex-1 text-left">
+                        <div className="font-bold">Billing & Usage</div>
+                        <div className="text-[10px] font-medium opacity-60">Plans & Invoices</div>
+                      </div>
+                    </button>
+
+                    <button
+                      onClick={() => {
+                        setActiveModal('settings')
+                        setSettingsOpen(false)
+                      }}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted transition-all group"
+                    >
+                      <div className="w-8 h-8 rounded-lg bg-indigo-500/10 flex items-center justify-center text-indigo-500 group-hover:bg-indigo-500 group-hover:text-white transition-colors shadow-sm">
+                        <Settings className="h-4 w-4" />
+                      </div>
+                      <div className="flex-1 text-left">
+                        <div className="font-bold">Account Settings</div>
+                        <div className="text-[10px] font-medium opacity-60">Profile & Security</div>
+                      </div>
+                    </button>
+                  </div>
+
+                  <div className="mt-1 pt-1 border-t border-border/50">
+                    <button
+                      onClick={handleLogout}
+                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold text-rose-500 hover:bg-rose-500/10 transition-all"
+                    >
+                      <div className="w-8 h-8 rounded-lg bg-rose-500/10 flex items-center justify-center">
+                        <LogOut className="h-4 w-4" />
+                      </div>
+                      Sign Out
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
           
-          <div className="flex items-center gap-3 pl-2 border-l border-border">
+          <div className="flex items-center gap-3">
             <button 
-              onClick={() => setActiveModal('settings')}
-              className="w-8 h-8 rounded-full bg-gradient-to-tr from-primary to-purple-500 p-[1px] hover:scale-110 active:scale-95 transition-all cursor-pointer shadow-lg shadow-primary/20"
+              onClick={() => {
+                setActiveModal('settings')
+                setSettingsOpen(false)
+              }}
+              className="w-9 h-9 rounded-xl bg-gradient-to-tr from-primary to-indigo-600 p-[1.5px] hover:scale-105 active:scale-95 transition-all cursor-pointer shadow-lg shadow-primary/20 flex items-center justify-center"
             >
-              <div className="w-full h-full bg-card rounded-full flex items-center justify-center">
-                <span className="text-xs font-bold text-foreground">
+              <div className="w-full h-full bg-card rounded-[10px] flex items-center justify-center group overflow-hidden relative">
+                <div className="absolute inset-0 bg-primary/0 group-hover:bg-primary/5 transition-colors" />
+                <span className="text-xs font-bold text-foreground relative z-10">
                   {(user?.name || user?.email || '?')[0].toUpperCase()}
                 </span>
               </div>
-            </button>
-            <button
-              onClick={handleLogout}
-              className="p-2 rounded-lg text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 transition-all border border-transparent hover:border-rose-500/20"
-              title="Logout"
-            >
-              <LogOut className="h-4 w-4" />
             </button>
           </div>
         </div>
@@ -266,10 +332,10 @@ export function TopBar() {
       <Modal 
         isOpen={activeModal === 'settings'} 
         onClose={() => setActiveModal(null)} 
-        title="Account Settings"
-        size="lg"
+        title="Workspace Configuration"
+        size="xl"
       >
-        <Suspense fallback={<div className="py-20 flex flex-col items-center gap-4 text-muted-foreground"><Spinner /><p className="text-sm animate-pulse">Accessing security settings...</p></div>}>
+        <Suspense fallback={<div className="py-20 flex flex-col items-center gap-4 text-muted-foreground"><Spinner /><p className="text-sm animate-pulse">Accessing runtime settings...</p></div>}>
           <SettingsPage />
         </Suspense>
       </Modal>

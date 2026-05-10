@@ -11,6 +11,7 @@ import {
   Folder,
   PlayCircle,
   Wrench,
+  Zap,
   ChevronRight,
   ChevronLeft,
   ShieldQuestion,
@@ -22,13 +23,13 @@ import { useWorkspaceStore } from './store'
 import { Panel, PanelHeader, PanelBody, Badge } from '@/shared/ui'
 
 const TABS = [
-  { key: 'approvals' as const, label: 'Ask', icon: ShieldQuestion },
-  { key: 'tasks' as const, label: 'Tasks', icon: Clock },
-  { key: 'files' as const, label: 'Files', icon: Folder },
-  { key: 'events' as const, label: 'Events', icon: Activity },
-  { key: 'results' as const, label: 'Results', icon: Wrench },
-  { key: 'logs' as const, label: 'Logs', icon: Terminal },
-  { key: 'json' as const, label: 'JSON', icon: FileJson },
+  { key: 'approvals' as const, label: 'Approval', icon: ShieldQuestion, color: 'text-amber-500' },
+  { key: 'tasks' as const, label: 'Tasks', icon: Clock, color: 'text-blue-500' },
+  { key: 'files' as const, label: 'Files', icon: Folder, color: 'text-indigo-500' },
+  { key: 'events' as const, label: 'Events', icon: Activity, color: 'text-rose-500' },
+  { key: 'results' as const, label: 'Results', icon: Wrench, color: 'text-emerald-500' },
+  { key: 'logs' as const, label: 'Logs', icon: Terminal, color: 'text-slate-500' },
+  { key: 'json' as const, label: 'JSON', icon: FileJson, color: 'text-purple-500' },
 ]
 
 interface TaskSummary {
@@ -211,20 +212,20 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: any }) {
   }
 
   return (
-    <Panel className="w-80 shrink-0 border-l border-border bg-card h-full">
-      <PanelHeader dragHandleProps={dragHandleProps} className="justify-between bg-muted/50 backdrop-blur-md px-4 h-14">
-        <div className="flex bg-background/50 p-1 rounded-xl border border-border overflow-x-auto scrollbar-hide max-w-[220px]">
+    <Panel className="w-80 shrink-0 border-l border-border bg-card/50 backdrop-blur-xl h-full flex flex-col shadow-2xl">
+      <PanelHeader dragHandleProps={dragHandleProps} className="justify-between px-4 h-14 border-b border-border/50 shrink-0">
+        <div className="flex bg-muted/50 p-1 rounded-xl border border-border/50 overflow-x-auto scrollbar-hide max-w-[230px] shadow-inner">
           {TABS.map((tab) => (
             <button
               key={tab.key}
               onClick={() => setRightPanelTab(tab.key)}
               className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all shrink-0 ${
                 rightPanelTab === tab.key
-                  ? 'bg-primary text-white shadow-lg shadow-primary/20'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-background'
+                  ? 'bg-background text-foreground shadow-sm ring-1 ring-border'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-background/50'
               }`}
             >
-              <tab.icon className="h-3.5 w-3.5" />
+              <tab.icon className={`h-3.5 w-3.5 ${rightPanelTab === tab.key ? tab.color : 'text-current'}`} />
               {tab.label}
             </button>
           ))}
@@ -234,7 +235,8 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: any }) {
         </button>
       </PanelHeader>
 
-      <PanelBody className="p-0 scrollbar-hide bg-card">
+      <PanelBody className="flex-1 overflow-hidden p-0 bg-transparent">
+        <div className="h-full overflow-y-auto scrollbar-hide">
         {/* Approvals Tab */}
         {rightPanelTab === 'approvals' && (
           <div className="p-4 space-y-3">
@@ -244,12 +246,7 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: any }) {
                 <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Loading Requests</p>
               </div>
             ) : approvals.length === 0 ? (
-              <div className="py-20 text-center">
-                <div className="w-16 h-16 bg-muted rounded-2xl flex items-center justify-center mx-auto mb-4 border border-border">
-                  <ShieldCheck className="h-8 w-8 text-muted-foreground/20" />
-                </div>
-                <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">No Approval Requests</p>
-              </div>
+              <EmptyState icon={ShieldCheck} title="No Approval Requests" description="Your approval queue is clear. No pending tool or question requests." />
             ) : (
               approvals.map((approval) => (
                 <ApprovalCard
@@ -276,12 +273,7 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: any }) {
                 <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Loading Tasks</p>
               </div>
             ) : tasks.length === 0 ? (
-              <div className="py-20 text-center">
-                <div className="w-16 h-16 bg-muted rounded-2xl flex items-center justify-center mx-auto mb-4 border border-border">
-                  <Clock className="h-8 w-8 text-muted-foreground/20" />
-                </div>
-                <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">No Tasks</p>
-              </div>
+              <EmptyState icon={Clock} title="No Active Tasks" description="There are no scheduled tasks or background processes running currently." />
             ) : (
               tasks.map((task) => <TaskStatusCard key={task.id} task={task} />)
             )}
@@ -313,10 +305,7 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: any }) {
                 <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Loading Files</p>
               </div>
             ) : files.length === 0 ? (
-              <div className="py-20 text-center">
-                <Folder className="h-8 w-8 text-muted-foreground/20 mx-auto mb-4" />
-                <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">No Files</p>
-              </div>
+              <EmptyState icon={Folder} title="No Files Found" description="The current directory is empty or no files have been generated by the agent yet." />
             ) : (
               <div className="space-y-2">
                 {files.map((file) => (
@@ -376,29 +365,44 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: any }) {
                 <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">Loading Events</p>
               </div>
             ) : events.length === 0 ? (
-              <div className="py-20 text-center">
-                <Activity className="h-8 w-8 text-muted-foreground/20 mx-auto mb-4" />
-                <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">No Events</p>
-              </div>
+              <EmptyState icon={Activity} title="No Events Recorded" description="Live event stream is currently empty. Start an agent run to see real-time updates." />
             ) : (
-              [...events].reverse().map((event, index) => (
-                <div key={`${event.timestamp}-${index}`} className="rounded-2xl border border-border bg-muted/30 p-3">
-                  <div className="mb-2 flex items-center justify-between gap-2">
-                    <Badge variant="info">{event.type}</Badge>
-                    <span className="font-mono text-[10px] text-muted-foreground">
-                      {new Date(event.timestamp).toLocaleTimeString([], { hour12: false })}
-                    </span>
-                  </div>
-                  {event.provider && (
-                    <div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-primary">
-                      {event.provider} · {event.agent_id || 'agent'}
+              [...events].reverse().map((event, index) => {
+                const isError = event.type?.toLowerCase().includes('error') || event.level === 'error'
+                const isTool = event.type?.toLowerCase().includes('tool')
+                const isAgent = event.type?.toLowerCase().includes('agent')
+                
+                return (
+                  <div key={`${event.timestamp}-${index}`} className="group bg-card/40 border border-border hover:border-primary/20 rounded-xl p-3 transition-all duration-200">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <div className={`w-1.5 h-1.5 rounded-full ${isError ? 'bg-rose-500 animate-pulse' : isTool ? 'bg-indigo-500' : isAgent ? 'bg-emerald-500' : 'bg-primary'}`} />
+                        <span className="text-[10px] font-black uppercase tracking-widest text-foreground/70">{event.type}</span>
+                      </div>
+                      <span className="font-mono text-[9px] text-muted-foreground/50">
+                        {new Date(event.timestamp).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                      </span>
                     </div>
-                  )}
-                  <p className="text-xs leading-5 text-foreground/80">
-                    {String(event.message || event.response || JSON.stringify(event))}
-                  </p>
-                </div>
-              ))
+                    
+                    {event.provider && (
+                      <div className="flex items-center gap-2 mb-2 px-1.5 py-0.5 rounded-md bg-muted/50 w-fit border border-border/50">
+                        <Zap className="h-2.5 w-2.5 text-primary" />
+                        <span className="text-[9px] font-bold text-muted-foreground uppercase">{event.provider}</span>
+                        {event.agent_id && (
+                          <>
+                            <span className="text-muted-foreground/30">|</span>
+                            <span className="text-[9px] font-bold text-primary/80 uppercase">{event.agent_id}</span>
+                          </>
+                        )}
+                      </div>
+                    )}
+                    
+                    <p className={`text-[11px] leading-relaxed break-words ${isError ? 'text-rose-500/90 font-medium' : 'text-foreground/80'}`}>
+                      {String(event.message || event.response || JSON.stringify(event))}
+                    </p>
+                  </div>
+                )
+              })
             )}
           </div>
         )}
@@ -407,16 +411,9 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: any }) {
         {rightPanelTab === 'results' && (
           <div className="p-4 space-y-3">
             {toolResults.length === 0 ? (
-              <div className="py-20 text-center">
-                 <div className="w-16 h-16 bg-muted rounded-2xl flex items-center justify-center mx-auto mb-4 border border-border">
-                   <Wrench className="h-8 w-8 text-muted-foreground/20" />
-                 </div>
-                 <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">No Results</p>
-              </div>
+              <EmptyState icon={Wrench} title="No Tool Results" description="No results from tool executions have been captured in this session." />
             ) : (
-              toolResults.map((r) => (
-                <ToolResultCard key={r.id} result={r} />
-              ))
+              toolResults.map((r) => <ToolResultCard key={r.id} result={r} />)
             )}
           </div>
         )}
@@ -425,12 +422,7 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: any }) {
         {rightPanelTab === 'logs' && (
           <div className="p-4 space-y-2 font-mono text-[11px]">
             {executionLogs.length === 0 ? (
-              <div className="py-20 text-center">
-                 <div className="w-16 h-16 bg-muted rounded-2xl flex items-center justify-center mx-auto mb-4 border border-border">
-                   <Terminal className="h-8 w-8 text-muted-foreground/20" />
-                 </div>
-                 <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">No Logs</p>
-              </div>
+              <EmptyState icon={Terminal} title="No Execution Logs" description="The agent has not produced any system or execution logs yet." />
             ) : (
               <div className="bg-muted/30 rounded-2xl p-4 border border-border">
                 {executionLogs.map((log) => (
@@ -462,12 +454,7 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: any }) {
         {rightPanelTab === 'json' && (
           <div className="p-4">
             {toolResults.length === 0 ? (
-               <div className="py-20 text-center">
-                 <div className="w-16 h-16 bg-muted rounded-2xl flex items-center justify-center mx-auto mb-4 border border-border">
-                   <FileJson className="h-8 w-8 text-muted-foreground/20" />
-                 </div>
-                 <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">No Data</p>
-              </div>
+              <EmptyState icon={FileJson} title="No Data Export" description="There is no tool execution data to export as JSON yet." />
             ) : (
               <div className="relative group">
                 <div className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -480,8 +467,25 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: any }) {
             )}
           </div>
         )}
+        </div>
       </PanelBody>
     </Panel>
+  )
+}
+
+function EmptyState({ icon: Icon, title, description }: { icon: any, title: string, description?: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-24 px-6 text-center animate-in fade-in zoom-in-95 duration-500">
+      <div className="relative mb-6">
+        <div className="absolute inset-0 bg-primary/10 blur-3xl rounded-full scale-150 animate-pulse" />
+        <div className="relative w-20 h-20 bg-card/80 backdrop-blur-xl border border-border rounded-[2.5rem] flex items-center justify-center shadow-2xl group overflow-hidden">
+           <div className="absolute inset-0 bg-gradient-to-tr from-primary/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+           <Icon className="h-9 w-9 text-muted-foreground/30 group-hover:text-primary/40 transition-colors group-hover:scale-110 duration-500" />
+        </div>
+      </div>
+      <h3 className="text-[11px] font-black uppercase tracking-[0.2em] text-foreground mb-2">{title}</h3>
+      {description && <p className="text-xs text-muted-foreground max-w-[200px] leading-relaxed font-medium">{description}</p>}
+    </div>
   )
 }
 
@@ -490,45 +494,68 @@ function TaskStatusCard({ task }: { task: TaskSummary }) {
   const hasError = latestRun?.status === 'failure' || !!latestRun?.error || task.state === 'failed'
 
   return (
-    <div className="bg-muted/30 rounded-2xl p-4 border border-border hover:border-primary/20 transition-all overflow-hidden">
-      <div className="flex items-start justify-between gap-3 mb-3">
+    <div className="group bg-card/40 hover:bg-card border border-border hover:border-primary/20 rounded-2xl p-4 transition-all duration-300 shadow-sm hover:shadow-md">
+      <div className="flex items-start justify-between gap-3 mb-4">
         <div className="min-w-0">
-          <div className="text-xs font-bold text-foreground truncate">{task.name}</div>
+          <div className="text-sm font-bold text-foreground truncate group-hover:text-primary transition-colors">{task.name}</div>
           <div className="mt-1 flex items-center gap-2 text-[10px] text-muted-foreground font-bold uppercase tracking-wider">
-            <span>{task.task_type}</span>
-            <span className="w-1 h-1 rounded-full bg-muted-foreground/30" />
-            <span>{task.schedule}</span>
+            <span className="flex items-center gap-1">
+              <Zap className="h-3 w-3" />
+              {task.task_type}
+            </span>
+            <span className="w-1 h-1 rounded-full bg-border" />
+            <span className="flex items-center gap-1 text-muted-foreground/60">
+              <Clock className="h-3 w-3" />
+              {task.schedule}
+            </span>
           </div>
         </div>
-        <Badge variant={task.state === 'active' ? 'success' : task.state === 'paused' ? 'warning' : 'default'}>
+        <div className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-widest border transition-all ${
+          task.state === 'active' 
+            ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' 
+            : task.state === 'paused' 
+            ? 'bg-amber-500/10 text-amber-500 border-amber-500/20'
+            : 'bg-muted text-muted-foreground border-border'
+        }`}>
           {task.state}
-        </Badge>
+        </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 mb-3">
-        <div className="rounded-xl border border-border bg-background/50 p-3">
-          <div className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground mb-1">Runs</div>
-          <div className="text-lg font-bold text-foreground">{task.run_count}</div>
+      <div className="grid grid-cols-2 gap-3 mb-4">
+        <div className="rounded-xl border border-border bg-background/30 p-3 hover:bg-background/50 transition-colors">
+          <div className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground mb-1">Execution Count</div>
+          <div className="text-xl font-black text-foreground tabular-nums">{task.run_count}</div>
         </div>
-        <div className="rounded-xl border border-border bg-background/50 p-3">
-          <div className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground mb-1">Latest</div>
-          <div className="flex items-center gap-1.5 text-xs font-bold text-foreground">
+        <div className="rounded-xl border border-border bg-background/30 p-3 hover:bg-background/50 transition-colors">
+          <div className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground mb-1">Last Status</div>
+          <div className="flex items-center gap-2 text-xs font-bold text-foreground">
             {hasError ? (
-              <AlertCircle className="h-3.5 w-3.5 text-rose-500" />
+              <div className="w-5 h-5 rounded-lg bg-rose-500/10 flex items-center justify-center">
+                <AlertCircle className="h-3.5 w-3.5 text-rose-500" />
+              </div>
             ) : latestRun ? (
-              <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+              <div className="w-5 h-5 rounded-lg bg-emerald-500/10 flex items-center justify-center">
+                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+              </div>
             ) : (
-              <PlayCircle className="h-3.5 w-3.5 text-muted-foreground" />
+              <div className="w-5 h-5 rounded-lg bg-muted flex items-center justify-center">
+                <PlayCircle className="h-3.5 w-3.5 text-muted-foreground" />
+              </div>
             )}
-            {latestRun?.status || 'waiting'}
+            <span className="capitalize">{latestRun?.status || 'idle'}</span>
           </div>
         </div>
       </div>
 
       {latestRun && (
-        <pre className="text-[11px] text-muted-foreground bg-background/50 rounded-xl p-3 overflow-auto max-h-36 font-mono border border-border leading-relaxed">
-          {(latestRun.error || latestRun.result || 'No output.').slice(0, 500)}
-        </pre>
+        <div className="relative group/console">
+          <div className="absolute top-2 right-2 opacity-0 group-hover/console:opacity-100 transition-opacity">
+            <Badge variant="default" className="text-[8px]">LOG</Badge>
+          </div>
+          <pre className="text-[10px] text-muted-foreground bg-muted/30 hover:bg-muted/50 rounded-xl p-3 overflow-auto max-h-32 font-mono border border-border/50 leading-relaxed scrollbar-hide transition-colors">
+            {(latestRun.error || latestRun.result || 'No output recorded.').slice(0, 500)}
+          </pre>
+        </div>
       )}
     </div>
   )
@@ -554,140 +581,105 @@ function ApprovalCard({
   const kindLabel = isQuestion ? 'Question' : isPlan ? 'Plan' : 'Tool'
   const statusLabel = approvalStatusLabel(approval, busy)
   const primaryLabel = isQuestion ? 'Answer' : isPlan ? 'Confirm Plan' : 'Approve Tool'
-  const description = isQuestion
-    ? 'The Agent needs a human answer before it can continue.'
-    : isPlan
-      ? 'Review and confirm the proposed plan before execution resumes.'
-      : 'Approve this tool call so the Agent can continue the task.'
-
+  
   return (
-    <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-4 transition-all hover:border-amber-500/30">
-      <div className="mb-3 flex items-start justify-between gap-3">
+    <div className={`rounded-2xl border transition-all duration-300 p-4 shadow-sm hover:shadow-md ${
+      isPending 
+        ? 'border-amber-500/30 bg-amber-500/5 ring-1 ring-amber-500/10' 
+        : 'border-border bg-card/40'
+    }`}>
+      <div className="mb-4 flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            {isPlan ? (
-              <ShieldCheck className="h-4 w-4 text-amber-500" />
-            ) : (
-              <ShieldQuestion className="h-4 w-4 text-amber-500" />
-            )}
-            <span className="truncate text-xs font-bold text-foreground">{approval.tool_name}</span>
+            <div className={`p-1.5 rounded-lg ${isPlan ? 'bg-indigo-500/10 text-indigo-500' : 'bg-amber-500/10 text-amber-500'}`}>
+              {isPlan ? <ShieldCheck className="h-4 w-4" /> : <ShieldQuestion className="h-4 w-4" />}
+            </div>
+            <span className="truncate text-sm font-bold text-foreground">{approval.tool_name}</span>
           </div>
-          <div className="mt-1 flex flex-wrap items-center gap-2">
-            <span className="font-mono text-[10px] text-muted-foreground">{approval.id}</span>
-            <span className="rounded-full border border-border bg-background/60 px-2 py-0.5 text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
+          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+            <span className="font-mono text-[10px] text-muted-foreground bg-muted px-1.5 py-0.5 rounded border border-border">{approval.id}</span>
+            <span className="text-[9px] font-black uppercase tracking-widest text-muted-foreground/60">
               {kindLabel}
             </span>
-            {isClaude && (
-              <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-widest text-primary">
-                Claude SDK
-              </span>
-            )}
           </div>
         </div>
-        <Badge variant={approval.status === 'rejected' ? 'error' : approval.status === 'completed' ? 'success' : 'warning'}>
+        <div className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-widest border ${
+          approval.status === 'pending' ? 'bg-amber-500/10 text-amber-500 border-amber-500/20' :
+          approval.status === 'approved' ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' :
+          'bg-muted text-muted-foreground border-border'
+        }`}>
           {approval.status}
-        </Badge>
-      </div>
-
-      <div className="mb-3 rounded-xl border border-border bg-background/50 p-3">
-        <div className="mb-1 text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
-          Continue status
         </div>
-        <div className="text-xs font-bold text-foreground">{statusLabel}</div>
-        <p className="mt-1 text-[11px] leading-5 text-muted-foreground">{description}</p>
       </div>
 
-      <p className="mb-3 text-xs leading-5 text-foreground/80">{approval.reason}</p>
+      <div className="mb-4 p-3 rounded-xl bg-background/50 border border-border/50">
+        <div className="flex items-center gap-2 mb-1.5">
+          <div className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+          <div className="text-[10px] font-bold uppercase tracking-widest text-foreground/80">{statusLabel}</div>
+        </div>
+        <p className="text-[11px] leading-relaxed text-muted-foreground">{approval.reason}</p>
+      </div>
 
-      {isQuestion && (
-        <div className="mb-3 rounded-xl border border-primary/20 bg-primary/5 p-3">
-          <div className="mb-2 text-[9px] font-bold uppercase tracking-widest text-primary">
-            Human answer
-          </div>
-          {isPending ? (
-            <textarea
-              value={response}
-              onChange={(event) => setResponse(event.target.value)}
-              className="min-h-24 w-full resize-none rounded-xl border border-border bg-background/80 p-3 text-xs leading-5 text-foreground outline-none transition-all focus:border-primary"
-              placeholder="Answer the Agent question..."
-            />
-          ) : (
-            <div className="text-xs leading-5 text-foreground">{approval.response || 'No answer recorded.'}</div>
+      {isQuestion && isPending && (
+        <div className="mb-4">
+          <textarea
+            value={response}
+            onChange={(event) => setResponse(event.target.value)}
+            className="min-h-24 w-full resize-none rounded-xl border border-border bg-background/80 p-3 text-xs leading-5 text-foreground outline-none transition-all focus:ring-2 focus:ring-primary/20 focus:border-primary shadow-inner"
+            placeholder="Provide the information requested..."
+          />
+        </div>
+      )}
+
+      {!isPending && (approval.response || approval.result) && (
+        <div className="mb-4 space-y-2">
+          {approval.response && (
+            <div className="p-3 rounded-xl bg-primary/5 border border-primary/10 text-xs text-primary font-medium">
+              <span className="text-[9px] font-black uppercase tracking-widest block mb-1 opacity-60">Human Response</span>
+              {approval.response}
+            </div>
+          )}
+          {approval.result && (
+            <pre className="p-3 rounded-xl bg-emerald-500/5 border border-emerald-500/10 text-[10px] font-mono text-emerald-600 dark:text-emerald-400 overflow-auto max-h-32 scrollbar-hide">
+              <span className="text-[9px] font-black uppercase tracking-widest block mb-1 opacity-60">Result</span>
+              {approval.result}
+            </pre>
           )}
         </div>
       )}
 
-      {isPlan && (
-        <div className="mb-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3">
-          <div className="mb-2 text-[9px] font-bold uppercase tracking-widest text-amber-600 dark:text-amber-300">
-            Plan confirmation
-          </div>
-          <p className="text-xs leading-5 text-foreground/80">
-            Confirming this request lets the Agent continue from the approval checkpoint.
-          </p>
-        </div>
-      )}
-
-      {!isQuestion && approval.response && (
-        <div className="mb-3 rounded-xl border border-primary/20 bg-primary/5 p-3 text-xs leading-5 text-foreground">
-          {approval.response}
-        </div>
-      )}
-
-      <div className="mb-3 grid grid-cols-2 gap-2">
-        <div className="rounded-xl border border-border bg-background/50 p-2">
-          <div className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Access</div>
-          <div className="mt-1 text-xs font-bold text-foreground">{approval.access_level}</div>
-        </div>
-        <div className="rounded-xl border border-border bg-background/50 p-2">
-          <div className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Agent</div>
-          <div className="mt-1 truncate font-mono text-xs text-foreground">{approval.agent_id}</div>
-        </div>
-      </div>
-
-      {resumeToken && (
-        <div className="mb-3 rounded-xl border border-border bg-background/50 p-2">
-          <div className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">Resume token</div>
-          <div className="mt-1 truncate font-mono text-xs text-foreground">{resumeToken}</div>
-        </div>
-      )}
-
-      <pre className="mb-3 max-h-28 overflow-auto rounded-xl border border-border bg-background/60 p-3 font-mono text-[11px] leading-5 text-muted-foreground">
-        {args}
-      </pre>
-
-      {approval.result && (
-        <pre className="mb-3 max-h-28 overflow-auto rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3 font-mono text-[11px] leading-5 text-emerald-600 dark:text-emerald-400">
-          {approval.result}
+      {isPending && (
+        <pre className="mb-4 max-h-32 overflow-auto rounded-xl border border-border bg-muted/30 p-3 font-mono text-[10px] leading-relaxed text-muted-foreground scrollbar-hide">
+          <div className="text-[9px] font-black uppercase tracking-widest mb-1 opacity-60 border-b border-border/50 pb-1">Parameters</div>
+          {args}
         </pre>
       )}
 
-      <div className="flex items-center gap-2">
-        {isPending && (
+      <div className="flex items-center gap-2 mt-2">
+        {isPending ? (
           <>
             <button
               onClick={() => (isQuestion ? onAction('respond', response) : onAction('approve'))}
               disabled={busy || (isQuestion && !response.trim())}
-              className="flex-1 rounded-xl bg-emerald-500 px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-white transition-all hover:bg-emerald-600 disabled:opacity-50"
+              className="flex-1 h-9 rounded-xl bg-emerald-500 px-3 text-[11px] font-bold uppercase tracking-wider text-white transition-all hover:bg-emerald-600 active:scale-95 disabled:opacity-50 shadow-lg shadow-emerald-500/20"
             >
               {primaryLabel}
             </button>
             <button
               onClick={() => onAction('reject')}
               disabled={busy}
-              className="flex-1 rounded-xl bg-rose-500 px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-white transition-all hover:bg-rose-600 disabled:opacity-50"
+              className="flex-1 h-9 rounded-xl bg-rose-500 px-3 text-[11px] font-bold uppercase tracking-wider text-white transition-all hover:bg-rose-600 active:scale-95 disabled:opacity-50 shadow-lg shadow-rose-500/20"
             >
               Reject
             </button>
           </>
-        )}
-        {isApproved && (
+        ) : isApproved && (
           <button
             onClick={() => onAction('resume', response)}
             disabled={busy}
-            className="w-full rounded-xl bg-primary px-3 py-2 text-[11px] font-bold uppercase tracking-wider text-white transition-all hover:bg-primary/90 disabled:opacity-50"
+            className="w-full h-9 rounded-xl bg-primary px-3 text-[11px] font-bold uppercase tracking-wider text-white transition-all hover:bg-primary/90 active:scale-95 disabled:opacity-50 shadow-lg shadow-primary/20"
           >
-            {busy ? 'Continuing...' : isClaude ? 'Resume Claude Run' : 'Resume Agent'}
+            {busy ? 'Resuming...' : isClaude ? 'Resume Claude Session' : 'Continue Execution'}
           </button>
         )}
       </div>

@@ -11,6 +11,8 @@ import {
   Search,
   Trash2,
   type LucideIcon,
+  Wrench,
+  Zap,
 } from 'lucide-react'
 import { api, authApi } from '@/shared/api/client'
 import { Badge, Button, Input, Spinner } from '@/shared/ui'
@@ -54,8 +56,19 @@ interface ColdMemory {
 
 const PROVIDERS = ['lark', 'feishu', 'dingtalk', 'wechat']
 
+const SETTINGS_SECTIONS = [
+  { id: 'memory', label: 'Memory Studio', icon: Brain, description: 'Knowledge & Context' },
+  { id: 'api', label: 'API Access', icon: Key, description: 'Keys & Authorization' },
+  { id: 'bots', label: 'Integrations', icon: Bot, description: 'Remote Bridges' },
+] as const
+
+type SectionId = typeof SETTINGS_SECTIONS[number]['id']
+
 export default function SettingsPage() {
   const queryClient = useQueryClient()
+  const [activeSection, setActiveSection] = useState<SectionId>('memory')
+  
+  // State for Memory
   const [keyName, setKeyName] = useState('')
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
   const [botName, setBotName] = useState('')
@@ -206,309 +219,264 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="space-y-8">
-      <div>
-        <div className="mb-2 flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-primary">
-          <RadioTower className="h-4 w-4" />
-          Runtime Access
+    <div className="flex h-[640px] -m-6 bg-background rounded-2xl overflow-hidden">
+      {/* Sidebar Navigation */}
+      <aside className="w-64 border-r border-border bg-muted/30 flex flex-col p-4 gap-2 shrink-0">
+        <div className="px-3 py-2 mb-2">
+          <h2 className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground/40">Configuration</h2>
         </div>
-        <h2 className="text-3xl font-bold tracking-tight text-foreground">Settings</h2>
-        <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-          Manage programmatic access and remote robot bridges into local Agent workflows.
-        </p>
-      </div>
-
-      <section className="rounded-2xl border border-border bg-card">
-        <SectionHeader icon={Brain} title="Memory Studio" subtitle="Hot memory, cold recall and context preview" />
-        <div className="grid grid-cols-1 gap-5 border-b border-border p-5 xl:grid-cols-3">
-          <MemoryEditor
-            label="USER.md"
-            value={activeHot.user}
-            onChange={(value) => setHotDraft({ ...activeHot, user: value })}
-          />
-          <MemoryEditor
-            label="Global MEMORY.md"
-            value={activeHot.global_memory}
-            onChange={(value) => setHotDraft({ ...activeHot, global_memory: value })}
-          />
-          <MemoryEditor
-            label="Workspace MEMORY.md"
-            value={activeHot.workspace_memory}
-            onChange={(value) => setHotDraft({ ...activeHot, workspace_memory: value })}
-          />
-        </div>
-        <div className="flex flex-col gap-3 border-b border-border p-5 lg:flex-row">
-          <Button
-            disabled={!hotDraft || saveHotMemoryMutation.isPending}
-            onClick={() => saveHotMemoryMutation.mutate()}
+        {SETTINGS_SECTIONS.map((section) => (
+          <button
+            key={section.id}
+            onClick={() => setActiveSection(section.id)}
+            className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 group ${
+              activeSection === section.id
+                ? 'bg-primary text-white shadow-lg shadow-primary/20 scale-[1.02]'
+                : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+            }`}
           >
-            Save Hot Memory
-          </Button>
-          <Input
-            placeholder="Search cold memory"
-            value={memorySearch}
-            onChange={(event) => setMemorySearch(event.target.value)}
-          />
-          <Button variant="secondary" onClick={() => refetchMemory()}>
-            <Search className="h-4 w-4" />
-            Search
-          </Button>
-        </div>
-        <div className="grid grid-cols-1 gap-5 border-b border-border p-5 lg:grid-cols-[1fr_280px]">
-          <textarea
-            value={memoryContent}
-            onChange={(event) => setMemoryContent(event.target.value)}
-            rows={4}
-            placeholder="Add a durable memory or decision..."
-            className="w-full resize-none rounded-xl border border-border bg-muted/50 px-4 py-3 text-sm leading-6 text-foreground outline-none transition-all focus:border-primary/40 focus:bg-background focus:ring-2 focus:ring-primary/20"
-          />
-          <div className="space-y-3">
-            <Input
-              placeholder="Optional summary"
-              value={memorySummary}
-              onChange={(event) => setMemorySummary(event.target.value)}
-            />
-            <Button
-              className="w-full"
-              disabled={!memoryContent.trim() || rememberMutation.isPending}
-              onClick={() => rememberMutation.mutate()}
-            >
-              Remember
-            </Button>
-          </div>
-        </div>
-        <div className="grid grid-cols-1 gap-5 p-5 xl:grid-cols-[1fr_1fr]">
-          <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h4 className="text-xs font-bold uppercase tracking-widest text-muted-foreground">Cold Recall</h4>
-              <Badge>{memoryResults.length} results</Badge>
+            <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
+              activeSection === section.id ? 'bg-white/20' : 'bg-primary/10 group-hover:bg-primary/20'
+            }`}>
+               <section.icon className={`h-4 w-4 ${activeSection === section.id ? 'text-white' : 'text-primary'}`} />
             </div>
-            <div className="max-h-80 space-y-3 overflow-auto pr-1">
-              {memoryResults.length === 0 ? (
-                <EmptyRow icon={Brain} text="No recalled memories" />
-              ) : (
-                memoryResults.map((memory) => (
-                  <div key={memory.id} className="rounded-xl border border-border bg-muted/30 p-3">
-                    <div className="mb-2 flex items-center justify-between gap-2">
-                      <Badge variant="info">{memory.kind}</Badge>
-                      <span className="text-[10px] text-muted-foreground">
-                        {new Date(memory.created_at).toLocaleDateString()}
-                      </span>
-                    </div>
-                    <p className="text-xs leading-5 text-foreground/80">
-                      {memory.summary || memory.content.slice(0, 220)}
-                    </p>
+            <div className="text-left flex-1">
+              <div className="text-sm font-bold tracking-tight">{section.label}</div>
+              <div className={`text-[10px] font-medium opacity-60 ${activeSection === section.id ? 'text-white' : ''}`}>
+                {section.description}
+              </div>
+            </div>
+          </button>
+        ))}
+        
+        <div className="mt-auto p-4 rounded-2xl bg-gradient-to-br from-primary/10 to-indigo-500/10 border border-primary/10">
+          <div className="flex items-center gap-2 mb-2">
+            <RadioTower className="h-3.5 w-3.5 text-primary" />
+            <span className="text-[10px] font-bold uppercase tracking-widest text-primary">Runtime v0.8</span>
+          </div>
+          <p className="text-[10px] leading-relaxed text-muted-foreground font-medium">
+            Dynamic context injection and remote messaging bridges are operational.
+          </p>
+        </div>
+      </aside>
+
+      {/* Content Area */}
+      <main className="flex-1 overflow-y-auto p-8 scrollbar-hide">
+        {activeSection === 'memory' && (
+          <div className="space-y-8 animate-in fade-in slide-in-from-right-4 duration-300">
+             <div>
+                <h3 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">
+                   Memory Studio
+                   <Badge variant="info" className="text-[9px] uppercase tracking-widest">Active</Badge>
+                </h3>
+                <p className="text-sm text-muted-foreground mt-1">Configure runtime context and durable knowledge stores for your agents.</p>
+             </div>
+
+             <div className="grid grid-cols-1 gap-6">
+               <div className="grid grid-cols-3 gap-4">
+                 <MemoryEditor label="USER.md" value={activeHot.user} onChange={(v) => setHotDraft({ ...activeHot, user: v })} />
+                 <MemoryEditor label="Global MEMORY.md" value={activeHot.global_memory} onChange={(v) => setHotDraft({ ...activeHot, global_memory: v })} />
+                 <MemoryEditor label="Workspace MEMORY.md" value={activeHot.workspace_memory} onChange={(v) => setHotDraft({ ...activeHot, workspace_memory: v })} />
+               </div>
+               <Button
+                  className="w-fit h-10 px-6 shadow-lg shadow-primary/20"
+                  disabled={!hotDraft || saveHotMemoryMutation.isPending}
+                  onClick={() => saveHotMemoryMutation.mutate()}
+               >
+                 {saveHotMemoryMutation.isPending ? 'Synchronizing...' : 'Update Context Memory'}
+               </Button>
+             </div>
+
+             <div className="rounded-2xl border border-border bg-card overflow-hidden shadow-sm">
+               <div className="p-5 border-b border-border bg-muted/20 flex items-center justify-between">
+                 <div>
+                    <h4 className="text-sm font-bold text-foreground">Durable Knowledge recall</h4>
+                    <p className="text-[11px] text-muted-foreground mt-0.5 uppercase tracking-wider font-bold">Vector Database Search</p>
+                 </div>
+                 <div className="flex items-center gap-2">
+                    <Input placeholder="Search keywords..." value={memorySearch} onChange={(e) => setMemorySearch(e.target.value)} className="w-64 h-9 bg-background" />
+                    <Button variant="secondary" onClick={() => refetchMemory()} className="h-9 w-9 p-0"><Search className="h-4 w-4" /></Button>
+                 </div>
+               </div>
+               <div className="p-5 grid grid-cols-2 gap-8">
+                  <div className="space-y-4">
+                     <textarea
+                        value={memoryContent}
+                        onChange={(e) => setMemoryContent(e.target.value)}
+                        placeholder="Manually record a key insight or decision..."
+                        className="w-full h-32 resize-none rounded-xl border border-border bg-muted/30 p-4 text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all scrollbar-hide leading-relaxed"
+                     />
+                     <Button className="w-full h-10" disabled={!memoryContent.trim()} onClick={() => rememberMutation.mutate()}>Store In Cold Memory</Button>
                   </div>
-                ))
-              )}
-            </div>
-          </div>
-          <div className="space-y-3">
-            <div className="flex gap-2">
-              <Input
-                placeholder="Message for context preview"
-                value={contextMessage}
-                onChange={(event) => setContextMessage(event.target.value)}
-              />
-              <Button
-                variant="secondary"
-                disabled={contextPreviewMutation.isPending}
-                onClick={() => contextPreviewMutation.mutate()}
-              >
-                Preview
-              </Button>
-            </div>
-            <pre className="max-h-80 overflow-auto rounded-xl border border-border bg-muted/40 p-4 text-xs leading-5 text-muted-foreground">
-              {contextPreview || 'Context preview will appear here.'}
-            </pre>
-          </div>
-        </div>
-      </section>
-
-      <section className="rounded-2xl border border-border bg-card">
-        <SectionHeader icon={Key} title="API Keys" subtitle="JWT-backed programmatic access" />
-        <div className="border-b border-border p-5">
-          <div className="flex flex-col gap-3 md:flex-row">
-            <Input
-              placeholder="Key name, e.g. CI/CD or Script"
-              value={keyName}
-              onChange={(event) => setKeyName(event.target.value)}
-            />
-            <Button
-              disabled={!keyName.trim() || createKeyMutation.isPending}
-              onClick={() => createKeyMutation.mutate(keyName)}
-            >
-              <Plus className="h-4 w-4" />
-              Create Key
-            </Button>
-          </div>
-        </div>
-
-        {createKeyMutation.data?.data?.key && (
-          <div className="border-b border-border bg-emerald-500/5 p-5">
-            <p className="mb-3 text-sm font-bold text-emerald-600 dark:text-emerald-400">
-              API key created. It is shown once.
-            </p>
-            <div className="flex items-center gap-2">
-              <code className="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2 font-mono text-xs text-foreground">
-                {createKeyMutation.data.data.key}
-              </code>
-              <IconCopyButton
-                active={copiedKey === createKeyMutation.data.data.id}
-                onClick={() => copyText(createKeyMutation.data!.data.id, createKeyMutation.data!.data.key)}
-              />
-            </div>
+                  <div className="space-y-4">
+                     <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60">Recalled Entries</div>
+                     <div className="max-h-[200px] overflow-y-auto space-y-3 pr-2 scrollbar-hide">
+                        {memoryResults.length === 0 ? (
+                           <div className="py-10 text-center border border-dashed border-border rounded-xl">
+                              <Brain className="h-6 w-6 text-muted-foreground/20 mx-auto mb-2" />
+                              <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">No results</p>
+                           </div>
+                        ) : (
+                           memoryResults.map(m => (
+                             <div key={m.id} className="p-3 rounded-xl border border-border bg-muted/10 text-[11px] text-foreground/80 leading-relaxed group hover:border-primary/20 transition-all">
+                               <div className="flex items-center justify-between mb-1.5">
+                                 <span className="text-[9px] font-black uppercase text-primary/50">{new Date(m.created_at).toLocaleDateString()}</span>
+                                 <Badge variant="default" className="text-[8px] h-4 px-1">{m.kind}</Badge>
+                               </div>
+                               {m.content}
+                             </div>
+                           ))
+                        )}
+                     </div>
+                  </div>
+               </div>
+             </div>
           </div>
         )}
 
-        <div className="divide-y divide-border">
-          {keysLoading ? (
-            <LoadingRow />
-          ) : apiKeys.length === 0 ? (
-            <EmptyRow icon={Key} text="No API keys yet" />
-          ) : (
-            apiKeys.map((key: any) => (
-              <div key={key.id} className="flex items-center justify-between gap-4 px-5 py-4">
-                <div className="flex min-w-0 items-center gap-3">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-border bg-muted">
-                    <Key className="h-4 w-4 text-primary" />
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-sm font-bold text-foreground">{key.name}</p>
-                    <p className="font-mono text-xs text-muted-foreground">{key.prefix}</p>
-                  </div>
-                </div>
-                <button
-                  onClick={() => deleteKeyMutation.mutate(key.id)}
-                  className="flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-rose-500/10 hover:text-rose-500"
-                  aria-label={`Delete ${key.name}`}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </div>
-            ))
-          )}
-        </div>
-      </section>
+        {activeSection === 'api' && (
+          <div className="space-y-8 animate-in fade-in slide-in-from-right-4 duration-300">
+             <div>
+                <h3 className="text-2xl font-bold tracking-tight text-foreground">API Access Tokens</h3>
+                <p className="text-sm text-muted-foreground mt-1">Authorization keys for headless agent execution and CLI integration.</p>
+             </div>
 
-      <section className="rounded-2xl border border-border bg-card">
-        <SectionHeader icon={Bot} title="Remote Bots" subtitle="Lark, Feishu, DingTalk and WeChat bridge entries" />
-        <div className="grid grid-cols-1 gap-3 border-b border-border p-5 lg:grid-cols-[1fr_150px_1fr_1fr_auto]">
-          <Input placeholder="Bot name" value={botName} onChange={(event) => setBotName(event.target.value)} />
-          <select
-            value={botProvider}
-            onChange={(event) => setBotProvider(event.target.value)}
-            className="rounded-xl border border-border bg-muted px-4 py-2 text-sm text-foreground outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/20"
-          >
-            {PROVIDERS.map((provider) => (
-              <option key={provider} value={provider}>{provider}</option>
-            ))}
-          </select>
-          <select
-            value={selectedAgentId}
-            onChange={(event) => setSelectedAgentId(event.target.value)}
-            className="rounded-xl border border-border bg-muted px-4 py-2 text-sm text-foreground outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/20"
-          >
-            <option value="">Select agent</option>
-            {agents.map((agent) => (
-              <option key={agent.id} value={agent.id}>{agent.name}</option>
-            ))}
-          </select>
-          <Input
-            placeholder="Webhook secret"
-            type="password"
-            value={botSecret}
-            onChange={(event) => setBotSecret(event.target.value)}
-          />
-          <Button
-            disabled={!workspace || !botName.trim() || !botSecret || !(selectedAgentId || agents[0]?.id)}
-            onClick={() => createBotMutation.mutate()}
-          >
-            Add
-          </Button>
-          <div className="lg:col-span-5 grid grid-cols-1 gap-3 lg:grid-cols-[1fr_auto]">
-            <Input
-              placeholder="Optional response callback URL"
-              value={botResponseUrl}
-              onChange={(event) => setBotResponseUrl(event.target.value)}
-            />
-            <label className="flex items-center gap-2 rounded-xl border border-border bg-muted px-4 py-2 text-sm text-muted-foreground">
-              <input
-                type="checkbox"
-                checked={botRequireSignature}
-                onChange={(event) => setBotRequireSignature(event.target.checked)}
-                className="h-4 w-4 rounded border-border accent-primary"
-              />
-              Require signature
-            </label>
+             <div className="rounded-2xl border border-border bg-card p-6 shadow-sm">
+                <div className="flex items-center gap-3 mb-8">
+                   <div className="relative flex-1">
+                      <Key className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input placeholder="Key name (e.g. CI Pipeline)" value={keyName} onChange={(e) => setKeyName(e.target.value)} className="pl-10 h-11" />
+                   </div>
+                   <Button className="h-11 px-6 shadow-lg shadow-primary/20" disabled={!keyName.trim()} onClick={() => createKeyMutation.mutate(keyName)}>Generate Token</Button>
+                </div>
+
+                {createKeyMutation.data?.data?.key && (
+                  <div className="mb-8 p-5 rounded-2xl bg-emerald-500/5 border border-emerald-500/20 animate-in zoom-in-95 duration-300">
+                     <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                           <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                           <span className="text-xs font-bold uppercase tracking-widest text-emerald-600">New Token Generated</span>
+                        </div>
+                        <Badge variant="success" className="text-[9px] uppercase tracking-widest">Confidential</Badge>
+                     </div>
+                     <div className="flex items-center gap-2">
+                        <code className="flex-1 font-mono text-xs bg-background/50 p-3 rounded-xl border border-emerald-500/10 truncate text-emerald-600 font-bold select-all">{createKeyMutation.data.data.key}</code>
+                        <IconCopyButton active={copiedKey === createKeyMutation.data.data.id} onClick={() => copyText(createKeyMutation.data!.data.id, createKeyMutation.data!.data.key)} />
+                     </div>
+                     <p className="mt-3 text-[10px] text-emerald-600/60 font-medium italic">Make sure to copy this token now. You won't be able to see it again for security reasons.</p>
+                  </div>
+                )}
+
+                <div className="space-y-3">
+                   <h4 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/40 px-1 mb-3">Your Platform Keys</h4>
+                   {apiKeys.length === 0 ? (
+                      <EmptyRow icon={Key} text="No API keys established" />
+                   ) : (
+                     <div className="grid grid-cols-1 gap-3">
+                        {apiKeys.map((key: any) => (
+                           <div key={key.id} className="flex items-center justify-between p-4 rounded-2xl border border-border bg-muted/20 group hover:bg-muted/40 hover:border-primary/20 transition-all">
+                              <div className="flex items-center gap-4">
+                                 <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center border border-primary/20 shadow-sm">
+                                    <Key className="h-5 w-5 text-primary" />
+                                 </div>
+                                 <div>
+                                    <div className="text-sm font-bold text-foreground">{key.name}</div>
+                                    <div className="text-[10px] font-mono text-muted-foreground/60 mt-0.5">Prefix: <span className="font-bold">{key.prefix}</span></div>
+                                 </div>
+                              </div>
+                              <button onClick={() => deleteKeyMutation.mutate(key.id)} className="p-2.5 rounded-xl text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 transition-all opacity-0 group-hover:opacity-100" title="Revoke Key"><Trash2 className="h-4.5 w-4.5" /></button>
+                           </div>
+                        ))}
+                     </div>
+                   )}
+                </div>
+             </div>
           </div>
-        </div>
+        )}
 
-        <div className="divide-y divide-border">
-          {botsLoading ? (
-            <LoadingRow />
-          ) : bots.length === 0 ? (
-            <EmptyRow icon={Bot} text="No remote bot bridges configured" />
-          ) : (
-            bots.map((bot) => {
-              const webhook = `${window.location.origin}${bot.webhook_path}?secret=YOUR_SECRET`
-              return (
-                <div key={bot.id} className="px-5 py-4">
-                  <div className="mb-3 flex items-start justify-between gap-4">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <p className="text-sm font-bold text-foreground">{bot.name}</p>
-                        <Badge variant={bot.enabled ? 'success' : 'default'}>{bot.provider}</Badge>
+        {activeSection === 'bots' && (
+          <div className="space-y-8 animate-in fade-in slide-in-from-right-4 duration-300">
+             <div>
+                <h3 className="text-2xl font-bold tracking-tight text-foreground">Message Bridge Gateways</h3>
+                <p className="text-sm text-muted-foreground mt-1">Connect your local agents to corporate messaging systems via secure webhooks.</p>
+             </div>
+
+             <div className="rounded-2xl border border-border bg-card p-6 shadow-sm">
+                <div className="grid grid-cols-2 gap-6 mb-8">
+                   <div className="space-y-4">
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 px-1">Gateway Identity</label>
+                        <Input placeholder="e.g. Slack Operations Bot" value={botName} onChange={(e) => setBotName(e.target.value)} />
                       </div>
-                      <p className="mt-1 text-xs text-muted-foreground">Agent: {bot.agent_id}</p>
-                      {typeof bot.metadata?.response_url === 'string' && (
-                        <p className="mt-1 max-w-xl truncate text-xs text-muted-foreground">
-                          Callback: {bot.metadata.response_url}
-                        </p>
-                      )}
-                    </div>
-                    <button
-                      onClick={() => deleteBotMutation.mutate(bot.id)}
-                      className="flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground transition-colors hover:bg-rose-500/10 hover:text-rose-500"
-                      aria-label={`Delete ${bot.name}`}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
-                  <div className="flex items-center gap-2 rounded-xl border border-border bg-muted/50 p-2">
-                    <code className="min-w-0 flex-1 truncate px-2 font-mono text-xs text-muted-foreground">
-                      {webhook}
-                    </code>
-                    <IconCopyButton active={copiedKey === bot.id} onClick={() => copyText(bot.id, webhook)} />
-                  </div>
+                      <div className="grid grid-cols-2 gap-3">
+                         <div className="space-y-2">
+                           <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 px-1">Provider</label>
+                           <select value={botProvider} onChange={(e) => setBotProvider(e.target.value)} className="w-full h-10 rounded-xl border border-border bg-muted px-3 py-2 text-sm outline-none focus:border-primary transition-colors appearance-none">
+                              {PROVIDERS.map(p => <option key={p} value={p}>{p}</option>)}
+                           </select>
+                         </div>
+                         <div className="space-y-2">
+                            <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 px-1">Target Agent</label>
+                            <select value={selectedAgentId} onChange={(e) => setSelectedAgentId(e.target.value)} className="w-full h-10 rounded-xl border border-border bg-muted px-3 py-2 text-sm outline-none focus:border-primary transition-colors appearance-none">
+                               <option value="">Select Target...</option>
+                               {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                            </select>
+                         </div>
+                      </div>
+                   </div>
+                   <div className="space-y-4">
+                      <div className="space-y-2">
+                        <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 px-1">Security Secret</label>
+                        <Input placeholder="Bridge verification secret" type="password" value={botSecret} onChange={(e) => setBotSecret(e.target.value)} />
+                      </div>
+                      <div className="pt-6">
+                        <Button className="w-full h-11 shadow-lg shadow-indigo-500/20 bg-indigo-600 hover:bg-indigo-700" disabled={!botName.trim() || !botSecret} onClick={() => createBotMutation.mutate()}>
+                           <Zap className="h-4 w-4 mr-2" />
+                           Establish Gateway Bridge
+                        </Button>
+                      </div>
+                   </div>
                 </div>
-              )
-            })
-          )}
-        </div>
-      </section>
-    </div>
-  )
-}
 
-function SectionHeader({
-  icon: Icon,
-  title,
-  subtitle,
-}: {
-  icon: LucideIcon
-  title: string
-  subtitle: string
-}) {
-  return (
-    <div className="flex items-center gap-3 border-b border-border px-5 py-4">
-      <div className="flex h-9 w-9 items-center justify-center rounded-xl border border-primary/20 bg-primary/10">
-        <Icon className="h-4 w-4 text-primary" />
-      </div>
-      <div>
-        <h3 className="text-sm font-bold text-foreground">{title}</h3>
-        <p className="text-[11px] text-muted-foreground">{subtitle}</p>
-      </div>
+                <div className="space-y-4">
+                   <h4 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/40 px-1 mb-1">Active Gateway Integrations</h4>
+                   {bots.length === 0 ? (
+                      <EmptyRow icon={Bot} text="No messaging bridges active" />
+                   ) : (
+                     <div className="grid grid-cols-1 gap-4">
+                        {bots.map((bot) => (
+                           <div key={bot.id} className="p-5 rounded-2xl border border-border bg-muted/10 group hover:border-indigo-500/30 hover:bg-muted/20 transition-all shadow-sm">
+                              <div className="flex items-start justify-between mb-4">
+                                 <div className="flex items-center gap-4">
+                                    <div className="w-12 h-12 rounded-2xl bg-indigo-500/10 flex items-center justify-center border border-indigo-500/20 text-indigo-500 shadow-inner">
+                                       <Bot className="h-6 w-6" />
+                                    </div>
+                                    <div>
+                                       <div className="flex items-center gap-2">
+                                          <span className="text-base font-bold text-foreground tracking-tight">{bot.name}</span>
+                                          <Badge variant={bot.enabled ? 'success' : 'default'} className="text-[10px] font-black uppercase tracking-widest">{bot.provider}</Badge>
+                                       </div>
+                                       <div className="text-[11px] text-muted-foreground mt-1 flex items-center gap-1.5">
+                                          Routing to Agent: <span className="text-indigo-500 font-bold bg-indigo-500/10 px-1.5 py-0.5 rounded uppercase">{bot.agent_id}</span>
+                                       </div>
+                                    </div>
+                                 </div>
+                                 <button onClick={() => deleteBotMutation.mutate(bot.id)} className="p-2.5 rounded-xl text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 transition-all" title="Delete Bridge"><Trash2 className="h-4.5 w-4.5" /></button>
+                              </div>
+                              <div className="flex items-center gap-3 bg-background/80 border border-border/50 p-3 rounded-xl shadow-inner">
+                                 <div className="flex items-center gap-2 px-2 py-1 rounded bg-muted/50 text-[9px] font-bold text-muted-foreground uppercase border border-border/50">Endpoint</div>
+                                 <code className="flex-1 font-mono text-[10px] text-muted-foreground truncate font-medium">{window.location.origin}{bot.webhook_path}</code>
+                                 <IconCopyButton active={copiedKey === bot.id} onClick={() => copyText(bot.id, `${window.location.origin}${bot.webhook_path}`)} />
+                              </div>
+                           </div>
+                        ))}
+                     </div>
+                   )}
+                </div>
+             </div>
+          </div>
+        )}
+      </main>
     </div>
   )
 }
@@ -517,7 +485,7 @@ function IconCopyButton({ active, onClick }: { active: boolean; onClick: () => v
   return (
     <button
       onClick={onClick}
-      className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-background hover:text-primary"
+      className="flex h-9 w-9 items-center justify-center rounded-xl text-muted-foreground transition-all hover:bg-background hover:text-primary border border-transparent hover:border-border active:scale-90"
       aria-label="Copy"
     >
       {active ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
@@ -535,23 +503,23 @@ function MemoryEditor({
   onChange: (value: string) => void
 }) {
   return (
-    <label className="block min-w-0">
-      <span className="mb-2 block text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-        {label}
-      </span>
+    <div className="space-y-2.5">
+      <div className="text-[10px] font-black uppercase tracking-[0.1em] text-muted-foreground/60 flex items-center gap-2">
+         <Wrench className="h-3 w-3" />
+         {label}
+      </div>
       <textarea
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        rows={8}
-        className="w-full resize-none rounded-xl border border-border bg-muted/50 px-4 py-3 font-mono text-xs leading-6 text-foreground outline-none transition-all focus:border-primary/40 focus:bg-background focus:ring-2 focus:ring-primary/20"
+        className="w-full h-44 resize-none rounded-2xl border border-border bg-muted/20 p-4 font-mono text-[11px] leading-relaxed text-foreground focus:ring-2 focus:ring-primary/10 focus:border-primary outline-none transition-all scrollbar-hide shadow-inner"
       />
-    </label>
+    </div>
   )
 }
 
 function LoadingRow() {
   return (
-    <div className="flex items-center justify-center py-12">
+    <div className="flex items-center justify-center py-20">
       <Spinner />
     </div>
   )
@@ -559,9 +527,11 @@ function LoadingRow() {
 
 function EmptyRow({ icon: Icon, text }: { icon: LucideIcon; text: string }) {
   return (
-    <div className="py-12 text-center">
-      <Icon className="mx-auto mb-3 h-8 w-8 text-muted-foreground/30" />
-      <p className="text-sm font-medium text-muted-foreground">{text}</p>
+    <div className="py-20 text-center bg-muted/5 rounded-3xl border-2 border-dashed border-border/30">
+      <div className="w-16 h-16 rounded-full bg-muted/20 flex items-center justify-center mx-auto mb-4 border border-border shadow-inner">
+        <Icon className="h-8 w-8 text-muted-foreground/10" />
+      </div>
+      <p className="text-[10px] font-black text-muted-foreground uppercase tracking-[0.2em]">{text}</p>
     </div>
   )
 }
