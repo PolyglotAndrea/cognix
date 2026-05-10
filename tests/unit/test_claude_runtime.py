@@ -35,8 +35,14 @@ class FakePermissionResultDeny:
     interrupt: bool = False
 
 
+@dataclass
+class FakePermissionResultAllow:
+    updated_input: dict[str, Any] | None = None
+
+
 class FakeSDK:
     ClaudeAgentOptions = FakeOptions
+    PermissionResultAllow = FakePermissionResultAllow
     PermissionResultDeny = FakePermissionResultDeny
 
     @staticmethod
@@ -148,6 +154,62 @@ async def test_claude_runtime_ask_mode_creates_approval_request(tmp_path, monkey
     assert approvals[0].access_level == "write"
     assert approvals[0].metadata["runtime"] == "claude-agent-sdk"
     assert pending == approvals
+
+
+@pytest.mark.asyncio
+async def test_claude_runtime_ask_mode_allows_read_tools(tmp_path, monkeypatch) -> None:
+    home = CognixHome(tmp_path / ".cognix")
+    workspace = WorkspaceManager(home).create("Claude")
+    monkeypatch.setenv("COGNIX_HOME", str(home.root))
+    pending = []
+
+    options = ClaudeAgentRuntime().build_options(
+        ClaudeAgentRunRequest(
+            workspace_id=workspace.id,
+            agent_id="agent-1",
+            prompt="inspect files",
+            permission_mode="ask",
+        ),
+        sdk=FakeSDK,
+        approval_sink=pending.append,
+    )
+
+    result = await options.can_use_tool("Read", {"file_path": "README.md"})
+
+    assert isinstance(result, FakePermissionResultAllow)
+    assert result.updated_input == {"file_path": "README.md"}
+    assert ApprovalStore(home).list_all(workspace_id=workspace.id) == []
+    assert pending == []
+
+
+@pytest.mark.asyncio
+async def test_claude_runtime_ask_mode_flags_unsandboxed_bash_as_dangerous(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    home = CognixHome(tmp_path / ".cognix")
+    workspace = WorkspaceManager(home).create("Claude")
+    monkeypatch.setenv("COGNIX_HOME", str(home.root))
+
+    options = ClaudeAgentRuntime().build_options(
+        ClaudeAgentRunRequest(
+            workspace_id=workspace.id,
+            agent_id="agent-1",
+            prompt="run deployment",
+            permission_mode="ask",
+        ),
+        sdk=FakeSDK,
+    )
+
+    result = await options.can_use_tool(
+        "Bash",
+        {"command": "deploy", "dangerouslyDisableSandbox": True},
+    )
+    approvals = ApprovalStore(home).list_all(workspace_id=workspace.id)
+
+    assert isinstance(result, FakePermissionResultDeny)
+    assert approvals[0].tool_name == "Bash"
+    assert approvals[0].access_level == "dangerous"
 
 
 @pytest.mark.asyncio

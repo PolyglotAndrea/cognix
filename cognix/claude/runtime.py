@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from cognix.core.agent import AgentEvent
-from cognix.core.permissions import normalize_permission_mode
+from cognix.core.permissions import decide_permission, normalize_permission_mode
 from cognix.local.approvals import ApprovalRequest, ApprovalStore
 from cognix.local.files import WorkspaceFileStore
 from cognix.local.workspace_config import MCPServerConfig, WorkspaceConfigStore
@@ -261,13 +261,22 @@ def _build_can_use_tool(
         **kwargs,
     ):
         arguments = _normalize_tool_input(tool_input, kwargs)
+        access_level = _claude_tool_access_level(tool_name, arguments)
+        decision = decide_permission(
+            request.permission_mode,
+            access_level,
+            f"Claude Agent SDK tool '{tool_name}'",
+        )
+        if decision.allowed:
+            return _permission_allow(sdk, arguments)
+
         approval = ApprovalStore().create(
             agent_id=request.agent_id or f"claude:{request.workspace_id}",
             workspace_id=request.workspace_id,
             tool_name=tool_name,
             arguments=arguments,
-            access_level=_claude_tool_access_level(tool_name),
-            reason=_claude_tool_reason(tool_name, arguments),
+            access_level=access_level,
+            reason=decision.reason or _claude_tool_reason(tool_name, arguments),
             kind=_claude_approval_kind(tool_name, request.permission_mode),
             metadata={
                 "runtime": "claude-agent-sdk",
@@ -299,11 +308,14 @@ def _normalize_tool_input(
     return {}
 
 
-def _claude_tool_access_level(tool_name: str) -> str:
+def _claude_tool_access_level(tool_name: str, arguments: dict[str, Any] | None = None) -> str:
+    arguments = arguments or {}
     normalized = tool_name.lower()
     if normalized in {"read", "glob", "grep", "ls"}:
         return "read"
-    if normalized in {"bash", "webfetch", "websearch"}:
+    if normalized in {"bash", "webfetch", "websearch"} or arguments.get(
+        "dangerouslyDisableSandbox"
+    ):
         return "dangerous"
     return "write"
 
@@ -338,6 +350,22 @@ def _permission_deny(sdk: Any, message: str) -> Any:
         except TypeError:
             continue
     return deny(message)
+
+
+def _permission_allow(sdk: Any, arguments: dict[str, Any]) -> Any:
+    allow = getattr(sdk, "PermissionResultAllow", None)
+    if allow is None:
+        return {"behavior": "allow", "updatedInput": arguments}
+    for kwargs in (
+        {"updated_input": arguments},
+        {"updatedInput": arguments},
+        {},
+    ):
+        try:
+            return allow(**kwargs)
+        except TypeError:
+            continue
+    return allow()
 
 
 def _approval_events(approvals: list[ApprovalRequest]) -> list[AgentEvent]:
