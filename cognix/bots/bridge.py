@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -54,8 +56,65 @@ class BotBridgeService:
         if not message.text.strip():
             return self.format_response(provider, "No message text found.")
 
+        if str(bot.metadata.get("dispatch_mode", "")).lower() in {"task", "async_task"}:
+            task_id = await self.enqueue_task(bot, message)
+            return self.format_response(provider, f"Task queued: {task_id}")
+
         response = await self.dispatch(bot, message)
         return self.format_response(provider, response)
+
+    async def enqueue_task(self, bot: BotConfig, message: BotMessage) -> str:
+        """Queue a remote bot message as a one-shot scheduled Agent task."""
+        from cognix.api.state import get_scheduler_engine, schedule_task_in_engine
+        from cognix.scheduler.store import TaskStore
+        from cognix.storage.models import TaskType
+
+        run_at = datetime.now(UTC) + timedelta(seconds=1)
+        task_id = f"bot-{uuid.uuid4().hex[:12]}"
+        payload = {
+            "task_type": "agent_call",
+            "agent_id": bot.agent_id,
+            "workspace_id": bot.workspace_id,
+            "message": message.text,
+            "remote_bot": {
+                "provider": bot.provider,
+                "bot_id": bot.id,
+                "sender": message.sender,
+                "chat_id": message.chat_id,
+                "session_key": self.session_key(bot, message),
+            },
+        }
+        schedule = run_at.isoformat()
+        await TaskStore().create(
+            task_id=task_id,
+            name=f"{bot.provider}:{bot.name}",
+            task_type=TaskType.AGENT_CALL,
+            schedule=schedule,
+            payload=payload,
+            max_retries=int(bot.metadata.get("task_max_retries", 1)),
+        )
+        engine = get_scheduler_engine()
+        if engine:
+            schedule_task_in_engine(engine, task_id, schedule, payload, name=f"{bot.provider}:{bot.name}")
+
+        try:
+            WorkspaceManager().append_event(
+                bot.workspace_id,
+                {
+                    "type": "bot.task_queued",
+                    "provider": bot.provider,
+                    "bot_id": bot.id,
+                    "agent_id": bot.agent_id,
+                    "task_id": task_id,
+                    "sender": message.sender,
+                    "chat_id": message.chat_id,
+                    "session_key": self.session_key(bot, message),
+                    "message": message.text,
+                },
+            )
+        except Exception:
+            logger.exception("Failed to append bot task queue event")
+        return task_id
 
     async def dispatch(self, bot: BotConfig, message: BotMessage) -> str:
         agent = await get_agent_runtime(bot.agent_id)

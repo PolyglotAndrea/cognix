@@ -230,13 +230,15 @@ Bot bridge configs can include metadata for asynchronous response writeback:
 
 ```json
 {
+  "dispatch_mode": "task",
+  "task_max_retries": 1,
   "response_url": "https://example.com/bot/callback",
   "response_headers": {"Authorization": "Bearer ..."},
   "response_timeout": 10
 }
 ```
 
-When configured, Cognix posts the Agent response, provider-specific formatted response, sender/chat identifiers, and session key to `response_url` after dispatch.
+When `dispatch_mode` is `task`, Cognix turns the bot message into a one-shot scheduled Agent task and immediately acknowledges the webhook. When `response_url` is configured, Cognix posts the Agent response, provider-specific formatted response, sender/chat identifiers, and session key to `response_url` after dispatch or scheduled task completion.
 
 ### Authentication
 

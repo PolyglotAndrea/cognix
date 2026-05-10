@@ -116,6 +116,7 @@ class TaskExecutor:
 
         await self._attach_workspace_runtime_tools(agent)
         response = await agent.run(message)
+        await self._post_remote_bot_response(payload, response.content)
         return response.content
 
     async def _execute_rpc_call(self, payload: dict[str, Any]) -> Any:
@@ -275,3 +276,23 @@ class TaskExecutor:
         from cognix.core.permissions import ensure_permission
 
         ensure_permission(permission_mode, access_level, operation)
+
+    @staticmethod
+    async def _post_remote_bot_response(payload: dict[str, Any], response_text: str) -> None:
+        remote_bot = payload.get("remote_bot")
+        if not isinstance(remote_bot, dict):
+            return
+
+        from cognix.bots.bridge import BotBridgeService, BotMessage
+        from cognix.local.bots import BotConfigStore
+
+        bot = BotConfigStore().get(str(remote_bot.get("bot_id", "")))
+        if not bot:
+            return
+        message = BotMessage(
+            text=str(payload.get("message", "")),
+            sender=str(remote_bot.get("sender", "")),
+            chat_id=str(remote_bot.get("chat_id", "")),
+            raw={"remote_bot": remote_bot},
+        )
+        await BotBridgeService().post_response_callback(bot, message, response_text)
