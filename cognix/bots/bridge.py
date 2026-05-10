@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -16,6 +17,10 @@ from cognix.local.bots import BotConfig, BotConfigStore
 from cognix.local.workspace import WorkspaceManager
 
 logger = logging.getLogger(__name__)
+
+# Retry defaults for direct dispatch and callback delivery
+_RETRY_MAX_ATTEMPTS = 3
+_RETRY_BASE_DELAY = 1.0  # seconds
 
 
 @dataclass(frozen=True)
@@ -117,6 +122,24 @@ class BotBridgeService:
         return task_id
 
     async def dispatch(self, bot: BotConfig, message: BotMessage) -> str:
+        max_attempts = int(bot.metadata.get("dispatch_max_retries", _RETRY_MAX_ATTEMPTS))
+        last_exc: Exception | None = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return await self._dispatch_once(bot, message)
+            except Exception as exc:
+                last_exc = exc
+                if attempt < max_attempts:
+                    delay = _RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                    logger.warning(
+                        "Bot dispatch attempt %s/%s failed for %s: %s; retrying in %.1fs",
+                        attempt, max_attempts, bot.id, exc, delay,
+                    )
+                    await asyncio.sleep(delay)
+        logger.error("Bot dispatch failed after %s attempts for %s", max_attempts, bot.id)
+        raise last_exc  # type: ignore[misc]
+
+    async def _dispatch_once(self, bot: BotConfig, message: BotMessage) -> str:
         agent = await get_agent_runtime(bot.agent_id)
         if not agent:
             raise ValueError(f"Agent '{bot.agent_id}' not found")
@@ -175,22 +198,32 @@ class BotBridgeService:
         if not isinstance(headers, dict):
             headers = {}
         timeout = float(bot.metadata.get("response_timeout", 10))
+        max_attempts = int(bot.metadata.get("callback_max_retries", _RETRY_MAX_ATTEMPTS))
         payload = self.callback_payload(bot, message, response_text)
+        clean_headers = {str(key): str(value) for key, value in headers.items()}
 
-        try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                await client.request(
-                    method,
-                    response_url,
-                    headers={str(key): str(value) for key, value in headers.items()},
-                    json=payload,
-                )
-        except Exception as exc:
-            logger.warning("Bot response callback failed for %s: %s", bot.id, exc)
-            self._append_callback_event(bot, message, ok=False, error=str(exc))
-            return
+        last_exc: Exception | None = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    resp = await client.request(
+                        method, response_url, headers=clean_headers, json=payload,
+                    )
+                    resp.raise_for_status()
+                self._append_callback_event(bot, message, ok=True)
+                return
+            except Exception as exc:
+                last_exc = exc
+                if attempt < max_attempts:
+                    delay = _RETRY_BASE_DELAY * (2 ** (attempt - 1))
+                    logger.warning(
+                        "Bot callback attempt %s/%s failed for %s: %s; retrying in %.1fs",
+                        attempt, max_attempts, bot.id, exc, delay,
+                    )
+                    await asyncio.sleep(delay)
 
-        self._append_callback_event(bot, message, ok=True)
+        logger.warning("Bot response callback failed after %s attempts for %s: %s", max_attempts, bot.id, last_exc)
+        self._append_callback_event(bot, message, ok=False, error=str(last_exc))
 
     @staticmethod
     def extract_message(provider: str, payload: dict[str, Any]) -> BotMessage:
