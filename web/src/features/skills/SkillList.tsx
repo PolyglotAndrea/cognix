@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Activity,
+  ChevronDown,
   PlugZap,
   Puzzle,
   RefreshCw,
@@ -13,41 +14,8 @@ import {
 } from 'lucide-react'
 import { api } from '@/shared/api/client'
 import { Badge, Button, Input, Spinner } from '@/shared/ui'
-
-interface WorkspaceInfo {
-  id: string
-  name: string
-}
-
-interface WorkspaceSkill {
-  name: string
-  version: string
-  description?: string
-  author?: string
-  tags?: string
-  tools: string[]
-  enabled: boolean
-}
-
-interface MCPServer {
-  id: string
-  name: string
-  command: string
-  args: string[]
-  env: Record<string, string>
-  enabled: boolean
-}
-
-interface MCPServerStatus {
-  server_id: string
-  name: string
-  enabled: boolean
-  status: string
-  tool_count: number
-  error?: string
-  stderr?: string
-  checked_at?: number
-}
+import { MCPToolPanel } from './MCPToolPanel'
+import type { MCPServer, MCPServerStatus, WorkspaceInfo, WorkspaceSkill } from './types'
 
 export default function SkillList() {
   const queryClient = useQueryClient()
@@ -258,6 +226,7 @@ function MCPServerRow({
   deleting: boolean
 }) {
   const queryClient = useQueryClient()
+  const [expanded, setExpanded] = useState(false)
   const statusKey = ['workspace-mcp-server-status', workspaceId, server.id]
   const { data: status, isFetching } = useQuery<MCPServerStatus>({
     queryKey: statusKey,
@@ -293,57 +262,74 @@ function MCPServerRow({
   const busy = isFetching || refreshMutation.isPending || restartMutation.isPending || stopMutation.isPending
 
   return (
-    <div className="px-5 py-4">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h4 className="text-sm font-bold text-foreground">{server.name}</h4>
-            <Badge variant={server.enabled ? 'success' : 'default'}>{server.enabled ? 'On' : 'Off'}</Badge>
-            <Badge variant={statusText === 'ready' ? 'success' : statusText === 'error' ? 'error' : 'default'}>
-              {statusText}
-            </Badge>
-            {typeof status?.tool_count === 'number' && (
-              <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-                {status.tool_count} tools
-              </span>
-            )}
+    <div>
+      <div className="px-5 py-4">
+        <div className="flex items-start justify-between gap-4">
+          <button
+            className="flex min-w-0 flex-1 items-start gap-2 text-left"
+            onClick={() => setExpanded(!expanded)}
+          >
+            <ChevronDown
+              className={`mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform ${
+                expanded ? '' : '-rotate-90'
+              }`}
+            />
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h4 className="text-sm font-bold text-foreground">{server.name}</h4>
+                <Badge variant={server.enabled ? 'success' : 'default'}>{server.enabled ? 'On' : 'Off'}</Badge>
+                <Badge variant={statusText === 'ready' ? 'success' : statusText === 'error' ? 'error' : 'default'}>
+                  {statusText}
+                </Badge>
+                {typeof status?.tool_count === 'number' && (
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                    {status.tool_count} tools
+                  </span>
+                )}
+              </div>
+              <p className="mt-2 truncate font-mono text-xs text-muted-foreground">
+                {server.command} {server.args.join(' ')}
+              </p>
+            </div>
+          </button>
+          <div className="flex shrink-0 items-center gap-1">
+            <IconButton
+              icon={Activity}
+              label={`Probe ${server.name}`}
+              disabled={busy}
+              onClick={() => refreshMutation.mutate()}
+            />
+            <IconButton
+              icon={RefreshCw}
+              label={`Restart ${server.name}`}
+              disabled={busy}
+              onClick={() => restartMutation.mutate()}
+            />
+            <IconButton
+              icon={Square}
+              label={`Stop ${server.name}`}
+              disabled={busy}
+              onClick={() => stopMutation.mutate()}
+            />
+            <IconButton
+              icon={Trash2}
+              label={`Delete ${server.name}`}
+              disabled={deleting}
+              danger
+              onClick={onDelete}
+            />
           </div>
-          <p className="mt-2 truncate font-mono text-xs text-muted-foreground">
-            {server.command} {server.args.join(' ')}
-          </p>
         </div>
-        <div className="flex shrink-0 items-center gap-1">
-          <IconButton
-            icon={Activity}
-            label={`Probe ${server.name}`}
-            disabled={busy}
-            onClick={() => refreshMutation.mutate()}
-          />
-          <IconButton
-            icon={RefreshCw}
-            label={`Restart ${server.name}`}
-            disabled={busy}
-            onClick={() => restartMutation.mutate()}
-          />
-          <IconButton
-            icon={Square}
-            label={`Stop ${server.name}`}
-            disabled={busy}
-            onClick={() => stopMutation.mutate()}
-          />
-          <IconButton
-            icon={Trash2}
-            label={`Delete ${server.name}`}
-            disabled={deleting}
-            danger
-            onClick={onDelete}
-          />
-        </div>
+        {(status?.error || status?.stderr) && (
+          <pre className="mt-3 max-h-24 overflow-auto rounded-xl border border-rose-500/20 bg-rose-500/5 p-3 font-mono text-[11px] leading-5 text-rose-600 dark:text-rose-300">
+            {[status.error, status.stderr].filter(Boolean).join('\n')}
+          </pre>
+        )}
       </div>
-      {(status?.error || status?.stderr) && (
-        <pre className="mt-3 max-h-24 overflow-auto rounded-xl border border-rose-500/20 bg-rose-500/5 p-3 font-mono text-[11px] leading-5 text-rose-600 dark:text-rose-300">
-          {[status.error, status.stderr].filter(Boolean).join('\n')}
-        </pre>
+      {expanded && (
+        <div className="border-t border-border">
+          <MCPToolPanel workspaceId={workspaceId} serverId={server.id} />
+        </div>
       )}
     </div>
   )

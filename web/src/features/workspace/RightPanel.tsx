@@ -576,7 +576,6 @@ function ApprovalCard({
   const isQuestion = approval.kind === 'question'
   const isPlan = approval.kind === 'plan_confirmation'
   const isClaude = approval.metadata?.runtime === 'claude-agent-sdk'
-  const resumeToken = approvalResumeToken(approval)
   const args = JSON.stringify(approval.arguments || {}, null, 2)
   const kindLabel = isQuestion ? 'Question' : isPlan ? 'Plan' : 'Tool'
   const statusLabel = approvalStatusLabel(approval, busy)
@@ -685,16 +684,6 @@ function ApprovalCard({
       </div>
     </div>
   )
-}
-
-function approvalResumeToken(approval: ApprovalRequest) {
-  const metadata = approval.metadata || {}
-  for (const key of ['resume', 'resume_token', 'session_id', 'conversation_id']) {
-    const value = metadata[key]
-    if (typeof value === 'string' && value.trim()) return value
-    if (typeof value === 'number') return String(value)
-  }
-  return ''
 }
 
 function approvalStatusLabel(approval: ApprovalRequest, busy: boolean) {

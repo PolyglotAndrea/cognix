@@ -6,7 +6,6 @@ import {
   Check,
   Copy,
   Key,
-  Plus,
   RadioTower,
   Search,
   Trash2,
@@ -15,7 +14,7 @@ import {
   Zap,
 } from 'lucide-react'
 import { api, authApi } from '@/shared/api/client'
-import { Badge, Button, Input, Spinner } from '@/shared/ui'
+import { Badge, Button, Input } from '@/shared/ui'
 
 interface WorkspaceInfo {
   id: string
@@ -87,10 +86,8 @@ export default function SettingsPage() {
   const [memoryContent, setMemoryContent] = useState('')
   const [memorySummary, setMemorySummary] = useState('')
   const [memorySearch, setMemorySearch] = useState('')
-  const [contextMessage, setContextMessage] = useState('')
-  const [contextPreview, setContextPreview] = useState('')
 
-  const { data: apiKeys = [], isLoading: keysLoading } = useQuery({
+  const { data: apiKeys = [] } = useQuery({
     queryKey: ['api-keys'],
     queryFn: () => authApi.get('/api-keys').then((r) => r.data),
   })
@@ -106,7 +103,7 @@ export default function SettingsPage() {
     queryFn: () => api.get('/agents').then((r) => r.data),
   })
 
-  const { data: bots = [], isLoading: botsLoading } = useQuery<RemoteBot[]>({
+  const { data: bots = [] } = useQuery<RemoteBot[]>({
     queryKey: ['remote-bots'],
     queryFn: () => api.get('/bots').then((r) => r.data),
   })
@@ -218,15 +215,6 @@ export default function SettingsPage() {
     },
   })
 
-  const contextPreviewMutation = useMutation({
-    mutationFn: () =>
-      api.post('/memory/context-preview', {
-        message: contextMessage || memorySearch || 'current task',
-        workspace_id: workspace?.id,
-        include_skills: true,
-      }),
-    onSuccess: (response) => setContextPreview(response.data.rendered),
-  })
 
   const copyText = (id: string, value: string) => {
     navigator.clipboard.writeText(value)
@@ -551,14 +539,6 @@ function MemoryEditor({
         onChange={(event) => onChange(event.target.value)}
         className="w-full h-44 resize-none rounded-2xl border border-border bg-muted/20 p-4 font-mono text-[11px] leading-relaxed text-foreground focus:ring-2 focus:ring-primary/10 focus:border-primary outline-none transition-all scrollbar-hide shadow-inner"
       />
-    </div>
-  )
-}
-
-function LoadingRow() {
-  return (
-    <div className="flex items-center justify-center py-20">
-      <Spinner />
     </div>
   )
 }
