@@ -53,6 +53,7 @@ class DistributedTaskDispatcher:
             "failure_total": 0,
             "retry_scheduled_total": 0,
             "exhausted_failure_total": 0,
+            "reaped_total": 0,
             "last_dispatch_at": None,
             "last_error": "",
         }
@@ -108,6 +109,7 @@ class DistributedTaskDispatcher:
                 try:
                     reaped = await self.store.reap_orphaned_leases(now=datetime.now(UTC))
                     if reaped:
+                        self.metrics["reaped_total"] += reaped
                         logger.info("Reaped %d orphaned task leases", reaped)
                 except Exception:
                     logger.exception("Orphan lease reaper failed")
