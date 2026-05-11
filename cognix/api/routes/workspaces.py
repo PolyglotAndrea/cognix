@@ -256,6 +256,7 @@ async def list_workspace_mcp_tools(
     return [
         {
             "name": tool.name,
+            "original_name": tool.metadata.get("original_name", tool.name),
             "description": tool.description,
             "parameters": tool.parameters,
             "access_level": tool.access_level,

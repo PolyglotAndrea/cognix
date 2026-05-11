@@ -31,6 +31,7 @@ class Tool:
     handler: ToolHandler
     parameters: dict[str, Any] = field(default_factory=dict)
     access_level: str = "read"
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     async def execute(self, **kwargs: Any) -> Any:
         """Execute the tool with given parameters."""
