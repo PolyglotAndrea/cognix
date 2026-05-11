@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -130,11 +131,18 @@ async def execute_workflow(
     registry: AgentRegistry,
     initial_input: str = "",
     context: Context | None = None,
+    *,
+    workspace_id: str | None = None,
 ) -> OrchestrationResult:
     """Execute a workflow."""
     ctx = context or Context()
     variables = {**workflow.variables, "input": initial_input}
     steps_results: list[dict[str, Any]] = []
+    workflow_start = datetime.now(UTC)
+
+    # Resolve workspace_id from context metadata if not provided
+    if not workspace_id:
+        workspace_id = ctx.metadata.get("workspace_id")
 
     for step in workflow.steps:
         logger.info("Executing workflow step: %s (agent=%s)", step.id, step.agent)
@@ -146,6 +154,12 @@ async def execute_workflow(
             logger.error(error_msg)
             if step.on_error:
                 variables[step.on_error] = error_msg
+                steps_results.append({
+                    "step": step.id,
+                    "agent": step.agent,
+                    "status": "skipped",
+                    "reason": error_msg,
+                })
                 continue
             raise ValueError(error_msg)
 
@@ -157,15 +171,18 @@ async def execute_workflow(
             condition_str = _render_template(step.condition, variables)
             if condition_str.lower() in ("false", "0", "no", ""):
                 logger.info("Skipping step '%s': condition not met", step.id)
-                steps_results.append({
+                step_result = {
                     "step": step.id,
                     "agent": step.agent,
                     "status": "skipped",
                     "reason": "condition not met",
-                })
+                }
+                steps_results.append(step_result)
+                _emit_step_event(workspace_id, workflow.name, step_result)
                 continue
 
         # Execute based on pattern
+        step_start = datetime.now(UTC)
         try:
             if step.pattern == "parallel" or step.parallel:
                 pattern = Parallel(agents=[agent])
@@ -175,31 +192,47 @@ async def execute_workflow(
                 pattern = Sequential(agents=[agent])
 
             result = await pattern.run(step_input, context=ctx)
+            step_end = datetime.now(UTC)
 
             # Store output in variables
             output_key = step.output or step.id
             variables[output_key] = result.content
 
-            steps_results.append({
+            step_result = {
                 "step": step.id,
                 "agent": step.agent,
                 "status": "success",
                 "output": result.content,
-            })
+                "started_at": step_start.isoformat(),
+                "finished_at": step_end.isoformat(),
+                "duration_ms": int((step_end - step_start).total_seconds() * 1000),
+            }
+            steps_results.append(step_result)
+            _emit_step_event(workspace_id, workflow.name, step_result)
 
         except Exception as e:
+            step_end = datetime.now(UTC)
             error_msg = f"Step '{step.id}' failed: {e}"
             logger.error(error_msg)
+            step_result = {
+                "step": step.id,
+                "agent": step.agent,
+                "status": "error",
+                "error": error_msg,
+                "started_at": step_start.isoformat(),
+                "finished_at": step_end.isoformat(),
+                "duration_ms": int((step_end - step_start).total_seconds() * 1000),
+            }
             if step.on_error:
                 variables[step.on_error] = error_msg
-                steps_results.append({
-                    "step": step.id,
-                    "agent": step.agent,
-                    "status": "error",
-                    "error": error_msg,
-                })
+                steps_results.append(step_result)
+                _emit_step_event(workspace_id, workflow.name, step_result)
                 continue
+            steps_results.append(step_result)
+            _emit_step_event(workspace_id, workflow.name, step_result)
             raise
+
+    workflow_end = datetime.now(UTC)
 
     # Final output is the last step's output or the last variable set
     final_output = ""
@@ -218,5 +251,35 @@ async def execute_workflow(
             "workflow": workflow.name,
             "step_count": len(workflow.steps),
             "variables": {k: v for k, v in variables.items() if k != "input"},
+            "started_at": workflow_start.isoformat(),
+            "finished_at": workflow_end.isoformat(),
+            "duration_ms": int((workflow_end - workflow_start).total_seconds() * 1000),
         },
     )
+
+
+def _emit_step_event(
+    workspace_id: str | None,
+    workflow_name: str,
+    step_result: dict[str, Any],
+) -> None:
+    """Emit a workflow step event to the workspace events file."""
+    if not workspace_id:
+        return
+    try:
+        from cognix.local.home import CognixHome
+        from cognix.local.workspace import WorkspaceManager
+
+        home = CognixHome.default().ensure()
+        wm = WorkspaceManager(home)
+        wm.append_event(workspace_id, {
+            "type": "workflow.step.completed",
+            "workflow": workflow_name,
+            "step": step_result.get("step"),
+            "agent": step_result.get("agent"),
+            "status": step_result.get("status"),
+            "duration_ms": step_result.get("duration_ms"),
+            "error": step_result.get("error"),
+        })
+    except Exception:
+        logger.debug("Failed to emit workflow step event", exc_info=True)

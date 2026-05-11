@@ -205,6 +205,7 @@ async def get_task_runs(
             "error": r.error,
             "duration_ms": r.duration_ms,
             "started_at": r.started_at.isoformat() if r.started_at else None,
+            "finished_at": r.finished_at.isoformat() if r.finished_at else None,
         }
         for r in runs
     ]

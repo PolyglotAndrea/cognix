@@ -21,6 +21,7 @@ import { api } from '@/shared/api/client'
 import { useAuthStore } from '@/features/auth/store'
 import { useWorkspaceStore } from './store'
 import { Panel, PanelHeader, PanelBody, Badge } from '@/shared/ui'
+import { TaskDetailModal } from './TaskDetailModal'
 
 const TABS = [
   { key: 'approvals' as const, label: 'Approval', icon: ShieldQuestion, color: 'text-amber-500' },
@@ -108,6 +109,7 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: any }) {
   const logsEndRef = useRef<HTMLDivElement>(null)
   const [currentDir, setCurrentDir] = useState('')
   const [previewPath, setPreviewPath] = useState<string | null>(null)
+  const [selectedTask, setSelectedTask] = useState<TaskSummary | null>(null)
   
   const { data: workspaces = [] } = useQuery<WorkspaceInfo[]>({
     queryKey: ['workspaces'],
@@ -275,7 +277,13 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: any }) {
             ) : tasks.length === 0 ? (
               <EmptyState icon={Clock} title="No Active Tasks" description="There are no scheduled tasks or background processes running currently." />
             ) : (
-              tasks.map((task) => <TaskStatusCard key={task.id} task={task} />)
+              tasks.map((task) => (
+                <TaskStatusCard
+                  key={task.id}
+                  task={task}
+                  onClick={() => setSelectedTask(task)}
+                />
+              ))
             )}
           </div>
         )}
@@ -469,6 +477,14 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: any }) {
         )}
         </div>
       </PanelBody>
+
+      {selectedTask && (
+        <TaskDetailModal
+          isOpen={!!selectedTask}
+          onClose={() => setSelectedTask(null)}
+          task={selectedTask}
+        />
+      )}
     </Panel>
   )
 }
@@ -489,12 +505,15 @@ function EmptyState({ icon: Icon, title, description }: { icon: any, title: stri
   )
 }
 
-function TaskStatusCard({ task }: { task: TaskSummary }) {
+function TaskStatusCard({ task, onClick }: { task: TaskSummary; onClick?: () => void }) {
   const latestRun = task.runs[0]
   const hasError = latestRun?.status === 'failure' || !!latestRun?.error || task.state === 'failed'
 
   return (
-    <div className="group bg-card/40 hover:bg-card border border-border hover:border-primary/20 rounded-2xl p-4 transition-all duration-300 shadow-sm hover:shadow-md">
+    <div
+      className="group bg-card/40 hover:bg-card border border-border hover:border-primary/20 rounded-2xl p-4 transition-all duration-300 shadow-sm hover:shadow-md cursor-pointer"
+      onClick={onClick}
+    >
       <div className="flex items-start justify-between gap-3 mb-4">
         <div className="min-w-0">
           <div className="text-sm font-bold text-foreground truncate group-hover:text-primary transition-colors">{task.name}</div>
