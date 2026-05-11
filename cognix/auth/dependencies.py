@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any
+from datetime import UTC, datetime
 
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -37,6 +36,8 @@ PERMISSIONS = {
     "tasks:delete": "Delete tasks",
     "skills:read": "View skills",
     "skills:write": "Install/uninstall skills",
+    "connectors:read": "View connectors",
+    "connectors:write": "Connect/disconnect platforms",
     "admin": "Full admin access",
 }
 
@@ -46,11 +47,13 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "agents:read", "agents:write",
         "tasks:read", "tasks:write",
         "skills:read", "skills:write",
+        "connectors:read", "connectors:write",
     ],
     "viewer": [
         "agents:read",
         "tasks:read",
         "skills:read",
+        "connectors:read",
     ],
 }
 
@@ -111,7 +114,7 @@ async def get_current_user(
 
                 if verify_api_key(api_key, key_model.key_hash):
                     # Update last_used_at
-                    key_model.last_used_at = datetime.now(timezone.utc)
+                    key_model.last_used_at = datetime.now(UTC)
 
                     # Load user
                     user_result = await session.execute(
@@ -161,3 +164,5 @@ require_tasks_read = require_permission("tasks:read")
 require_tasks_write = require_permission("tasks:write")
 require_skills_read = require_permission("skills:read")
 require_skills_write = require_permission("skills:write")
+require_connectors_read = require_permission("connectors:read")
+require_connectors_write = require_permission("connectors:write")

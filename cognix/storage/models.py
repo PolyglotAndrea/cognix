@@ -177,6 +177,24 @@ class SubscriptionModel(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
 
 
+class ConnectorCredentialModel(Base):
+    __tablename__ = "connector_credentials"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(36), index=True)
+    workspace_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    platform: Mapped[str] = mapped_column(String(32))  # "x", "instagram"
+    platform_user_id: Mapped[str] = mapped_column(String(128))
+    platform_username: Mapped[str] = mapped_column(String(128), default="")
+    access_token_enc: Mapped[str] = mapped_column(Text)
+    refresh_token_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
+    token_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    scopes: Mapped[str] = mapped_column(Text, default="")
+    extra_meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
 class UsageRecordModel(Base):
     __tablename__ = "usage_records"
 

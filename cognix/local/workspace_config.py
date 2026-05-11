@@ -14,6 +14,17 @@ from cognix.local.workspace import WorkspaceManager
 
 
 @dataclass(frozen=True)
+class ConnectorConfig:
+    id: str
+    platform: str
+    credential_id: str
+    enabled: bool = True
+    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    updated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class MCPServerConfig:
     id: str
     name: str
@@ -40,6 +51,8 @@ class WorkspaceConfigStore:
             self._write_json(self.settings_path, self.default_settings())
         if not self.mcp_servers_path.exists():
             self._write_json(self.mcp_servers_path, [])
+        if not self.connectors_path.exists():
+            self._write_json(self.connectors_path, [])
 
     @property
     def workspace_path(self) -> Path:
@@ -56,6 +69,10 @@ class WorkspaceConfigStore:
     @property
     def mcp_servers_path(self) -> Path:
         return self.mcp_dir / "servers.json"
+
+    @property
+    def connectors_path(self) -> Path:
+        return self.workspace_path / "connectors.json"
 
     @staticmethod
     def default_settings() -> dict[str, Any]:
@@ -173,6 +190,76 @@ class WorkspaceConfigStore:
             self._write_json(
                 self.mcp_servers_path, [asdict(item) for item in remaining]
             )
+            return updated
+        return None
+
+    # ── Connector config ───────────────────────────────────────────
+
+    def list_connectors(self) -> list[ConnectorConfig]:
+        rows = json.loads(self.connectors_path.read_text(encoding="utf-8"))
+        return [ConnectorConfig(**row) for row in rows]
+
+    def upsert_connector(
+        self,
+        *,
+        platform: str,
+        credential_id: str,
+        enabled: bool = True,
+        connector_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> ConnectorConfig:
+        connectors = self.list_connectors()
+        now = datetime.now(UTC).isoformat()
+        existing = next((c for c in connectors if c.id == connector_id), None)
+        connector = ConnectorConfig(
+            id=connector_id or uuid.uuid4().hex[:12],
+            platform=platform,
+            credential_id=credential_id,
+            enabled=enabled,
+            created_at=existing.created_at if existing else now,
+            updated_at=now,
+            metadata=metadata or (existing.metadata if existing else {}),
+        )
+        connectors = [c for c in connectors if c.id != connector.id]
+        connectors.append(connector)
+        self._write_json(self.connectors_path, [asdict(c) for c in connectors])
+        return connector
+
+    def delete_connector(self, connector_id: str) -> bool:
+        connectors = self.list_connectors()
+        remaining = [c for c in connectors if c.id != connector_id]
+        if len(remaining) == len(connectors):
+            return False
+        self._write_json(self.connectors_path, [asdict(c) for c in remaining])
+        return True
+
+    def set_connector_tool_enabled(
+        self, connector_id: str, tool_name: str, enabled: bool
+    ) -> ConnectorConfig | None:
+        connectors = self.list_connectors()
+        for conn in connectors:
+            if conn.id != connector_id:
+                continue
+            disabled = list(conn.metadata.get("disabled_tools", []))
+            if not enabled and tool_name not in disabled:
+                disabled.append(tool_name)
+            elif enabled and tool_name in disabled:
+                disabled.remove(tool_name)
+            else:
+                return conn
+            new_metadata = {**conn.metadata, "disabled_tools": disabled}
+            updated = ConnectorConfig(
+                id=conn.id,
+                platform=conn.platform,
+                credential_id=conn.credential_id,
+                enabled=conn.enabled,
+                created_at=conn.created_at,
+                updated_at=datetime.now(UTC).isoformat(),
+                metadata=new_metadata,
+            )
+            remaining = [c for c in connectors if c.id != connector_id]
+            remaining.append(updated)
+            self._write_json(self.connectors_path, [asdict(c) for c in remaining])
             return updated
         return None
 

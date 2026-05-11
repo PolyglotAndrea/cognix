@@ -81,6 +81,17 @@ class BillingSettings(BaseSettings):
     stripe_price_pro: str | None = None
 
 
+class ConnectorSettings(BaseSettings):
+    encryption_key: str | None = Field(
+        default=None,
+        description="Fernet key for connector tokens. Falls back to auth.secret_key.",
+    )
+    x_client_id: str | None = None
+    x_client_secret: str | None = None
+    instagram_client_id: str | None = None
+    instagram_client_secret: str | None = None
+
+
 class MemorySettings(BaseSettings):
     compress_model: str = Field(
         default="gpt-4o-mini",
@@ -125,6 +136,7 @@ class Settings(BaseSettings):
     server: ServerSettings = Field(default_factory=ServerSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
     billing: BillingSettings = Field(default_factory=BillingSettings)
+    connectors: ConnectorSettings = Field(default_factory=ConnectorSettings)
     memory: MemorySettings = Field(default_factory=MemorySettings)
 
     # LLM defaults
