@@ -74,6 +74,7 @@ class Agent:
     _event_bus: EventBus | None = field(default=None, repr=False)
     _tool_map: dict[str, Tool] = field(default_factory=dict, repr=False)
     _pending_approval_event: dict[str, Any] | None = field(default=None, repr=False)
+    _waiting_snapshot: dict[str, Any] | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         self.permission_mode = normalize_permission_mode(self.permission_mode)
@@ -126,6 +127,16 @@ class Agent:
                         name=tc.get("name", ""),
                     )
                     if approval_event:
+                        remaining = [
+                            t for t in response.tool_calls
+                            if t.get("id", "") != tc.get("id", "")
+                        ]
+                        self._waiting_snapshot = {
+                            "context": ctx,
+                            "remaining_tool_calls": remaining,
+                            "response": response,
+                            "message": message,
+                        }
                         return AgentResponse(
                             content=tool_result,
                             tool_calls=response.tool_calls,
@@ -243,6 +254,17 @@ class Agent:
                         },
                     )
                     if approval_event:
+                        # Save snapshot for resume_and_continue
+                        remaining = [
+                            t for t in response.tool_calls
+                            if t.get("id", "") != tc.get("id", "")
+                        ]
+                        self._waiting_snapshot = {
+                            "context": ctx,
+                            "remaining_tool_calls": remaining,
+                            "response": response,
+                            "message": message,
+                        }
                         yield AgentEvent("approval_request", approval_event)
                         yield AgentEvent(
                             "done",
@@ -481,6 +503,207 @@ class Agent:
         )
         self.state = AgentState.IDLE
         return result
+
+    async def resume_and_continue(
+        self,
+        approval_id: str,
+    ) -> AsyncIterator[AgentEvent]:
+        """Resume after approval, execute the tool, and continue the LLM loop.
+
+        Unlike ``resume_approval`` which only returns the tool result, this
+        method restores the full conversation context and re-enters the
+        iteration loop so the agent can produce a final response — including
+        handling additional tool calls or further approval gates.
+        """
+        from cognix.local.approvals import ApprovalStore
+
+        store = ApprovalStore()
+        approval = store.get(approval_id)
+        if not approval:
+            raise ValueError(f"Approval '{approval_id}' not found")
+        if approval.agent_id != self.id:
+            raise ValueError(f"Approval '{approval_id}' does not belong to agent '{self.id}'")
+        if approval.status != "approved":
+            raise ValueError(f"Approval '{approval_id}' is not approved")
+
+        tool = self._tool_map.get(approval.tool_name)
+        if not tool:
+            raise ValueError(f"Tool '{approval.tool_name}' not found")
+
+        snapshot = self._waiting_snapshot
+        if not snapshot:
+            # Fallback: no snapshot, just execute tool and return
+            result = await self.resume_approval(approval_id)
+            yield AgentEvent("tool_result", {"name": approval.tool_name, "result": result})
+            yield AgentEvent("done", {"finish_reason": "stop"})
+            return
+
+        self._waiting_snapshot = None
+        ctx: Context = snapshot["context"]
+        remaining_tool_calls: list[dict[str, Any]] = snapshot["remaining_tool_calls"]
+        original_message: str = snapshot["message"]
+
+        # Replace the placeholder "Approval required" tool result with the real one
+        result = await self._execute_tool_unchecked(
+            {"name": approval.tool_name, "arguments": approval.arguments},
+            tool,
+        )
+        store.complete(approval_id, result)
+        await self._emit(
+            Events.APPROVAL_COMPLETED,
+            {"approval_id": approval_id, "agent_id": self.id, "result": result},
+        )
+
+        # Fix the context: replace placeholder tool result with real result
+        self._replace_last_tool_result(ctx, approval.tool_name, result)
+
+        yield AgentEvent(
+            "tool_result",
+            {
+                "name": approval.tool_name,
+                "result": result,
+            },
+        )
+
+        # Execute remaining tool calls from the same LLM response
+        for tc in remaining_tool_calls:
+            tc_name = tc.get("name", "")
+            yield AgentEvent(
+                "tool_call",
+                {
+                    "id": tc.get("id", ""),
+                    "name": tc_name,
+                    "arguments": tc.get("arguments", {}),
+                    "args": tc.get("arguments", {}),
+                },
+            )
+            tc_result = await self._execute_tool(tc)
+            tc_approval = self._consume_pending_approval_event()
+            ctx.add_message(
+                "tool",
+                tc_result,
+                tool_call_id=tc.get("id", ""),
+                name=tc_name,
+            )
+            yield AgentEvent(
+                "tool_result",
+                {
+                    "id": tc.get("id", ""),
+                    "name": tc_name,
+                    "args": tc.get("arguments", {}),
+                    "result": tc_result,
+                },
+            )
+            if tc_approval:
+                # Another approval needed — save snapshot and pause again
+                later_remaining = [
+                    t for t in remaining_tool_calls
+                    if t.get("id", "") != tc.get("id", "")
+                ]
+                self._waiting_snapshot = {
+                    "context": ctx,
+                    "remaining_tool_calls": later_remaining,
+                    "response": snapshot["response"],
+                    "message": original_message,
+                }
+                yield AgentEvent("approval_request", tc_approval)
+                yield AgentEvent(
+                    "done",
+                    {
+                        "finish_reason": "waiting_for_approval",
+                        "approval_id": tc_approval["approval_id"],
+                    },
+                )
+                return
+
+        # Continue the LLM iteration loop
+        self.state = AgentState.RUNNING
+
+        try:
+            for _ in range(self.max_iterations):
+                response = await self._call_llm(ctx)
+                if not response.tool_calls:
+                    ctx.add_message("assistant", response.content)
+                    if response.content:
+                        yield AgentEvent("delta", {"delta": response.content})
+                    await self._remember_exchange(original_message, response.content)
+                    await self._emit(
+                        Events.AGENT_COMPLETED,
+                        {"agent_id": self.id, "response": response.content},
+                    )
+                    self.state = AgentState.IDLE
+                    yield AgentEvent(
+                        "done",
+                        {"finish_reason": "stop", "usage": response.usage},
+                    )
+                    return
+
+                ctx.add_message("assistant", response.content, tool_calls=response.tool_calls)
+                for tc in response.tool_calls:
+                    yield AgentEvent(
+                        "tool_call",
+                        {
+                            "id": tc.get("id", ""),
+                            "name": tc.get("name", ""),
+                            "arguments": tc.get("arguments", {}),
+                            "args": tc.get("arguments", {}),
+                        },
+                    )
+                    tool_result = await self._execute_tool(tc)
+                    approval_event = self._consume_pending_approval_event()
+                    ctx.add_message(
+                        "tool",
+                        tool_result,
+                        tool_call_id=tc.get("id", ""),
+                        name=tc.get("name", ""),
+                    )
+                    yield AgentEvent(
+                        "tool_result",
+                        {
+                            "id": tc.get("id", ""),
+                            "name": tc.get("name", ""),
+                            "args": tc.get("arguments", {}),
+                            "result": tool_result,
+                        },
+                    )
+                    if approval_event:
+                        later_remaining = [
+                            t for t in response.tool_calls
+                            if t.get("id", "") != tc.get("id", "")
+                        ]
+                        self._waiting_snapshot = {
+                            "context": ctx,
+                            "remaining_tool_calls": later_remaining,
+                            "response": response,
+                            "message": original_message,
+                        }
+                        yield AgentEvent("approval_request", approval_event)
+                        yield AgentEvent(
+                            "done",
+                            {
+                                "finish_reason": "waiting_for_approval",
+                                "approval_id": approval_event["approval_id"],
+                            },
+                        )
+                        return
+
+            self.state = AgentState.ERROR
+            raise RuntimeError(f"Agent {self.name} exceeded max iterations ({self.max_iterations})")
+        except Exception as e:
+            self.state = AgentState.ERROR
+            await self._emit(Events.AGENT_ERROR, {"agent_id": self.id, "error": str(e)})
+            yield AgentEvent("error", {"message": str(e), "error": str(e)})
+        finally:
+            if self.state not in (AgentState.ERROR, AgentState.WAITING):
+                self.state = AgentState.IDLE
+
+    @staticmethod
+    def _replace_last_tool_result(ctx: Context, tool_name: str, new_result: str) -> None:
+        """Replace the most recent tool result message for *tool_name*."""
+        for msg in reversed(ctx.messages):
+            if msg.role == "tool" and msg.name == tool_name:
+                msg.content = new_result
+                return
 
     async def _execute_tool_unchecked(self, tool_call: dict[str, Any], tool: Tool) -> str:
         name = tool_call.get("name", "")

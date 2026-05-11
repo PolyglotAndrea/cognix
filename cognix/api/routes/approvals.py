@@ -8,6 +8,7 @@ from starlette.responses import StreamingResponse
 
 from cognix.api.state import get_agent_runtime
 from cognix.auth.dependencies import CurrentUser, get_current_user, require_agents_write
+from cognix.core.agent import AgentEvent
 from cognix.core.streaming import encode_sse_event
 from cognix.local.approvals import ApprovalStatus, ApprovalStore
 
@@ -99,6 +100,71 @@ async def resume_approval(
         raise HTTPException(400, str(exc)) from exc
 
     return {"approval_id": approval_id, "result": result}
+
+
+@router.post("/{approval_id}/resume-and-continue")
+async def resume_and_continue(
+    approval_id: str,
+    body: ApprovalResponseBody | None = None,
+    user: CurrentUser = Depends(require_agents_write),
+) -> dict:
+    """Resume after approval and continue the full LLM loop to completion."""
+    if body and body.response:
+        ApprovalStore().respond(approval_id, body.response)
+    approval = ApprovalStore().get(approval_id)
+    if not approval:
+        raise HTTPException(404, "Approval not found")
+
+    agent = await get_agent_runtime(approval.agent_id)
+    if not agent:
+        raise HTTPException(404, "Agent not found")
+
+    events: list[dict] = []
+    final_content = ""
+    try:
+        async for event in agent.resume_and_continue(approval_id):
+            events.append({"type": event.type, "data": event.data})
+            if event.type == "delta":
+                final_content += event.data.get("delta", "")
+            if event.type == "error":
+                raise ValueError(event.data.get("message", "Unknown error"))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    return {
+        "approval_id": approval_id,
+        "content": final_content,
+        "events": events,
+    }
+
+
+@router.post("/{approval_id}/resume-and-continue/stream")
+async def resume_and_continue_stream(
+    approval_id: str,
+    body: ApprovalResponseBody | None = None,
+    user: CurrentUser = Depends(require_agents_write),
+) -> StreamingResponse:
+    """Stream events after approval — agent continues its full LLM loop."""
+    if body and body.response:
+        ApprovalStore().respond(approval_id, body.response)
+    approval = ApprovalStore().get(approval_id)
+    if not approval:
+        raise HTTPException(404, "Approval not found")
+
+    agent = await get_agent_runtime(approval.agent_id)
+    if not agent:
+        raise HTTPException(404, "Agent not found")
+
+    async def event_generator():
+        try:
+            async for event in agent.resume_and_continue(approval_id):
+                yield encode_sse_event(event)
+        except ValueError as exc:
+            yield encode_sse_event(
+                AgentEvent("error", {"message": str(exc), "error": str(exc)})
+            )
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @router.post("/{approval_id}/resume/stream")
