@@ -81,6 +81,29 @@ class BillingSettings(BaseSettings):
     stripe_price_pro: str | None = None
 
 
+class MemorySettings(BaseSettings):
+    compress_model: str = Field(
+        default="gpt-4o-mini",
+        description="Model used for memory compression summarization",
+    )
+    compress_older_than_days: int = Field(
+        default=7,
+        description="Compress cold memories older than this many days",
+    )
+    compress_batch_size: int = Field(
+        default=5,
+        description="Number of memories to summarize per LLM call",
+    )
+    auto_compress_enabled: bool = Field(
+        default=False,
+        description="Enable automatic periodic memory compression",
+    )
+    auto_compress_interval_hours: int = Field(
+        default=24,
+        description="Hours between automatic compression runs",
+    )
+
+
 class Settings(BaseSettings):
     """Root settings for the Cognix platform."""
 
@@ -102,6 +125,7 @@ class Settings(BaseSettings):
     server: ServerSettings = Field(default_factory=ServerSettings)
     auth: AuthSettings = Field(default_factory=AuthSettings)
     billing: BillingSettings = Field(default_factory=BillingSettings)
+    memory: MemorySettings = Field(default_factory=MemorySettings)
 
     # LLM defaults
     default_model: str = "gpt-4o"

@@ -35,15 +35,51 @@ from cognix.api.state import (
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Application lifespan: database, runtime registry, and scheduler."""
+    import asyncio
+    import logging
+
     from cognix.storage.database import close_db, init_db
+
+    logger = logging.getLogger(__name__)
 
     await init_db()
     await load_agents_from_db()
     await start_runtime_node()
     await start_scheduler()
+
+    # Auto-compress memory background task
+    compress_task: asyncio.Task | None = None
+
+    async def _auto_compress_loop() -> None:
+        from cognix.config import get_settings
+        from cognix.local.home import CognixHome
+        from cognix.memory.pipeline import ColdMemoryStore
+
+        settings = get_settings().memory
+        if not settings.auto_compress_enabled:
+            return
+        interval = settings.auto_compress_interval_hours * 3600
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                store = ColdMemoryStore(CognixHome.default().ensure().state_db)
+                compressed = await store.compress()
+                if compressed:
+                    logger.info("Auto-compressed %d cold memories", len(compressed))
+            except Exception:
+                logger.exception("Auto-compress failed")
+
+    compress_task = asyncio.create_task(_auto_compress_loop())
+
     try:
         yield
     finally:
+        if compress_task:
+            compress_task.cancel()
+            try:
+                await compress_task
+            except asyncio.CancelledError:
+                pass
         await shutdown_runtime_node()
         await shutdown_scheduler()
         await close_db()

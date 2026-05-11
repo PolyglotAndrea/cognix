@@ -162,8 +162,9 @@ async def context_preview(
 
 class CompressMemoryRequest(BaseModel):
     workspace_id: str | None = None
-    older_than_days: int = 7
+    older_than_days: int | None = None
     limit: int = 50
+    model: str | None = None
 
 
 @router.post("/compress")
@@ -177,6 +178,7 @@ async def compress_memory(
         workspace_id=body.workspace_id,
         older_than_days=body.older_than_days,
         limit=body.limit,
+        model=body.model,
     )
     return {
         "compressed_count": len(compressed),

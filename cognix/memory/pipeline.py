@@ -280,13 +280,22 @@ class ColdMemoryStore:
         self,
         *,
         workspace_id: str | None = None,
-        older_than_days: int = 7,
+        older_than_days: int | None = None,
         limit: int = 50,
+        model: str | None = None,
     ) -> list[ColdMemoryRecord]:
         """Summarize old memories using the LLM to reduce token usage.
 
         Returns the compressed records (updated with new summaries).
         """
+        from cognix.config import get_settings
+
+        settings = get_settings().memory
+        if older_than_days is None:
+            older_than_days = settings.compress_older_than_days
+        if model is None:
+            model = settings.compress_model
+
         await self.init()
         cutoff = (datetime.now(UTC) - timedelta(days=older_than_days)).isoformat()
         async with aiosqlite.connect(self.db_path) as db:
@@ -309,7 +318,7 @@ class ColdMemoryStore:
         records = [self._row_to_record(row) for row in rows]
         # Try LLM summarization, fall back to truncation
         try:
-            summaries = await self._llm_summarize_batch(records)
+            summaries = await self._llm_summarize_batch(records, model=model)
         except Exception:
             summaries = [r.content[:200] for r in records]
 
@@ -319,25 +328,31 @@ class ColdMemoryStore:
 
         return records
 
-    async def _llm_summarize_batch(self, records: list[ColdMemoryRecord]) -> list[str]:
+    async def _llm_summarize_batch(
+        self,
+        records: list[ColdMemoryRecord],
+        *,
+        model: str = "gpt-4o-mini",
+    ) -> list[str]:
         """Summarize a batch of memories using LiteLLM."""
         import litellm
 
-        prompts = []
-        for r in records:
-            prompts.append(
-                f"Summarize this memory in one sentence (max 100 chars):\n{r.content[:500]}"
-            )
+        from cognix.config import get_settings
+
+        batch_size = get_settings().memory.compress_batch_size
+
+        prompts = [
+            f"Summarize this memory in one sentence (max 100 chars):\n{r.content[:500]}"
+            for r in records
+        ]
 
         summaries: list[str] = []
-        # Process in small batches to avoid rate limits
-        batch_size = 5
         for i in range(0, len(prompts), batch_size):
             batch = prompts[i : i + batch_size]
             responses = await asyncio.gather(
                 *[
                     litellm.acompletion(
-                        model="gpt-4o-mini",
+                        model=model,
                         messages=[{"role": "user", "content": p}],
                         max_tokens=60,
                         temperature=0.3,
