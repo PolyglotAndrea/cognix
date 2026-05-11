@@ -5,6 +5,8 @@ import LoginPage from '@/features/auth/LoginPage'
 import { Workspace } from '@/features/workspace/Workspace'
 import TaskList from '@/features/tasks/TaskList'
 import SkillList from '@/features/skills/SkillList'
+import ConnectorsPage from '@/features/connectors/ConnectorsPage'
+import ConnectorOAuthCallback from '@/features/connectors/ConnectorOAuthCallback'
 import BillingPage from '@/features/billing/BillingPage'
 import SettingsPage from '@/features/settings/SettingsPage'
 
@@ -31,6 +33,8 @@ export default function App() {
         <Route index element={<Workspace />} />
         <Route path="tasks" element={<TaskList />} />
         <Route path="skills" element={<SkillList />} />
+        <Route path="connectors" element={<ConnectorsPage />} />
+        <Route path="connectors/callback" element={<ConnectorOAuthCallback />} />
         <Route path="billing" element={<BillingPage />} />
         <Route path="settings" element={<SettingsPage />} />
       </Route>

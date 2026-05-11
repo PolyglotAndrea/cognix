@@ -4,6 +4,7 @@ import {
   Zap,
   Clock,
   Puzzle,
+  Plug,
   CreditCard,
   Settings,
   LogOut,
@@ -15,6 +16,7 @@ const navItems = [
   { to: '/', icon: Zap, label: 'Workspace' },
   { to: '/tasks', icon: Clock, label: 'Tasks' },
   { to: '/skills', icon: Puzzle, label: 'Skills' },
+  { to: '/connectors', icon: Plug, label: 'Connectors' },
   { to: '/billing', icon: CreditCard, label: 'Billing' },
   { to: '/settings', icon: Settings, label: 'Settings' },
 ]
