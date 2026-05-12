@@ -57,6 +57,19 @@ class FakeResultMessage:
     result: str
 
 
+@dataclass
+class FakeContentBlock:
+    text: str | None = None
+    name: str | None = None
+    id: str = ""
+    input: dict[str, Any] | None = None
+
+
+@dataclass
+class FakeContentMessage:
+    content: list[FakeContentBlock]
+
+
 def test_claude_runtime_maps_read_only_workspace_options(tmp_path, monkeypatch) -> None:
     home = CognixHome(tmp_path / ".cognix")
     workspace = WorkspaceManager(home).create("Claude")
@@ -337,3 +350,92 @@ async def test_claude_runtime_stream_finishes_waiting_for_approval(
     assert [event.type for event in events] == ["approval_request", "done"]
     assert events[-1].data["finish_reason"] == "waiting_for_approval"
     assert events[-1].data["approval_id"] == events[0].data["id"]
+
+
+@pytest.mark.asyncio
+async def test_claude_runtime_fake_sdk_e2e_approval_then_resume(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    home = CognixHome(tmp_path / ".cognix")
+    workspace = WorkspaceManager(home).create("Claude")
+    WorkspaceConfigStore(workspace.id, home=home).upsert_mcp_server(
+        name="notes",
+        command="python",
+        args=["-m", "notes_mcp"],
+        env={},
+    )
+    monkeypatch.setenv("COGNIX_HOME", str(home.root))
+
+    calls: list[dict[str, Any]] = []
+
+    class E2ESDK(FakeSDK):
+        @staticmethod
+        async def query(prompt: str, options: FakeOptions):
+            calls.append({
+                "prompt": prompt,
+                "cwd": options.cwd,
+                "permission_mode": options.permission_mode,
+                "mcp_servers": options.mcp_servers,
+                "resume": options.resume,
+            })
+            if options.resume:
+                yield FakeContentMessage(
+                    content=[FakeContentBlock(text=f"resumed with {prompt}")]
+                )
+                yield FakeResultMessage(result="final result")
+                return
+
+            decision = await options.can_use_tool(
+                "Write",
+                {"file_path": "notes.md", "content": "hello"},
+                {"resume_token": "resume-123", "session_id": "session-123"},
+            )
+            assert isinstance(decision, FakePermissionResultDeny)
+            if False:
+                yield None
+
+    import cognix.claude.runtime as runtime_module
+
+    monkeypatch.setattr(runtime_module, "_load_sdk", lambda: E2ESDK)
+
+    events = [
+        event
+        async for event in ClaudeAgentRuntime().stream(
+            ClaudeAgentRunRequest(
+                workspace_id=workspace.id,
+                agent_id="agent-e2e",
+                prompt="edit notes",
+                permission_mode="ask",
+                system_prompt="be careful",
+                model="claude-sonnet-4-6",
+            )
+        )
+    ]
+
+    assert [event.type for event in events] == ["approval_request", "done"]
+    approval_id = events[0].data["id"]
+    approval = ApprovalStore(home).get(approval_id)
+    assert approval is not None
+    assert approval.metadata["runtime"] == "claude-agent-sdk"
+    assert approval.metadata["resume_token"] == "resume-123"
+    assert approval.metadata["session_id"] == "session-123"
+    assert calls[0]["permission_mode"] == "default"
+    assert calls[0]["mcp_servers"] == {
+        "notes": {"command": "python", "args": ["-m", "notes_mcp"]}
+    }
+
+    ApprovalStore(home).approve(approval_id)
+    resumed = [
+        event
+        async for event in ClaudeAgentRuntime().resume_stream(
+            approval_id,
+            response="approved, continue",
+        )
+    ]
+
+    assert [event.type for event in resumed] == ["delta", "delta", "done"]
+    assert resumed[0].data["delta"] == "resumed with approved, continue"
+    assert resumed[1].data["delta"] == "final result"
+    assert calls[1]["resume"] == "resume-123"
+    assert ApprovalStore(home).get(approval_id).status == "completed"

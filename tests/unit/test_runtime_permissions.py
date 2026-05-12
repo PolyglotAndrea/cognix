@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from cognix.core.agent import Agent, AgentState
+from cognix.core.context import Context
 from cognix.core.permissions import PermissionDeniedError, decide_permission
 from cognix.core.tool import tool
 from cognix.local.files import WorkspaceFileStore
@@ -168,3 +169,122 @@ async def test_agent_run_stops_when_tool_needs_approval(monkeypatch, tmp_path) -
     assert response.metadata["approval_id"]
     assert response.content.startswith("Approval required [")
     assert agent.state == AgentState.WAITING
+
+
+@pytest.mark.asyncio
+async def test_agent_persists_and_restores_complex_hitl_snapshot(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("COGNIX_HOME", str(tmp_path / ".cognix"))
+
+    @tool(name="write_note", description="Write a note", access_level="write")
+    async def write_note(content: str, metadata: dict | None = None) -> str:
+        return f"wrote {content} with {metadata['source']}"
+
+    class SnapshotAgent(Agent):
+        async def _call_llm(self, ctx):
+            from cognix.core.agent import AgentResponse
+
+            has_tool_result = any(message.role == "tool" for message in ctx.messages)
+            if has_tool_result:
+                image_blocks = [
+                    message.content
+                    for message in ctx.messages
+                    if isinstance(message.content, list)
+                ]
+                return AgentResponse(
+                    content=f"done after {len(image_blocks)} rich message(s)",
+                    usage={"prompt_tokens": 12, "completion_tokens": 4, "total_tokens": 16},
+                )
+
+            return AgentResponse(
+                content="",
+                tool_calls=[
+                    {
+                        "id": "tc-1",
+                        "name": "write_note",
+                        "arguments": {
+                            "content": "x",
+                            "metadata": {
+                                "source": "image-attachment",
+                                "nested": {"ok": True, "items": [1, "two"]},
+                            },
+                        },
+                    }
+                ],
+                metadata={"model": "fake"},
+            )
+
+    rich_context = Context(conversation_id="conv-rich")
+    rich_context.add_message(
+        "user",
+        [
+            {"type": "text", "text": "Please inspect this image"},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": "data:image/png;base64,iVBORw0KGgo=",
+                    "detail": "high",
+                },
+            },
+        ],
+    )
+    rich_context.metadata = {
+        "attachments": [
+            {
+                "id": "att-1",
+                "name": "diagram.png",
+                "mime_type": "image/png",
+                "parsed": {"ocr": ["alpha", "beta"]},
+            }
+        ],
+        "next_user_content": [
+            {"type": "text", "text": "follow-up"},
+            {"type": "input_json", "json": {"priority": "high"}},
+        ],
+    }
+    rich_context.variables = {"route": {"skills": ["vision"], "score": 0.91}}
+
+    first_agent = SnapshotAgent(
+        id="snapshot-agent",
+        name="snapshot",
+        model="mock",
+        tools=[write_note],
+        permission_mode="ask",
+    )
+    events = [event async for event in first_agent.stream_events("write", rich_context)]
+    approval_id = next(
+        event.data["approval_id"]
+        for event in events
+        if event.type == "approval_request"
+    )
+
+    from cognix.local.approvals import ApprovalStore
+
+    store = ApprovalStore()
+    approval = store.get(approval_id)
+    assert approval is not None
+    persisted = approval.metadata["waiting_snapshot"]
+    assert persisted["context"]["conversation_id"] == "conv-rich"
+    assert persisted["context"]["messages"][0]["content"][1]["type"] == "image_url"
+    assert persisted["context"]["metadata"]["attachments"][0]["parsed"]["ocr"] == [
+        "alpha",
+        "beta",
+    ]
+    assert persisted["response"]["tool_calls"][0]["arguments"]["metadata"]["nested"]["ok"] is True
+
+    store.approve(approval_id)
+    restored_agent = SnapshotAgent(
+        id="snapshot-agent",
+        name="snapshot",
+        model="mock",
+        tools=[write_note],
+        permission_mode="ask",
+    )
+    resumed = [event async for event in restored_agent.resume_and_continue(approval_id)]
+
+    assert [event.type for event in resumed] == ["tool_result", "delta", "done"]
+    assert resumed[0].data["result"] == "wrote x with image-attachment"
+    assert resumed[1].data["delta"] == "done after 2 rich message(s)"
+    assert store.get(approval_id).status == "completed"
