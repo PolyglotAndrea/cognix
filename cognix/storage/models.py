@@ -80,6 +80,7 @@ class TaskState(StrEnum):
     PAUSED = "paused"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELED = "canceled"
 
 
 class TaskType(StrEnum):

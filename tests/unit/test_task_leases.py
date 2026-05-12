@@ -76,6 +76,33 @@ async def test_task_store_claims_due_tasks_once(tmp_path, monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_task_store_cancels_task_and_blocks_lease_extension(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("COGNIX_DATABASE__URL", f"sqlite+aiosqlite:///{tmp_path}/state.db")
+    await init_db()
+    try:
+        store = TaskStore()
+        await store.create(
+            task_id="cancel-task",
+            name="Cancel",
+            task_type=TaskType.AGENT_CALL,
+            schedule="every 1m",
+            payload={"task_type": "agent_call"},
+        )
+        assert await store.acquire_lease("cancel-task", owner="node-a") is True
+        assert await store.cancel("cancel-task") is True
+
+        task = await store.get("cancel-task")
+        assert task.state == TaskState.CANCELED
+        assert task.next_run is None
+        assert task.lease_owner is None
+        assert task.lease_expires_at is None
+        assert await store.extend_lease("cancel-task", owner="node-a") is False
+        assert await store.claim_due_tasks(owner="node-b") == []
+    finally:
+        await close_db()
+
+
+@pytest.mark.asyncio
 async def test_distributed_dispatcher_executes_claimed_due_tasks(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("COGNIX_DATABASE__URL", f"sqlite+aiosqlite:///{tmp_path}/state.db")
     await init_db()
@@ -108,6 +135,45 @@ async def test_distributed_dispatcher_executes_claimed_due_tasks(tmp_path, monke
         task = await store.get("dispatch-task-1")
         assert task.lease_owner is None
         assert task.next_run is not None
+    finally:
+        await close_db()
+
+
+@pytest.mark.asyncio
+async def test_distributed_dispatcher_does_not_advance_canceled_task(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("COGNIX_DATABASE__URL", f"sqlite+aiosqlite:///{tmp_path}/state.db")
+    await init_db()
+    try:
+        store = TaskStore()
+        await store.create(
+            task_id="cancel-running",
+            name="Cancel Running",
+            task_type=TaskType.AGENT_CALL,
+            schedule="every 1m",
+            payload={"message": "hi"},
+        )
+        await store.set_next_run("cancel-running", datetime.now(UTC) - timedelta(seconds=1))
+
+        class CancelingExecutor:
+            async def execute(self, task_id, payload):
+                await store.cancel(task_id)
+                return {"status": "success", "result": "late success"}
+
+        dispatcher = DistributedTaskDispatcher(
+            executor=CancelingExecutor(),
+            store=store,
+            node_id="node-a",
+        )
+
+        assert await dispatcher.dispatch_once() == 1
+        assert dispatcher.status()["metrics"]["canceled_total"] == 1
+        task = await store.get("cancel-running")
+        assert task.state == TaskState.CANCELED
+        assert task.next_run is None
+        assert task.lease_owner is None
     finally:
         await close_db()
 

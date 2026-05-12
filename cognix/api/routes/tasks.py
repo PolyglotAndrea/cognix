@@ -149,6 +149,11 @@ async def pause_task(
     user: CurrentUser = Depends(require_tasks_write),
 ) -> dict:
     store = TaskStore()
+    task = await store.get(task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    if task.state == TaskState.CANCELED:
+        raise HTTPException(400, "Task is canceled and cannot be paused")
     if not await store.update_state(task_id, TaskState.PAUSED):
         raise HTTPException(404, "Task not found")
 
@@ -159,16 +164,43 @@ async def pause_task(
     return {"id": task_id, "state": "paused"}
 
 
+@router.post("/{task_id}/cancel")
+async def cancel_task(
+    task_id: str,
+    user: CurrentUser = Depends(require_tasks_write),
+) -> dict:
+    """Cancel a scheduled task and release any active lease."""
+    store = TaskStore()
+    task = await store.get(task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    if task.state in (TaskState.COMPLETED, TaskState.FAILED, TaskState.CANCELED):
+        raise HTTPException(400, f"Task is {task.state.value}, cannot cancel")
+
+    engine = get_scheduler_engine()
+    if engine:
+        engine.remove(task_id)
+
+    if not await store.cancel(task_id):
+        raise HTTPException(500, "Failed to cancel task")
+
+    return {"id": task_id, "state": "canceled"}
+
+
 @router.post("/{task_id}/resume")
 async def resume_task(
     task_id: str,
     user: CurrentUser = Depends(require_tasks_write),
 ) -> dict:
     store = TaskStore()
+    task = await store.get(task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    if task.state == TaskState.CANCELED:
+        raise HTTPException(400, "Task is canceled and cannot be resumed")
     if not await store.update_state(task_id, TaskState.ACTIVE):
         raise HTTPException(404, "Task not found")
 
-    task = await store.get(task_id)
     engine = get_scheduler_engine()
     if engine and task:
         payload = json.loads(task.payload) if isinstance(task.payload, str) else task.payload
@@ -216,6 +248,8 @@ async def trigger_task(
     task = await store.get(task_id)
     if not task:
         raise HTTPException(404, "Task not found")
+    if task.state == TaskState.CANCELED:
+        raise HTTPException(400, "Task is canceled and cannot be triggered")
 
     payload = json.loads(task.payload) if isinstance(task.payload, str) else task.payload
     executor = TaskExecutor(agent_registry=agent_registry)

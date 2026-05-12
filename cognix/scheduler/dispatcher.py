@@ -200,6 +200,11 @@ class DistributedTaskDispatcher:
                     pass
             self._active_task_ids.discard(task.id)
         task_after_run = await self.store.get(task.id)
+        if task_after_run and task_after_run.state == TaskState.CANCELED:
+            self.metrics.setdefault("canceled_total", 0)
+            self.metrics["canceled_total"] += 1
+            logger.info("Task %s was canceled; not advancing next_run", task.id)
+            return
         if run.get("status") == "failure" and task_after_run:
             self.metrics["failure_total"] += 1
             self.metrics["last_error"] = str(run.get("error", ""))

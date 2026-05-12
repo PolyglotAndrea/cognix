@@ -192,6 +192,7 @@ class SchedulerEngine:
             return
 
         from cognix.scheduler.store import TaskStore
+        from cognix.storage.models import TaskState
 
         store = TaskStore()
         if not await store.acquire_lease(task_id, owner=self.node_id):
@@ -199,6 +200,10 @@ class SchedulerEngine:
             return
 
         task = await store.get(task_id)
+        if task and task.state == TaskState.CANCELED:
+            logger.info("Task %s was canceled before execution", task_id)
+            await store.release_lease(task_id, owner=self.node_id)
+            return
         if task:
             idempotency_key = payload.get("idempotency_key") or task.idempotency_key
             if idempotency_key:
@@ -233,6 +238,10 @@ class SchedulerEngine:
             run = {"status": "failure", "error": str(e)}
 
         task = await store.get(task_id)
+        if task and task.state == TaskState.CANCELED:
+            logger.info("Task %s was canceled; not advancing next_run", task_id)
+            await store.release_lease(task_id, owner=self.node_id)
+            return
         if run.get("status") == "failure" and task:
             attempts = max(task.run_count, 1)
             if attempts <= task.max_retries:
@@ -248,8 +257,6 @@ class SchedulerEngine:
                     retry_at.isoformat(),
                 )
                 return
-
-            from cognix.storage.models import TaskState
 
             await store.complete_lease(
                 task_id,

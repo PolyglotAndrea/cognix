@@ -75,6 +75,26 @@ class TaskStore:
             )
             return result.rowcount > 0
 
+    async def cancel(self, task_id: str) -> bool:
+        """Cancel a task and release any current lease.
+
+        Running executors are cooperative: the dispatcher/engine will observe
+        the canceled state after the current await returns and will not advance
+        ``next_run``.
+        """
+        async with get_session() as session:
+            result = await session.execute(
+                update(ScheduledTaskModel)
+                .where(ScheduledTaskModel.id == task_id)
+                .values(
+                    state=TaskState.CANCELED,
+                    next_run=None,
+                    lease_owner=None,
+                    lease_expires_at=None,
+                )
+            )
+            return result.rowcount > 0
+
     async def set_next_run(self, task_id: str, next_run: datetime | None) -> bool:
         """Persist the next expected run time for distributed dispatchers."""
         async with get_session() as session:
@@ -177,6 +197,7 @@ class TaskStore:
                     and_(
                         ScheduledTaskModel.id == task_id,
                         ScheduledTaskModel.lease_owner == owner,
+                        ScheduledTaskModel.state == TaskState.ACTIVE,
                     )
                 )
                 .values(lease_expires_at=expires_at)

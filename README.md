@@ -159,6 +159,7 @@ cognix/
 | `GET /api/v1/tasks` | List scheduled tasks |
 | `POST /api/v1/tasks` | Create scheduled task |
 | `POST /api/v1/tasks/{id}/replay` | Replay a failed task immediately |
+| `POST /api/v1/tasks/{id}/cancel` | Cancel a scheduled task and release any active lease |
 | `GET /api/v1/skills` | List skills |
 | `GET /api/v1/connectors/platforms` | List connector platforms and credential status |
 | `GET /api/v1/connectors/tools` | List connector tools and effective access levels |
@@ -236,6 +237,7 @@ Scheduled tasks are stored in the database and coordinated with runtime leases:
 - Exhausted tasks are marked `failed` and removed from future dispatch.
 - Tasks can set `max_execution_seconds`; dispatchers fail timed-out runs and apply the same retry policy.
 - Failed tasks can be replayed, which clears leases and prior idempotency state before immediate re-execution.
+- Active or paused tasks can be canceled; cancel clears `next_run` and active leases, and running dispatchers will not advance a canceled task after the current await returns.
 - Optional `idempotency_key` payloads prevent a previously completed key from executing again for the same task.
 - Each runtime node respects dispatcher capacity settings, including `dispatcher_batch_size` and `dispatcher_max_concurrent`.
 - Runtime status exposes dispatcher metrics including active task ids, claimed, success, failure, retry, exhausted failure, and last error counters.
