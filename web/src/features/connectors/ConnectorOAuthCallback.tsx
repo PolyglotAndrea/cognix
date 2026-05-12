@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Loader2, CheckCircle2, XCircle } from 'lucide-react'
+import { Loader2, CheckCircle2, XCircle, AlertTriangle } from 'lucide-react'
 import { api } from '@/shared/api/client'
 
 export default function ConnectorOAuthCallback() {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
-  const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading')
+  const [status, setStatus] = useState<'loading' | 'success' | 'warning' | 'error'>('loading')
   const [message, setMessage] = useState('')
 
   useEffect(() => {
@@ -26,9 +26,6 @@ export default function ConnectorOAuthCallback() {
       return
     }
 
-    // Parse platform from state or URL path
-    // State format: {random}:{workspace_id} — platform is inferred from the authorize call
-    // We need to determine the platform. Store it in sessionStorage before redirect.
     const platform = sessionStorage.getItem('connector_oauth_platform')
     if (!platform) {
       setStatus('error')
@@ -38,11 +35,16 @@ export default function ConnectorOAuthCallback() {
 
     api
       .post(`/connectors/oauth/${platform}/callback`, { code, state })
-      .then(() => {
-        setStatus('success')
-        setMessage(`Successfully connected to ${platform}!`)
+      .then((res) => {
         sessionStorage.removeItem('connector_oauth_platform')
-        setTimeout(() => navigate('/connectors'), 1500)
+        if (res.data.missing_scopes?.length) {
+          setStatus('warning')
+          setMessage(res.data.warning || `Connected but missing scopes: ${res.data.missing_scopes.join(', ')}`)
+        } else {
+          setStatus('success')
+          setMessage(`Successfully connected to ${platform}!`)
+        }
+        setTimeout(() => navigate('/connectors'), 2500)
       })
       .catch((err) => {
         setStatus('error')
@@ -67,6 +69,16 @@ export default function ConnectorOAuthCallback() {
             <CheckCircle2 className="mx-auto h-10 w-10 text-emerald-500" />
             <h3 className="mt-4 text-lg font-bold text-foreground">Connected!</h3>
             <p className="mt-2 text-sm text-muted-foreground">{message}</p>
+          </>
+        )}
+        {status === 'warning' && (
+          <>
+            <AlertTriangle className="mx-auto h-10 w-10 text-amber-500" />
+            <h3 className="mt-4 text-lg font-bold text-foreground">Connected with warnings</h3>
+            <p className="mt-2 text-sm text-muted-foreground">{message}</p>
+            <p className="mt-1 text-xs text-muted-foreground/70">
+              Some features may not work. You can re-authorize to grant missing permissions.
+            </p>
           </>
         )}
         {status === 'error' && (

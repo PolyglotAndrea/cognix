@@ -19,6 +19,7 @@ export function ConnectorToolCallModal({
   const [args, setArgs] = useState<Record<string, any>>({})
   const [result, setResult] = useState<any>(null)
   const [error, setError] = useState<string | null>(null)
+  const [approvalId, setApprovalId] = useState<string | null>(null)
 
   const callMutation = useMutation({
     mutationFn: () => {
@@ -26,11 +27,21 @@ export function ConnectorToolCallModal({
       if (workspaceId) params.set('workspace_id', workspaceId)
       const qs = params.toString()
       return api
-        .post(`/connectors/tools/${tool.name}/call${qs ? `?${qs}` : ''}`, { arguments: args })
+        .post(`/connectors/tools/${tool.name}/call${qs ? `?${qs}` : ''}`, {
+          arguments: args,
+          permission_mode: 'workspace-write',
+          approval_id: approvalId,
+        })
         .then((r) => r.data)
     },
     onSuccess: (data) => {
-      setResult(data.result)
+      if (data.approval_required) {
+        setApprovalId(data.approval_id)
+        setResult(data)
+      } else {
+        setApprovalId(null)
+        setResult(data.result)
+      }
       setError(null)
     },
     onError: (err: any) => {
@@ -83,7 +94,7 @@ export function ConnectorToolCallModal({
           ) : (
             <Play className="h-4 w-4" />
           )}
-          Execute
+          {approvalId ? 'Execute Approved Call' : 'Execute'}
         </Button>
 
         {/* Result */}

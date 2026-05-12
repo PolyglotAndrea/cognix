@@ -166,17 +166,31 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: any }) {
   })
 
   const approvalMutation = useMutation({
-    mutationFn: ({
+    mutationFn: async ({
       approval,
       action,
       response,
     }: {
       approval: ApprovalRequest
-      action: 'approve' | 'reject' | 'resume' | 'respond'
+      action: 'approve' | 'reject' | 'respond'
       response?: string
     }): Promise<unknown> => {
-      if (action === 'resume' && approval.metadata?.runtime === 'claude-agent-sdk') {
-        return streamClaudeApprovalResume(approval, response, addLog, addToolResult)
+      if (action === 'approve' || action === 'respond') {
+        // Approve/respond, then auto-resume in one click
+        await api.post(
+          `/approvals/${approval.id}/${action}`,
+          response ? { response } : undefined,
+        )
+        const resumeEndpoint =
+          approval.metadata?.runtime === 'claude-agent-sdk'
+            ? `/approvals/${approval.id}/resume/stream`
+            : `/approvals/${approval.id}/resume-and-continue/stream`
+        return streamResumeAfterApproval(
+          resumeEndpoint,
+          response,
+          addLog,
+          addToolResult,
+        )
       }
       return api.post(`/approvals/${approval.id}/${action}`, response ? { response } : undefined)
     },
@@ -587,14 +601,12 @@ function ApprovalCard({
 }: {
   approval: ApprovalRequest
   busy: boolean
-  onAction: (action: 'approve' | 'reject' | 'resume' | 'respond', response?: string) => void
+  onAction: (action: 'approve' | 'reject' | 'respond', response?: string) => void
 }) {
   const [response, setResponse] = useState(approval.response || '')
   const isPending = approval.status === 'pending'
-  const isApproved = approval.status === 'approved'
   const isQuestion = approval.kind === 'question'
   const isPlan = approval.kind === 'plan_confirmation'
-  const isClaude = approval.metadata?.runtime === 'claude-agent-sdk'
   const args = JSON.stringify(approval.arguments || {}, null, 2)
   const kindLabel = isQuestion ? 'Question' : isPlan ? 'Plan' : 'Tool'
   const statusLabel = approvalStatusLabel(approval, busy)
@@ -666,6 +678,24 @@ function ApprovalCard({
         </div>
       )}
 
+      {!isPending && approval.metadata && ((approval.metadata.resume_token as string) || (approval.metadata.session_id as string)) && (
+        <div className="mb-4 p-3 rounded-xl bg-muted/30 border border-border/50">
+          <div className="text-[9px] font-black uppercase tracking-widest text-muted-foreground mb-1.5">Resume Info</div>
+          <div className="flex flex-wrap gap-2">
+            {(approval.metadata.resume_token as string) && (
+              <span className="font-mono text-[10px] text-muted-foreground bg-background px-1.5 py-0.5 rounded border border-border truncate max-w-[200px]">
+                token: {String(approval.metadata.resume_token)}
+              </span>
+            )}
+            {(approval.metadata.session_id as string) && (
+              <span className="font-mono text-[10px] text-muted-foreground bg-background px-1.5 py-0.5 rounded border border-border truncate max-w-[200px]">
+                session: {String(approval.metadata.session_id)}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
       {isPending && (
         <pre className="mb-4 max-h-32 overflow-auto rounded-xl border border-border bg-muted/30 p-3 font-mono text-[10px] leading-relaxed text-muted-foreground scrollbar-hide">
           <div className="text-[9px] font-black uppercase tracking-widest mb-1 opacity-60 border-b border-border/50 pb-1">Parameters</div>
@@ -673,34 +703,24 @@ function ApprovalCard({
         </pre>
       )}
 
-      <div className="flex items-center gap-2 mt-2">
-        {isPending ? (
-          <>
-            <button
-              onClick={() => (isQuestion ? onAction('respond', response) : onAction('approve'))}
-              disabled={busy || (isQuestion && !response.trim())}
-              className="flex-1 h-9 rounded-xl bg-emerald-500 px-3 text-[11px] font-bold uppercase tracking-wider text-white transition-all hover:bg-emerald-600 active:scale-95 disabled:opacity-50 shadow-lg shadow-emerald-500/20"
-            >
-              {primaryLabel}
-            </button>
-            <button
-              onClick={() => onAction('reject')}
-              disabled={busy}
-              className="flex-1 h-9 rounded-xl bg-rose-500 px-3 text-[11px] font-bold uppercase tracking-wider text-white transition-all hover:bg-rose-600 active:scale-95 disabled:opacity-50 shadow-lg shadow-rose-500/20"
-            >
-              Reject
-            </button>
-          </>
-        ) : isApproved && (
+      {isPending && (
+        <div className="flex items-center gap-2 mt-2">
           <button
-            onClick={() => onAction('resume', response)}
-            disabled={busy}
-            className="w-full h-9 rounded-xl bg-primary px-3 text-[11px] font-bold uppercase tracking-wider text-white transition-all hover:bg-primary/90 active:scale-95 disabled:opacity-50 shadow-lg shadow-primary/20"
+            onClick={() => (isQuestion ? onAction('respond', response) : onAction('approve'))}
+            disabled={busy || (isQuestion && !response.trim())}
+            className="flex-1 h-9 rounded-xl bg-emerald-500 px-3 text-[11px] font-bold uppercase tracking-wider text-white transition-all hover:bg-emerald-600 active:scale-95 disabled:opacity-50 shadow-lg shadow-emerald-500/20"
           >
-            {busy ? 'Resuming...' : isClaude ? 'Resume Claude Session' : 'Continue Execution'}
+            {primaryLabel}
           </button>
-        )}
-      </div>
+          <button
+            onClick={() => onAction('reject')}
+            disabled={busy}
+            className="flex-1 h-9 rounded-xl bg-rose-500 px-3 text-[11px] font-bold uppercase tracking-wider text-white transition-all hover:bg-rose-600 active:scale-95 disabled:opacity-50 shadow-lg shadow-rose-500/20"
+          >
+            Reject
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -715,8 +735,8 @@ function approvalStatusLabel(approval: ApprovalRequest, busy: boolean) {
   return 'Waiting for tool permission'
 }
 
-async function streamClaudeApprovalResume(
-  approval: ApprovalRequest,
+async function streamResumeAfterApproval(
+  resumeEndpoint: string,
   response: string | undefined,
   addLog: (log: { id: string; level: 'info' | 'warn' | 'error'; message: string; timestamp: number }) => void,
   addToolResult: (result: {
@@ -728,7 +748,7 @@ async function streamClaudeApprovalResume(
   }) => void
 ) {
   const token = useAuthStore.getState().token
-  const stream = await fetch(`/api/v1/approvals/${approval.id}/resume/stream`, {
+  const stream = await fetch(resumeEndpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -757,14 +777,14 @@ async function streamClaudeApprovalResume(
         addLog({
           id: '',
           level: 'info',
-          message: `Claude resumed: ${String(event.delta).slice(0, 140)}`,
+          message: `Agent resumed: ${String(event.delta).slice(0, 140)}`,
           timestamp: Date.now(),
         })
       } else if (event.type === 'tool_call') {
         addLog({
           id: '',
           level: 'info',
-          message: `Claude calling tool: ${event.name}`,
+          message: `Agent calling tool: ${event.name}`,
           timestamp: Date.now(),
         })
       } else if (event.type === 'tool_result') {
@@ -779,14 +799,14 @@ async function streamClaudeApprovalResume(
         addLog({
           id: '',
           level: 'warn',
-          message: `Claude requested another approval: ${event.reason}`,
+          message: `Agent requested another approval: ${event.reason || event.tool_name || ''}`,
           timestamp: Date.now(),
         })
       } else if (event.type === 'error') {
         addLog({
           id: '',
           level: 'error',
-          message: event.message || event.error || 'Claude resume failed',
+          message: event.message || event.error || 'Agent resume failed',
           timestamp: Date.now(),
         })
       }

@@ -1,10 +1,12 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  AlertTriangle,
   ExternalLink,
   Link2,
   Loader2,
   Plug,
+  RefreshCw,
   Unplug,
 } from 'lucide-react'
 import { api } from '@/shared/api/client'
@@ -174,6 +176,8 @@ function PlatformRow({
 }) {
   const icon = platformIcons[platform.platform] || '🔗'
   const cred = platform.credentials[0]
+  const isExpired = cred?.is_expired
+  const needsReauth = cred?.needs_reauth
 
   return (
     <div className="flex items-center justify-between px-5 py-4">
@@ -183,7 +187,14 @@ function PlatformRow({
           <div className="flex items-center gap-2">
             <span className="text-sm font-bold text-foreground">{platform.display_name}</span>
             {platform.connected ? (
-              <Badge variant="success">Connected</Badge>
+              isExpired ? (
+                <Badge variant="error">
+                  <AlertTriangle className="mr-1 h-3 w-3" />
+                  {needsReauth ? 'Re-auth required' : 'Token expired'}
+                </Badge>
+              ) : (
+                <Badge variant="success">Connected</Badge>
+              )
             ) : (
               <Badge variant="default">Not connected</Badge>
             )}
@@ -202,15 +213,32 @@ function PlatformRow({
       </div>
       <div className="flex items-center gap-2">
         {platform.connected && cred ? (
-          <Button
-            size="sm"
-            variant="danger"
-            onClick={() => onDisconnect(cred.id)}
-            className="gap-1.5"
-          >
-            <Unplug className="h-3.5 w-3.5" />
-            Disconnect
-          </Button>
+          <>
+            {isExpired && (
+              <Button
+                size="sm"
+                onClick={onConnect}
+                disabled={connecting}
+                className="gap-1.5"
+              >
+                {connecting ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-3.5 w-3.5" />
+                )}
+                Re-authorize
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant="danger"
+              onClick={() => onDisconnect(cred.id)}
+              className="gap-1.5"
+            >
+              <Unplug className="h-3.5 w-3.5" />
+              Disconnect
+            </Button>
+          </>
         ) : (
           <Button
             size="sm"

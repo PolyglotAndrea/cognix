@@ -13,6 +13,8 @@ export interface ConnectorCredential {
   workspace_id?: string | null
   created_at?: string | null
   token_expires_at?: string | null
+  is_expired?: boolean
+  needs_reauth?: boolean
 }
 
 export interface ConnectorTool {
