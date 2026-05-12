@@ -47,6 +47,7 @@ const stateBadge: Record<string, 'success' | 'warning' | 'error' | 'default'> = 
   active: 'success',
   paused: 'warning',
   failed: 'error',
+  canceled: 'error',
   completed: 'default',
 }
 

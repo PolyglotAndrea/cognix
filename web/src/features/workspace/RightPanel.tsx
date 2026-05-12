@@ -548,6 +548,8 @@ function TaskStatusCard({ task, onClick }: { task: TaskSummary; onClick?: () => 
             ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' 
             : task.state === 'paused' 
             ? 'bg-amber-500/10 text-amber-500 border-amber-500/20'
+            : task.state === 'canceled'
+            ? 'bg-rose-500/10 text-rose-500 border-rose-500/20'
             : 'bg-muted text-muted-foreground border-border'
         }`}>
           {task.state}

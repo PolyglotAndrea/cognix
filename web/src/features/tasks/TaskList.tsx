@@ -1,6 +1,6 @@
 import { Fragment, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Clock, FileCode2, Pause, Play, Plus, RotateCw, Trash2, type LucideIcon } from 'lucide-react'
+import { Clock, FileCode2, Pause, Play, Plus, RotateCw, Trash2, XCircle, type LucideIcon } from 'lucide-react'
 import { api } from '@/shared/api/client'
 import { Badge, Button, Input, Spinner } from '@/shared/ui'
 
@@ -107,6 +107,11 @@ export default function TaskList() {
 
   const resumeTaskMutation = useMutation({
     mutationFn: (taskId: string) => api.post(`/tasks/${taskId}/resume`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['tasks'] }),
+  })
+
+  const cancelTaskMutation = useMutation({
+    mutationFn: (taskId: string) => api.post(`/tasks/${taskId}/cancel`),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['tasks'] }),
   })
 
@@ -270,7 +275,7 @@ export default function TaskList() {
                       <td className="px-6 py-5"><Badge>{task.task_type}</Badge></td>
                       <td className="px-6 py-5 font-mono text-sm font-medium text-muted-foreground">{task.schedule}</td>
                       <td className="px-6 py-5">
-                        <Badge variant={task.state === 'active' ? 'success' : task.state === 'paused' ? 'warning' : 'default'}>
+                        <Badge variant={task.state === 'active' ? 'success' : task.state === 'paused' ? 'warning' : task.state === 'canceled' ? 'error' : 'default'}>
                           {task.state}
                         </Badge>
                       </td>
@@ -281,7 +286,7 @@ export default function TaskList() {
                             icon={RotateCw}
                             label={`Trigger ${task.name}`}
                             onClick={() => triggerTaskMutation.mutate(task.id)}
-                            disabled={triggerTaskMutation.isPending}
+                            disabled={task.state === 'canceled' || triggerTaskMutation.isPending}
                           />
                           <IconButton
                             icon={task.state === 'active' ? Pause : Play}
@@ -291,7 +296,23 @@ export default function TaskList() {
                                 ? pauseTaskMutation.mutate(task.id)
                                 : resumeTaskMutation.mutate(task.id)
                             }
-                            disabled={pauseTaskMutation.isPending || resumeTaskMutation.isPending}
+                            disabled={
+                              task.state === 'canceled'
+                              || pauseTaskMutation.isPending
+                              || resumeTaskMutation.isPending
+                            }
+                          />
+                          <IconButton
+                            icon={XCircle}
+                            label={`Cancel ${task.name}`}
+                            onClick={() => cancelTaskMutation.mutate(task.id)}
+                            disabled={
+                              task.state === 'canceled'
+                              || task.state === 'failed'
+                              || task.state === 'completed'
+                              || cancelTaskMutation.isPending
+                            }
+                            danger
                           />
                           <IconButton
                             icon={Trash2}
