@@ -115,11 +115,37 @@ async def resume_and_continue(
     if not approval:
         raise HTTPException(404, "Approval not found")
 
+    # Claude Agent SDK path — delegate to runtime's resume_stream
+    if approval.metadata.get("runtime") == "claude-agent-sdk":
+        from cognix.claude.runtime import ClaudeAgentRuntime
+
+        events: list[dict] = []
+        final_content = ""
+        try:
+            async for event in ClaudeAgentRuntime().resume_stream(
+                approval_id,
+                response=body.response if body else "",
+            ):
+                events.append({"type": event.type, "data": event.data})
+                if event.type == "delta":
+                    final_content += event.data.get("delta", "")
+                if event.type == "error":
+                    raise ValueError(event.data.get("message", "Unknown error"))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {
+            "approval_id": approval_id,
+            "runtime": "claude-agent-sdk",
+            "content": final_content,
+            "events": events,
+        }
+
+    # Hermes Agent path
     agent = await get_agent_runtime(approval.agent_id)
     if not agent:
         raise HTTPException(404, "Agent not found")
 
-    events: list[dict] = []
+    events = []
     final_content = ""
     try:
         async for event in agent.resume_and_continue(approval_id):
@@ -133,6 +159,7 @@ async def resume_and_continue(
 
     return {
         "approval_id": approval_id,
+        "runtime": "hermes-agent",
         "content": final_content,
         "events": events,
     }
@@ -151,14 +178,30 @@ async def resume_and_continue_stream(
     if not approval:
         raise HTTPException(404, "Approval not found")
 
-    agent = await get_agent_runtime(approval.agent_id)
-    if not agent:
-        raise HTTPException(404, "Agent not found")
+    is_sdk = approval.metadata.get("runtime") == "claude-agent-sdk"
 
     async def event_generator():
         try:
-            async for event in agent.resume_and_continue(approval_id):
-                yield encode_sse_event(event)
+            if is_sdk:
+                from cognix.claude.runtime import ClaudeAgentRuntime
+
+                async for event in ClaudeAgentRuntime().resume_stream(
+                    approval_id,
+                    response=body.response if body else "",
+                ):
+                    yield encode_sse_event(
+                        event, extra={"runtime": "claude-agent-sdk"}
+                    )
+            else:
+                agent = await get_agent_runtime(approval.agent_id)
+                if not agent:
+                    yield encode_sse_event(AgentEvent(
+                        "error",
+                        {"message": "Agent not found", "error": "Agent not found"},
+                    ))
+                    return
+                async for event in agent.resume_and_continue(approval_id):
+                    yield encode_sse_event(event)
         except ValueError as exc:
             yield encode_sse_event(
                 AgentEvent("error", {"message": str(exc), "error": str(exc)})

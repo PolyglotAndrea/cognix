@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from cognix.connectors.base import ConnectorProvider, ConnectorSpec
+from cognix.connectors.exceptions import ConnectorAPIError, ConnectorTokenExpiredError
 from cognix.core.tool import Tool
 
 logger = logging.getLogger(__name__)
@@ -59,8 +60,20 @@ def _make_handler(
         credential = await manager.get_credential(credential_id)
         if not credential:
             return {"error": "Connector credential not found. Re-connect."}
-        token = await manager.get_decrypted_token(credential)
-        return await provider.call_tool(tool_name, kwargs, token)
+        try:
+            token = await manager.get_decrypted_token(credential)
+        except ConnectorTokenExpiredError as e:
+            return {
+                "error": True,
+                "code": "token_expired",
+                "message": str(e),
+                "platform": provider.platform,
+                "needs_reauth": True,
+            }
+        try:
+            return await provider.call_tool(tool_name, kwargs, token)
+        except ConnectorAPIError as e:
+            return e.to_dict()
 
     return handler
 

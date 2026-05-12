@@ -28,6 +28,8 @@ class CreateTaskRequest(BaseModel):
     schedule: str
     payload: dict = Field(default_factory=dict)
     max_retries: int = 3
+    max_execution_seconds: int = 300
+    idempotency_key: str | None = None
 
 
 @router.post("", status_code=201)
@@ -48,6 +50,8 @@ async def create_task(
         schedule=schedule,
         payload=payload,
         max_retries=body.max_retries,
+        max_execution_seconds=body.max_execution_seconds,
+        idempotency_key=body.idempotency_key or payload.get("idempotency_key"),
     )
 
     engine = get_scheduler_engine()
@@ -83,6 +87,7 @@ async def list_tasks(
             "schedule": t.schedule,
             "state": t.state.value,
             "run_count": t.run_count,
+            "max_execution_seconds": t.max_execution_seconds,
             "workspace_id": _payload_dict(t.payload).get("workspace_id"),
             "last_run": t.last_run.isoformat() if t.last_run else None,
             "lease_owner": t.lease_owner,
@@ -113,6 +118,8 @@ async def get_task(
         "state": task.state.value,
         "run_count": task.run_count,
         "max_retries": task.max_retries,
+        "max_execution_seconds": task.max_execution_seconds,
+        "idempotency_key": task.idempotency_key,
         "last_run": task.last_run.isoformat() if task.last_run else None,
         "lease_owner": task.lease_owner,
         "lease_expires_at": task.lease_expires_at.isoformat() if task.lease_expires_at else None,
@@ -169,6 +176,33 @@ async def resume_task(
         engine.resume(task_id)
 
     return {"id": task_id, "state": "active"}
+
+
+@router.post("/{task_id}/replay")
+async def replay_task(
+    task_id: str,
+    user: CurrentUser = Depends(require_tasks_write),
+) -> dict:
+    """Replay a failed task — reset it to ACTIVE for immediate re-execution."""
+    store = TaskStore()
+    task = await store.get(task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    if task.state != TaskState.FAILED:
+        raise HTTPException(400, f"Task is {task.state.value}, not FAILED")
+
+    if not await store.replay_failed(task_id):
+        raise HTTPException(500, "Failed to replay task")
+
+    engine = get_scheduler_engine()
+    if engine:
+        payload = json.loads(task.payload) if isinstance(task.payload, str) else task.payload
+        try:
+            schedule_task_in_engine(engine, task_id, task.schedule, payload, name=task.name)
+        except Exception as e:
+            logger.warning("Failed to reschedule replayed task in engine: %s", e)
+
+    return {"id": task_id, "state": "active", "replayed": True}
 
 
 @router.post("/{task_id}/trigger")

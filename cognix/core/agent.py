@@ -137,6 +137,7 @@ class Agent:
                             "response": response,
                             "message": message,
                         }
+                        self._persist_snapshot(approval_event["approval_id"])
                         return AgentResponse(
                             content=tool_result,
                             tool_calls=response.tool_calls,
@@ -265,6 +266,7 @@ class Agent:
                             "response": response,
                             "message": message,
                         }
+                        self._persist_snapshot(approval_event["approval_id"])
                         yield AgentEvent("approval_request", approval_event)
                         yield AgentEvent(
                             "done",
@@ -532,6 +534,22 @@ class Agent:
 
         snapshot = self._waiting_snapshot
         if not snapshot:
+            # Try to restore from persisted approval metadata (survives restart)
+            persisted = approval.metadata.get("waiting_snapshot")
+            if persisted:
+                try:
+                    snapshot = self.deserialize_snapshot(persisted)
+                    logger.info(
+                        "Restored waiting snapshot from approval metadata for %s",
+                        approval_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Failed to deserialize snapshot from approval %s",
+                        approval_id,
+                    )
+
+        if not snapshot:
             # Fallback: no snapshot, just execute tool and return
             result = await self.resume_approval(approval_id)
             yield AgentEvent("tool_result", {"name": approval.tool_name, "result": result})
@@ -606,6 +624,7 @@ class Agent:
                     "response": snapshot["response"],
                     "message": original_message,
                 }
+                self._persist_snapshot(tc_approval["approval_id"])
                 yield AgentEvent("approval_request", tc_approval)
                 yield AgentEvent(
                     "done",
@@ -677,6 +696,7 @@ class Agent:
                             "response": response,
                             "message": original_message,
                         }
+                        self._persist_snapshot(approval_event["approval_id"])
                         yield AgentEvent("approval_request", approval_event)
                         yield AgentEvent(
                             "done",
@@ -744,6 +764,24 @@ class Agent:
         event = self._pending_approval_event
         self._pending_approval_event = None
         return event
+
+    def _persist_snapshot(self, approval_id: str) -> None:
+        """Serialize and persist the current waiting snapshot to approval metadata."""
+        if not self._waiting_snapshot:
+            return
+        try:
+            from cognix.local.approvals import ApprovalStore
+
+            serialized = self.serialize_snapshot(self._waiting_snapshot)
+            ApprovalStore().update_metadata(
+                approval_id,
+                {"runtime": "hermes-agent", "waiting_snapshot": serialized},
+            )
+        except Exception:
+            logger.exception(
+                "Failed to persist waiting snapshot for approval %s",
+                approval_id,
+            )
 
     def _next_user_content(self, ctx: Context, message: str) -> Any:
         return ctx.metadata.get("next_user_content", message)
@@ -868,4 +906,46 @@ class Agent:
             "workspace_id": self.workspace_id,
             "permission_mode": self.permission_mode,
             "tools": [t.name for t in self.tools],
+        }
+
+    # ── Snapshot persistence ────────────────────────────────────────
+
+    @staticmethod
+    def serialize_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+        """Serialize a waiting snapshot to a JSON-compatible dict.
+
+        The snapshot contains a ``Context``, an ``AgentResponse``, tool call
+        lists, and the original user message.  This method converts it to a
+        plain dict that can be stored in approval metadata.
+        """
+        ctx: Context = snapshot["context"]
+        response: AgentResponse = snapshot["response"]
+        return {
+            "context": ctx.to_dict(),
+            "remaining_tool_calls": snapshot["remaining_tool_calls"],
+            "message": snapshot["message"],
+            "response": {
+                "content": response.content,
+                "tool_calls": response.tool_calls,
+                "usage": response.usage,
+                "metadata": response.metadata,
+            },
+        }
+
+    @staticmethod
+    def deserialize_snapshot(data: dict[str, Any]) -> dict[str, Any]:
+        """Deserialize a snapshot dict back into live objects."""
+        ctx = Context.from_dict(data["context"])
+        resp_data = data.get("response", {})
+        response = AgentResponse(
+            content=resp_data.get("content", ""),
+            tool_calls=resp_data.get("tool_calls", []),
+            usage=resp_data.get("usage", {}),
+            metadata=resp_data.get("metadata", {}),
+        )
+        return {
+            "context": ctx,
+            "remaining_tool_calls": data.get("remaining_tool_calls", []),
+            "message": data.get("message", ""),
+            "response": response,
         }

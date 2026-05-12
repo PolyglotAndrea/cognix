@@ -104,6 +104,8 @@ async def _ensure_task_lease_columns(conn) -> None:
     additions = {
         "lease_owner": "VARCHAR(128)",
         "lease_expires_at": "DATETIME",
+        "max_execution_seconds": "INTEGER DEFAULT 300",
+        "idempotency_key": "VARCHAR(64)",
     }
     for column, ddl_type in additions.items():
         if column not in columns:

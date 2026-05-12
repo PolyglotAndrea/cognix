@@ -27,6 +27,8 @@ class TaskStore:
         schedule: str,
         payload: dict[str, Any],
         max_retries: int = 3,
+        max_execution_seconds: int = 300,
+        idempotency_key: str | None = None,
     ) -> ScheduledTaskModel:
         """Create a new scheduled task."""
         async with get_session() as session:
@@ -38,6 +40,8 @@ class TaskStore:
                 payload=json.dumps(payload),
                 state=TaskState.ACTIVE,
                 max_retries=max_retries,
+                max_execution_seconds=max_execution_seconds,
+                idempotency_key=idempotency_key,
                 next_run=next_run_time(schedule),
             )
             session.add(task)
@@ -244,6 +248,54 @@ class TaskStore:
                 .values(lease_owner=None, lease_expires_at=None)
             )
             return result.rowcount
+
+    async def replay_failed(self, task_id: str) -> bool:
+        """Move a FAILED task back to ACTIVE for immediate re-execution."""
+        async with get_session() as session:
+            result = await session.execute(
+                update(ScheduledTaskModel)
+                .where(
+                    and_(
+                        ScheduledTaskModel.id == task_id,
+                        ScheduledTaskModel.state == TaskState.FAILED,
+                    )
+                )
+                .values(
+                    state=TaskState.ACTIVE,
+                    run_count=0,
+                    next_run=datetime.now(UTC),
+                    lease_owner=None,
+                    lease_expires_at=None,
+                    idempotency_key=None,
+                )
+            )
+            return result.rowcount > 0
+
+    async def check_idempotency(self, task_id: str, key: str) -> bool:
+        """Return True if this idempotency key has NOT been seen for this task.
+
+        If the key matches the stored key, the task has already been executed
+        with this key — return False (skip). Otherwise, store the key and
+        return True (proceed).
+        """
+        async with get_session() as session:
+            result = await session.execute(
+                select(
+                    ScheduledTaskModel.idempotency_key,
+                    ScheduledTaskModel.last_run,
+                ).where(
+                    ScheduledTaskModel.id == task_id,
+                )
+            )
+            row = result.one_or_none()
+            if row and row.idempotency_key == key and row.last_run is not None:
+                return False
+            await session.execute(
+                update(ScheduledTaskModel)
+                .where(ScheduledTaskModel.id == task_id)
+                .values(idempotency_key=key)
+            )
+            return True
 
     async def delete(self, task_id: str) -> bool:
         """Delete a task."""

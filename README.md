@@ -153,10 +153,16 @@ cognix/
 | `POST /api/v1/approvals/{id}/respond` | Answer a pending human question request |
 | `POST /api/v1/approvals/{id}/reject` | Reject a pending tool/action request |
 | `POST /api/v1/approvals/{id}/resume` | Resume an approved Agent or Claude SDK tool call |
+| `POST /api/v1/approvals/{id}/resume-and-continue` | Resume an approved Hermes Agent or Claude SDK run and continue to a final response |
+| `POST /api/v1/approvals/{id}/resume-and-continue/stream` | Stream a resumed Hermes Agent or Claude SDK run |
 | `POST /api/v1/approvals/{id}/resume/stream` | Stream a resumed Claude Agent SDK run |
 | `GET /api/v1/tasks` | List scheduled tasks |
 | `POST /api/v1/tasks` | Create scheduled task |
+| `POST /api/v1/tasks/{id}/replay` | Replay a failed task immediately |
 | `GET /api/v1/skills` | List skills |
+| `GET /api/v1/connectors/platforms` | List connector platforms and credential status |
+| `GET /api/v1/connectors/tools` | List connector tools and effective access levels |
+| `POST /api/v1/connectors/tools/{tool_name}/call` | Debug-call a connector tool with permission checks and approval gating |
 | `GET /api/v1/runtime/status` | Inspect scheduler, distributed task dispatcher status, retry settings, and runtime metrics |
 | `GET /api/v1/workspaces/{id}/mcp/servers/{server_id}/tools` | Discover MCP tools for a workspace server |
 | `POST /api/v1/workspaces/{id}/mcp/servers/{server_id}/tools/{tool_name}/call` | Invoke a discovered MCP tool with permission checks for validation/debugging |
@@ -192,7 +198,13 @@ Cognix normalizes Agent permission modes at runtime:
 | `plan` | Read tools run directly; write and dangerous tools create plan confirmation requests. |
 | `unrestricted` | Allows all tool access levels without approval. |
 
-Approval requests are stored locally and can be typed as `tool_permission`, `plan_confirmation`, or `question`. Approved Cognix core tool calls resume through `/api/v1/approvals/{id}/resume`; Claude SDK approvals can resume as SSE through `/api/v1/approvals/{id}/resume/stream`.
+Approval requests are stored locally and can be typed as `tool_permission`, `plan_confirmation`, or `question`. Hermes Agent waiting snapshots are persisted into approval metadata so approved core tool calls can continue through `/api/v1/approvals/{id}/resume-and-continue/stream` after a runtime reload when the serialized context is still valid. Claude SDK approvals can resume as SSE through `/api/v1/approvals/{id}/resume/stream` or the shared resume-and-continue API.
+
+### Connectors
+
+Connectors provide OAuth-backed tools for external platforms such as X and Instagram. Credentials are encrypted locally, expose expiry/reauthorization status, and validate missing OAuth scopes after callback. Connector tools are mounted into Agents through the shared runtime mount path.
+
+Public posting, upload, delete, and reply tools are treated as `dangerous`, so `workspace-write`, `ask`, and `plan` modes create approval requests before execution. The connector debug-call API follows the same permission decision: when approval is required it returns an `approval_id`; after approval, repeat the call with the same arguments and `approval_id` to execute it.
 
 ### Claude Agent SDK Mode
 
@@ -222,6 +234,9 @@ Scheduled tasks are stored in the database and coordinated with runtime leases:
 - Successful runs release the lease and advance `next_run`.
 - Failed runs retry with exponential backoff until `max_retries` is exhausted.
 - Exhausted tasks are marked `failed` and removed from future dispatch.
+- Tasks can set `max_execution_seconds`; dispatchers fail timed-out runs and apply the same retry policy.
+- Failed tasks can be replayed, which clears leases and prior idempotency state before immediate re-execution.
+- Optional `idempotency_key` payloads prevent a previously completed key from executing again for the same task.
 - Each runtime node respects dispatcher capacity settings, including `dispatcher_batch_size` and `dispatcher_max_concurrent`.
 - Runtime status exposes dispatcher metrics including active task ids, claimed, success, failure, retry, exhausted failure, and last error counters.
 

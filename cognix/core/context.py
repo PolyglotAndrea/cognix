@@ -67,3 +67,39 @@ class Context:
 
     def get_variable(self, key: str, default: Any = None) -> Any:
         return self.variables.get(key, default)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a JSON-compatible dict."""
+        return {
+            "conversation_id": self.conversation_id,
+            "messages": [
+                {
+                    "role": m.role,
+                    "content": m.content,
+                    "name": m.name,
+                    "tool_call_id": m.tool_call_id,
+                    "tool_calls": m.tool_calls,
+                }
+                for m in self.messages
+            ],
+            "metadata": self.metadata,
+            "variables": self.variables,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> Context:
+        """Deserialize from a dict produced by ``to_dict``."""
+        ctx = cls(conversation_id=data.get("conversation_id", ""))
+        for m in data.get("messages", []):
+            ctx.messages.append(
+                Message(
+                    role=m["role"],
+                    content=m["content"],
+                    name=m.get("name"),
+                    tool_call_id=m.get("tool_call_id"),
+                    tool_calls=m.get("tool_calls"),
+                )
+            )
+        ctx.metadata = data.get("metadata", {})
+        ctx.variables = data.get("variables", {})
+        return ctx

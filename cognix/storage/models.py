@@ -100,11 +100,15 @@ class ScheduledTaskModel(Base):
     payload: Mapped[str] = mapped_column(Text, default="{}")  # JSON
     state: Mapped[TaskState] = mapped_column(Enum(TaskState), default=TaskState.ACTIVE)
     max_retries: Mapped[int] = mapped_column(Integer, default=3)
+    max_execution_seconds: Mapped[int] = mapped_column(Integer, default=300)
     run_count: Mapped[int] = mapped_column(Integer, default=0)
     last_run: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     next_run: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     lease_owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
 

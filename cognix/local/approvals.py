@@ -122,6 +122,29 @@ class ApprovalStore:
     def complete(self, approval_id: str, result: str) -> ApprovalRequest | None:
         return self._set_status(approval_id, "completed", result=result)
 
+    def update_metadata(
+        self, approval_id: str, patch: dict[str, Any]
+    ) -> ApprovalRequest | None:
+        """Merge *patch* into the approval's metadata dict."""
+        approvals = self.list_all(include_resolved=True)
+        updated: ApprovalRequest | None = None
+        next_rows: list[ApprovalRequest] = []
+        for approval in approvals:
+            if approval.id == approval_id:
+                merged = {**approval.metadata, **patch}
+                updated = ApprovalRequest(
+                    **{
+                        **asdict(approval),
+                        "metadata": merged,
+                        "updated_at": datetime.now(UTC).isoformat(),
+                    }
+                )
+                next_rows.append(updated)
+            else:
+                next_rows.append(approval)
+        self._write(next_rows)
+        return updated
+
     def _set_status(
         self,
         approval_id: str,

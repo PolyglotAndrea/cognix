@@ -10,6 +10,7 @@ from typing import Any
 from sqlalchemy import select
 
 from cognix.connectors.crypto import decrypt_token, encrypt_token
+from cognix.connectors.exceptions import ConnectorTokenExpiredError
 from cognix.connectors.providers import get_provider
 from cognix.storage.database import get_session
 from cognix.storage.models import ConnectorCredentialModel
@@ -19,6 +20,20 @@ logger = logging.getLogger(__name__)
 
 class ConnectorManager:
     """Manages connector credentials and OAuth flows."""
+
+    # ── Scope Validation ──────────────────────────────────────────────
+
+    @staticmethod
+    def validate_scopes(
+        granted: str | list[str],
+        required: list[str],
+    ) -> list[str]:
+        """Return list of missing scopes. Empty if all required scopes are granted."""
+        if isinstance(granted, str):
+            granted_set = set(granted.split())
+        else:
+            granted_set = set(granted)
+        return [s for s in required if s not in granted_set]
 
     # ── OAuth Flow ──────────────────────────────────────────────────
 
@@ -44,8 +59,12 @@ class ConnectorManager:
         *,
         state: str = "",
         workspace_id: str | None = None,
-    ) -> ConnectorCredentialModel:
-        """Exchange an auth code for tokens and store the credential."""
+    ) -> tuple[ConnectorCredentialModel, list[str]]:
+        """Exchange an auth code for tokens and store the credential.
+
+        Returns (credential, missing_scopes).  ``missing_scopes`` is empty when
+        every scope required by the provider's tools has been granted.
+        """
         provider = get_provider(platform)
         if not provider:
             raise ValueError(f"Unknown connector platform: {platform}")
@@ -53,13 +72,25 @@ class ConnectorManager:
         token_data = await provider.exchange_code(code, redirect_uri, state)
         user_info = await provider.get_user_info(token_data["access_token"])
 
-        return await self.store_credential(
+        cred = await self.store_credential(
             user_id=user_id,
             platform=platform,
             token_data=token_data,
             user_info=user_info,
             workspace_id=workspace_id,
         )
+
+        # Validate scopes
+        granted = token_data.get("scope", "")
+        missing = self.validate_scopes(granted, provider.default_scopes)
+        if missing:
+            logger.warning(
+                "Connector %s missing scopes: %s (granted: %s)",
+                platform,
+                missing,
+                granted,
+            )
+        return cred, missing
 
     # ── Credential CRUD ─────────────────────────────────────────────
 
@@ -213,9 +244,19 @@ class ConnectorManager:
             return True
 
     async def get_decrypted_token(self, credential: ConnectorCredentialModel) -> str:
-        """Return the decrypted access token, refreshing if needed."""
+        """Return the decrypted access token, refreshing if needed.
+
+        Raises ConnectorTokenExpiredError if the token is expired and cannot
+        be refreshed (no refresh token or refresh failed).
+        """
         if credential.token_expires_at and credential.token_expires_at < datetime.now(UTC):
-            await self.refresh_if_expired(credential)
+            refreshed = await self.refresh_if_expired(credential)
+            if refreshed.token_expires_at and refreshed.token_expires_at < datetime.now(UTC):
+                raise ConnectorTokenExpiredError(
+                    platform=credential.platform,
+                    credential_id=credential.id,
+                )
+            credential = refreshed
         return decrypt_token(credential.access_token_enc)
 
     async def refresh_if_expired(

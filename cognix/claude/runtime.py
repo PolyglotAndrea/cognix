@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import importlib
+import logging
+import shutil
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from cognix.core.agent import AgentEvent
@@ -12,6 +15,8 @@ from cognix.core.permissions import decide_permission, normalize_permission_mode
 from cognix.local.approvals import ApprovalRequest, ApprovalStore
 from cognix.local.files import WorkspaceFileStore
 from cognix.local.workspace_config import MCPServerConfig, WorkspaceConfigStore
+
+logger = logging.getLogger(__name__)
 
 
 class ClaudeAgentSDKUnavailableError(RuntimeError):
@@ -231,8 +236,58 @@ def _mcp_servers(workspace_id: str) -> dict[str, dict[str, Any]]:
     for server in WorkspaceConfigStore(workspace_id).list_mcp_servers():
         if not server.enabled:
             continue
+        _validate_mcp_server(server)
         servers[server.name] = _mcp_server_config(server)
     return servers
+
+
+def _validate_mcp_server(server: MCPServerConfig) -> None:
+    """Validate an MCP server config for basic safety.
+
+    Logs warnings for potentially dangerous configurations. Does not block
+    (the workspace admin is trusted), but makes issues visible.
+    """
+    cmd = server.command
+    if not cmd:
+        return
+
+    # Warn if command is a relative path that doesn't resolve in PATH
+    cmd_path = Path(cmd)
+    if not cmd_path.is_absolute():
+        resolved = shutil.which(cmd)
+        if not resolved:
+            logger.warning(
+                "MCP server '%s' command '%s' not found in PATH",
+                server.name,
+                cmd,
+            )
+    elif not cmd_path.exists():
+        logger.warning(
+            "MCP server '%s' command path does not exist: %s",
+            server.name,
+            cmd,
+        )
+
+    # Warn on suspicious env var names
+    if server.env:
+        sensitive_keys = {
+            "AWS_SECRET_ACCESS_KEY",
+            "DATABASE_URL",
+            "PRIVATE_KEY",
+            "SECRET_KEY",
+            "TOKEN",
+            "PASSWORD",
+        }
+        for key in server.env:
+            upper = key.upper()
+            for pattern in sensitive_keys:
+                if pattern in upper:
+                    logger.warning(
+                        "MCP server '%s' env var '%s' may contain secrets",
+                        server.name,
+                        key,
+                    )
+                    break
 
 
 def _mcp_server_config(server: MCPServerConfig) -> dict[str, Any]:

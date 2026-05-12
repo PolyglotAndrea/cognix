@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
+
+from cognix.scheduler.retry import compute_retry_at
+from cognix.scheduler.schedules import next_run_time
 
 logger = logging.getLogger(__name__)
 
@@ -194,8 +198,36 @@ class SchedulerEngine:
             logger.info("Task %s is leased by another runtime node", task_id)
             return
 
+        task = await store.get(task_id)
+        if task:
+            idempotency_key = payload.get("idempotency_key") or task.idempotency_key
+            if idempotency_key:
+                should_execute = await store.check_idempotency(task_id, str(idempotency_key))
+                if not should_execute:
+                    logger.info(
+                        "Skipping task %s; idempotency key %s already executed",
+                        task_id,
+                        idempotency_key,
+                    )
+                    await store.complete_lease(
+                        task_id,
+                        owner=self.node_id,
+                        next_run=next_run_time(task.schedule),
+                    )
+                    return
+
         try:
-            run = await self._executor.execute(task_id, payload) or {}
+            timeout = getattr(task, "max_execution_seconds", 300) if task else 300
+            run = await asyncio.wait_for(
+                self._executor.execute(task_id, payload),
+                timeout=timeout or 300,
+            ) or {}
+        except TimeoutError:
+            logger.exception("Task %s timed out", task_id)
+            run = {
+                "status": "failure",
+                "error": f"Execution timed out after {timeout or 300}s",
+            }
         except Exception as e:
             logger.exception("Task %s failed: %s", task_id, e)
             run = {"status": "failure", "error": str(e)}
@@ -204,18 +236,16 @@ class SchedulerEngine:
         if run.get("status") == "failure" and task:
             attempts = max(task.run_count, 1)
             if attempts <= task.max_retries:
-                delay_seconds = min(
-                    self.retry_base_seconds * (2 ** (attempts - 1)),
-                    self.retry_max_seconds,
+                retry_at = compute_retry_at(
+                    attempts, self.retry_base_seconds, self.retry_max_seconds,
                 )
-                retry_at = datetime.now(UTC) + timedelta(seconds=delay_seconds)
                 await store.complete_lease(task_id, owner=self.node_id, next_run=retry_at)
                 logger.warning(
-                    "Task %s failed; scheduler retry %s/%s scheduled in %ss",
+                    "Task %s failed; scheduler retry %s/%s scheduled at %s",
                     task_id,
                     attempts,
                     task.max_retries,
-                    delay_seconds,
+                    retry_at.isoformat(),
                 )
                 return
 

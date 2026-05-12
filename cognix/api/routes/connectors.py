@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import secrets
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -13,12 +14,30 @@ from cognix.auth.dependencies import (
     require_connectors_read,
     require_connectors_write,
 )
+from cognix.connectors.adapter import connector_access_level
+from cognix.connectors.exceptions import ConnectorAPIError, ConnectorTokenExpiredError
 from cognix.connectors.manager import ConnectorManager
 from cognix.connectors.providers import all_providers, get_provider
+from cognix.core.permissions import clamp_permission_mode, decide_permission
+from cognix.local.approvals import ApprovalStore
 from cognix.local.workspace_config import WorkspaceConfigStore
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/connectors", tags=["connectors"])
+
+
+def _credential_status(cred) -> dict:
+    """Compute expiry/reauth fields for a credential."""
+    now = datetime.now(UTC)
+    expires_at = cred.token_expires_at
+    is_expired = bool(expires_at and expires_at < now)
+    can_refresh = bool(cred.refresh_token_enc)
+    needs_reauth = is_expired and not can_refresh
+    return {
+        "is_expired": is_expired,
+        "needs_reauth": needs_reauth,
+        "token_expires_at": expires_at.isoformat() if expires_at else None,
+    }
 
 
 # ── OAuth flow ──────────────────────────────────────────────────────
@@ -52,9 +71,7 @@ async def list_platforms(
                     "scopes": c.scopes,
                     "workspace_id": c.workspace_id,
                     "created_at": c.created_at.isoformat() if c.created_at else None,
-                    "token_expires_at": (
-                        c.token_expires_at.isoformat() if c.token_expires_at else None
-                    ),
+                    **_credential_status(c),
                 }
                 for c in platform_creds
             ],
@@ -120,7 +137,7 @@ async def callback(
 
     manager = ConnectorManager()
     try:
-        cred = await manager.handle_callback(
+        cred, missing_scopes = await manager.handle_callback(
             platform=platform,
             code=body.code,
             redirect_uri=redirect_uri,
@@ -143,14 +160,24 @@ async def callback(
                 credential_id=cred.id,
             )
         except Exception:
-            logger.warning("Failed to auto-create connector config for workspace %s", workspace_id)
+            logger.warning(
+                "Failed to auto-create connector config for workspace %s",
+                workspace_id,
+            )
 
-    return {
+    result = {
         "id": cred.id,
         "platform": cred.platform,
         "platform_username": cred.platform_username,
         "workspace_id": cred.workspace_id,
     }
+    if missing_scopes:
+        result["missing_scopes"] = missing_scopes
+        result["warning"] = (
+            f"Some features may be limited. Missing scopes: "
+            f"{', '.join(missing_scopes)}"
+        )
+    return result
 
 
 # ── Credential CRUD ─────────────────────────────────────────────────
@@ -173,7 +200,7 @@ async def list_credentials(
             "scopes": c.scopes,
             "workspace_id": c.workspace_id,
             "created_at": c.created_at.isoformat() if c.created_at else None,
-            "token_expires_at": c.token_expires_at.isoformat() if c.token_expires_at else None,
+            **_credential_status(c),
         }
         for c in creds
     ]
@@ -228,6 +255,7 @@ async def list_connector_tools(
                 ws_configs[conn.platform] = {
                     "connector_id": conn.id,
                     "disabled_tools": set(conn.metadata.get("disabled_tools", [])),
+                    "metadata": conn.metadata,
                 }
         except FileNotFoundError:
             pass
@@ -244,6 +272,7 @@ async def list_connector_tools(
 
         config = ws_configs.get(cred.platform, {})
         disabled = config.get("disabled_tools", set())
+        metadata = config.get("metadata", {})
 
         for spec in provider.list_tools():
             tool_name = f"conn_{cred.platform}_{spec.name}"
@@ -254,7 +283,7 @@ async def list_connector_tools(
                 "display_name": provider.display_name,
                 "description": spec.description,
                 "parameters": spec.parameters,
-                "access_level": spec.access_level,
+                "access_level": connector_access_level(spec, metadata),
                 "enabled": spec.name not in disabled,
                 "connector_id": config.get("connector_id"),
             })
@@ -299,6 +328,8 @@ async def toggle_connector_tool(
 
 class CallToolRequest(BaseModel):
     arguments: dict = {}
+    permission_mode: str = "workspace-write"
+    approval_id: str | None = None
 
 
 @router.post("/tools/{tool_name}/call")
@@ -319,18 +350,102 @@ async def call_connector_tool(
     provider = get_provider(platform)
     if not provider:
         raise HTTPException(400, f"Unknown platform: {platform}")
+    spec = next(
+        (item for item in provider.list_tools() if item.name == original_name),
+        None,
+    )
+    if not spec:
+        raise HTTPException(404, f"Connector tool not found: {original_name}")
+
+    metadata: dict = {}
+    if workspace_id:
+        try:
+            store = WorkspaceConfigStore(workspace_id)
+            for conn in store.list_connectors():
+                if conn.platform == platform:
+                    metadata = conn.metadata
+                    if original_name in set(metadata.get("disabled_tools", [])):
+                        raise HTTPException(403, f"Connector tool disabled: {tool_name}")
+                    break
+        except FileNotFoundError:
+            pass
+
+    access_level = connector_access_level(spec, metadata)
+    effective_mode = clamp_permission_mode(body.permission_mode, user.role)
+    decision = decide_permission(
+        effective_mode,
+        access_level,
+        f"debug connector tool '{tool_name}'",
+    )
+    approved_id: str | None = None
+    if not decision.allowed:
+        if not decision.requires_approval:
+            raise HTTPException(403, decision.reason)
+        approval_store = ApprovalStore()
+        if body.approval_id:
+            approval = approval_store.get(body.approval_id)
+            if not approval:
+                raise HTTPException(404, "Approval not found")
+            if approval.status != "approved":
+                raise HTTPException(409, "Approval has not been approved")
+            if (
+                approval.tool_name != tool_name
+                or approval.arguments != body.arguments
+                or approval.workspace_id != workspace_id
+            ):
+                raise HTTPException(400, "Approval does not match this connector call")
+            approved_id = approval.id
+        else:
+            approval = approval_store.create(
+                agent_id=f"connector-debug:{user.id}",
+                workspace_id=workspace_id,
+                tool_name=tool_name,
+                arguments=body.arguments,
+                access_level=access_level,
+                reason=decision.reason,
+                kind="tool_permission",
+                metadata={
+                    "runtime": "connector-debug",
+                    "platform": platform,
+                    "original_name": original_name,
+                    "permission_mode": effective_mode,
+                },
+            )
+            return {
+                "approval_required": True,
+                "approval_id": approval.id,
+                "tool_name": tool_name,
+                "access_level": access_level,
+                "permission_mode": effective_mode,
+                "reason": decision.reason,
+            }
 
     manager = ConnectorManager()
     cred = await manager.resolve_credential(user.id, platform, workspace_id)
     if not cred:
         raise HTTPException(404, f"No {provider.display_name} credential found. Connect first.")
 
-    access_token = await manager.get_decrypted_token(cred)
+    try:
+        access_token = await manager.get_decrypted_token(cred)
+    except ConnectorTokenExpiredError as e:
+        raise HTTPException(
+            401,
+            detail={
+                "code": "token_expired",
+                "message": str(e),
+                "platform": platform,
+                "needs_reauth": True,
+            },
+        )
 
     try:
         result = await provider.call_tool(original_name, body.arguments, access_token)
+    except ConnectorAPIError as e:
+        raise HTTPException(e.status_code, detail=e.to_dict())
     except Exception as e:
         logger.exception("Connector tool call failed: %s", tool_name)
         raise HTTPException(502, f"Tool call failed: {e}")
 
+    if approved_id:
+        ApprovalStore().complete(approved_id, str(result)[:4000])
     return {"tool_name": tool_name, "result": result}

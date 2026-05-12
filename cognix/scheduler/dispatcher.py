@@ -7,10 +7,11 @@ import json
 import logging
 import os
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from cognix.scheduler.executor import TaskExecutor
+from cognix.scheduler.retry import compute_retry_at
 from cognix.scheduler.schedules import next_run_time
 from cognix.scheduler.store import TaskStore
 from cognix.storage.models import ScheduledTaskModel, TaskState
@@ -68,7 +69,8 @@ class DistributedTaskDispatcher:
         if not self.running:
             self._task = asyncio.create_task(self._run_loop())
 
-    async def stop(self) -> None:
+    async def stop(self, *, drain_timeout: float = 30.0) -> None:
+        """Stop the dispatcher, optionally waiting for active tasks to finish."""
         if not self._task:
             return
         self._task.cancel()
@@ -77,6 +79,25 @@ class DistributedTaskDispatcher:
         except asyncio.CancelledError:
             pass
         self._task = None
+
+        # Drain active tasks
+        if self._active_task_ids:
+            logger.info(
+                "Draining %d active task(s) (timeout=%.1fs)",
+                len(self._active_task_ids),
+                drain_timeout,
+            )
+            await asyncio.sleep(0)  # yield to let tasks notice cancellation
+            deadline = asyncio.get_event_loop().time() + drain_timeout
+            while self._active_task_ids:
+                if asyncio.get_event_loop().time() >= deadline:
+                    logger.warning(
+                        "Drain timeout: %d task(s) still active: %s",
+                        len(self._active_task_ids),
+                        sorted(self._active_task_ids),
+                    )
+                    break
+                await asyncio.sleep(0.5)
 
     async def dispatch_once(self) -> int:
         available_slots = max(0, self.max_concurrent - len(self._active_task_ids))
@@ -119,20 +140,57 @@ class DistributedTaskDispatcher:
         self._active_task_ids.add(task.id)
         payload = _payload_dict(task.payload)
         heartbeat_task: asyncio.Task | None = None
+        run: dict[str, Any] = {}
         try:
             if task.task_type and "task_type" not in payload:
                 payload["task_type"] = task.task_type.value
-            # Start lease heartbeat for long-running tasks
-            heartbeat_interval = max(self.lease_ttl_seconds // 3, 10)
-            heartbeat_task = asyncio.create_task(
-                self._lease_heartbeat_loop(task.id, heartbeat_interval)
-            )
-            try:
-                run = await self.executor.execute(task.id, payload) or {}
-            except Exception as exc:
-                logger.exception("Task %s executor raised outside normal failure handling", task.id)
-                self.metrics["last_error"] = str(exc)
-                run = {"status": "failure", "error": str(exc)}
+            idempotency_key = payload.get("idempotency_key") or task.idempotency_key
+            skip_execution = False
+            if idempotency_key:
+                should_execute = await self.store.check_idempotency(
+                    task.id,
+                    str(idempotency_key),
+                )
+                if not should_execute:
+                    logger.info(
+                        "Skipping task %s; idempotency key %s already executed",
+                        task.id,
+                        idempotency_key,
+                    )
+                    self.metrics.setdefault("idempotency_skipped_total", 0)
+                    self.metrics["idempotency_skipped_total"] += 1
+                    run = {"status": "success", "result": "Skipped by idempotency key"}
+                    skip_execution = True
+            if not skip_execution:
+                # Start lease heartbeat for long-running tasks
+                heartbeat_interval = max(self.lease_ttl_seconds // 3, 10)
+                heartbeat_task = asyncio.create_task(
+                    self._lease_heartbeat_loop(task.id, heartbeat_interval)
+                )
+                timeout = getattr(task, "max_execution_seconds", 300) or 300
+                try:
+                    run = await asyncio.wait_for(
+                        self.executor.execute(task.id, payload),
+                        timeout=timeout,
+                    ) or {}
+                except TimeoutError:
+                    logger.error(
+                        "Task %s timed out after %ds",
+                        task.id,
+                        timeout,
+                    )
+                    self.metrics["last_error"] = f"Timeout after {timeout}s"
+                    run = {
+                        "status": "failure",
+                        "error": f"Execution timed out after {timeout}s",
+                    }
+                except Exception as exc:
+                    logger.exception(
+                        "Task %s executor raised outside normal failure handling",
+                        task.id,
+                    )
+                    self.metrics["last_error"] = str(exc)
+                    run = {"status": "failure", "error": str(exc)}
         finally:
             if heartbeat_task:
                 heartbeat_task.cancel()
@@ -166,7 +224,10 @@ class DistributedTaskDispatcher:
                     ttl_seconds=self.lease_ttl_seconds,
                 )
                 if not ok:
-                    logger.warning("Task %s heartbeat: lease extension failed (lost lease?)", task_id)
+                    logger.warning(
+                        "Task %s heartbeat: lease extension failed (lost lease?)",
+                        task_id,
+                    )
                     return
             except Exception:
                 logger.exception("Task %s heartbeat error", task_id)
@@ -174,11 +235,9 @@ class DistributedTaskDispatcher:
     async def _complete_failed_run(self, task: ScheduledTaskModel) -> None:
         attempts = max(task.run_count, 1)
         if attempts <= task.max_retries:
-            delay_seconds = min(
-                self.retry_base_seconds * (2 ** (attempts - 1)),
-                self.retry_max_seconds,
+            retry_at = compute_retry_at(
+                attempts, self.retry_base_seconds, self.retry_max_seconds,
             )
-            retry_at = datetime.now(UTC) + timedelta(seconds=delay_seconds)
             await self.store.complete_lease(
                 task.id,
                 owner=self.node_id,
@@ -186,11 +245,11 @@ class DistributedTaskDispatcher:
             )
             self.metrics["retry_scheduled_total"] += 1
             logger.warning(
-                "Task %s failed; retry %s/%s scheduled in %ss",
+                "Task %s failed; retry %s/%s scheduled at %s",
                 task.id,
                 attempts,
                 task.max_retries,
-                delay_seconds,
+                retry_at.isoformat(),
             )
             return
 

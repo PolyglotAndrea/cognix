@@ -13,8 +13,29 @@ from urllib.parse import urlencode
 import httpx
 
 from cognix.connectors.base import ConnectorProvider, ConnectorSpec
+from cognix.connectors.exceptions import ConnectorAPIError
 
 logger = logging.getLogger(__name__)
+
+
+def _handle_x_error(resp, tool_name: str) -> None:
+    """Raise ConnectorAPIError with X-specific error details."""
+    try:
+        body = resp.json()
+    except Exception:
+        body = {"raw": resp.text}
+    errors = body.get("errors", [])
+    detail = body.get("detail", "")
+    title = body.get("title", "")
+    msg = detail or title or (errors[0].get("message", "") if errors else "")
+    raise ConnectorAPIError(
+        platform="x",
+        tool=tool_name,
+        status_code=resp.status_code,
+        error_body=body,
+        message=msg or f"X API error ({resp.status_code})",
+    )
+
 
 _X_AUTH_URL = "https://twitter.com/i/oauth2/authorize"
 _X_TOKEN_URL = "https://api.twitter.com/2/oauth2/token"
@@ -85,7 +106,8 @@ class XConnectorProvider(ConnectorProvider):
 
         async with httpx.AsyncClient() as client:
             resp = await client.post(_X_TOKEN_URL, data=data, headers=headers, auth=auth)
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                _handle_x_error(resp, "exchange_code")
             return resp.json()
 
     async def refresh_access_token(self, refresh_token: str) -> dict[str, Any]:
@@ -98,7 +120,8 @@ class XConnectorProvider(ConnectorProvider):
         auth = (client_id, client_secret) if client_secret else None
         async with httpx.AsyncClient() as client:
             resp = await client.post(_X_TOKEN_URL, data=data, auth=auth)
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                _handle_x_error(resp, "refresh_access_token")
             return resp.json()
 
     async def get_user_info(self, access_token: str) -> dict[str, Any]:
@@ -108,7 +131,8 @@ class XConnectorProvider(ConnectorProvider):
                 f"{_X_API_BASE}/users/me?user.fields=profile_image_url",
                 headers=headers,
             )
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                _handle_x_error(resp, "get_user_info")
             data = resp.json().get("data", {})
             return {
                 "platform_user_id": data.get("id", ""),
@@ -146,7 +170,7 @@ class XConnectorProvider(ConnectorProvider):
                     },
                     "required": ["text"],
                 },
-                access_level="write",
+                access_level="dangerous",
             ),
             ConnectorSpec(
                 name="delete_tweet",
@@ -197,7 +221,7 @@ class XConnectorProvider(ConnectorProvider):
                     },
                     "required": ["media_data", "mime_type"],
                 },
-                access_level="write",
+                access_level="dangerous",
             ),
         ]
 
@@ -210,7 +234,8 @@ class XConnectorProvider(ConnectorProvider):
                     f"{_X_API_BASE}/users/me?user.fields={fields}",
                     headers=headers,
                 )
-                resp.raise_for_status()
+                if resp.status_code >= 400:
+                    _handle_x_error(resp, name)
                 return resp.json()
 
             elif name == "post_tweet":
@@ -220,7 +245,8 @@ class XConnectorProvider(ConnectorProvider):
                 if arguments.get("media_ids"):
                     payload["media"] = {"media_ids": arguments["media_ids"]}
                 resp = await client.post(f"{_X_API_BASE}/tweets", json=payload, headers=headers)
-                resp.raise_for_status()
+                if resp.status_code >= 400:
+                    _handle_x_error(resp, name)
                 return resp.json()
 
             elif name == "delete_tweet":
@@ -228,7 +254,8 @@ class XConnectorProvider(ConnectorProvider):
                 resp = await client.delete(
                     f"{_X_API_BASE}/tweets/{tid}", headers=headers,
                 )
-                resp.raise_for_status()
+                if resp.status_code >= 400:
+                    _handle_x_error(resp, name)
                 return resp.json()
 
             elif name == "search_tweets":
@@ -241,7 +268,8 @@ class XConnectorProvider(ConnectorProvider):
                     f"{_X_API_BASE}/tweets/search/recent",
                     params=params, headers=headers,
                 )
-                resp.raise_for_status()
+                if resp.status_code >= 400:
+                    _handle_x_error(resp, name)
                 return resp.json()
 
             elif name == "upload_media":
@@ -259,7 +287,8 @@ class XConnectorProvider(ConnectorProvider):
                     },
                     headers=headers,
                 )
-                init_resp.raise_for_status()
+                if init_resp.status_code >= 400:
+                    _handle_x_error(init_resp, name)
                 media_id = init_resp.json()["media_id_string"]
 
                 # APPEND
@@ -284,7 +313,8 @@ class XConnectorProvider(ConnectorProvider):
                     data={"command": "FINALIZE", "media_id": media_id},
                     headers=headers,
                 )
-                final_resp.raise_for_status()
+                if final_resp.status_code >= 400:
+                    _handle_x_error(final_resp, name)
                 return {"media_id": media_id, **final_resp.json()}
 
             else:

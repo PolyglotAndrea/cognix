@@ -9,8 +9,27 @@ from urllib.parse import urlencode
 import httpx
 
 from cognix.connectors.base import ConnectorProvider, ConnectorSpec
+from cognix.connectors.exceptions import ConnectorAPIError
 
 logger = logging.getLogger(__name__)
+
+
+def _handle_ig_error(resp, tool_name: str) -> None:
+    """Raise ConnectorAPIError with Instagram/Facebook error details."""
+    try:
+        body = resp.json()
+    except Exception:
+        body = {"raw": resp.text}
+    err = body.get("error", {})
+    msg = err.get("message", "") if isinstance(err, dict) else ""
+    raise ConnectorAPIError(
+        platform="instagram",
+        tool=tool_name,
+        status_code=resp.status_code,
+        error_body=body,
+        message=msg or f"Instagram API error ({resp.status_code})",
+    )
+
 
 _FB_AUTH_URL = "https://www.facebook.com/v19.0/dialog/oauth"
 _FB_TOKEN_URL = "https://graph.facebook.com/v19.0/oauth/access_token"
@@ -56,7 +75,8 @@ class InstagramConnectorProvider(ConnectorProvider):
         }
         async with httpx.AsyncClient() as client:
             resp = await client.get(_FB_TOKEN_URL, params=params)
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                _handle_ig_error(resp, "exchange_code")
             data = resp.json()
             # Exchange short-lived token for long-lived token
             if data.get("access_token"):
@@ -89,7 +109,8 @@ class InstagramConnectorProvider(ConnectorProvider):
                 f"{_IG_API_BASE}/me/accounts",
                 params={"fields": "instagram_business_account,name", "access_token": access_token},
             )
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                _handle_ig_error(resp, "get_user_info")
             pages = resp.json().get("data", [])
 
             ig_account_id = None
@@ -110,7 +131,8 @@ class InstagramConnectorProvider(ConnectorProvider):
                     "access_token": access_token,
                 },
             )
-            ig_resp.raise_for_status()
+            if ig_resp.status_code >= 400:
+                _handle_ig_error(ig_resp, "get_user_info")
             ig_data = ig_resp.json()
 
             return {
@@ -153,7 +175,7 @@ class InstagramConnectorProvider(ConnectorProvider):
                     },
                     "required": ["image_url"],
                 },
-                access_level="write",
+                access_level="dangerous",
             ),
             ConnectorSpec(
                 name="get_media",
@@ -202,7 +224,7 @@ class InstagramConnectorProvider(ConnectorProvider):
                     },
                     "required": ["comment_id", "message"],
                 },
-                access_level="write",
+                access_level="dangerous",
             ),
         ]
 
@@ -223,7 +245,8 @@ class InstagramConnectorProvider(ConnectorProvider):
                         "access_token": access_token,
                     },
                 )
-                resp.raise_for_status()
+                if resp.status_code >= 400:
+                    _handle_ig_error(resp, name)
                 return resp.json()
 
             elif name == "post_media":
@@ -245,7 +268,8 @@ class InstagramConnectorProvider(ConnectorProvider):
                     f"{_IG_API_BASE}/{ig_account_id}/media",
                     data=container_data,
                 )
-                create_resp.raise_for_status()
+                if create_resp.status_code >= 400:
+                    _handle_ig_error(create_resp, name)
                 container_id = create_resp.json()["id"]
 
                 # Step 2: Publish the container
@@ -256,7 +280,8 @@ class InstagramConnectorProvider(ConnectorProvider):
                         "access_token": access_token,
                     },
                 )
-                publish_resp.raise_for_status()
+                if publish_resp.status_code >= 400:
+                    _handle_ig_error(publish_resp, name)
                 return publish_resp.json()
 
             elif name == "get_media":
@@ -273,7 +298,8 @@ class InstagramConnectorProvider(ConnectorProvider):
                         "access_token": access_token,
                     },
                 )
-                resp.raise_for_status()
+                if resp.status_code >= 400:
+                    _handle_ig_error(resp, name)
                 return resp.json()
 
             elif name == "get_comments":
@@ -284,7 +310,8 @@ class InstagramConnectorProvider(ConnectorProvider):
                         "access_token": access_token,
                     },
                 )
-                resp.raise_for_status()
+                if resp.status_code >= 400:
+                    _handle_ig_error(resp, name)
                 return resp.json()
 
             elif name == "reply_comment":
@@ -295,7 +322,8 @@ class InstagramConnectorProvider(ConnectorProvider):
                         "access_token": access_token,
                     },
                 )
-                resp.raise_for_status()
+                if resp.status_code >= 400:
+                    _handle_ig_error(resp, name)
                 return resp.json()
 
             else:
@@ -307,7 +335,8 @@ class InstagramConnectorProvider(ConnectorProvider):
             f"{_IG_API_BASE}/me/accounts",
             params={"fields": "instagram_business_account", "access_token": access_token},
         )
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            _handle_ig_error(resp, "_get_ig_account_id")
         for page in resp.json().get("data", []):
             ig = page.get("instagram_business_account")
             if ig:
