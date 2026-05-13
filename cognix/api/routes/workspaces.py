@@ -187,7 +187,7 @@ async def update_workspace_settings(
     llm = updates.get("llm")
     if llm and isinstance(llm, dict):
         api_key = llm.get("api_key", "")
-        if isinstance(api_key, str) and api_key.endswith("***") and len(api_key) < 10:
+        if isinstance(api_key, str) and api_key.endswith("***"):
             llm.pop("api_key", None)
     return _workspace_config(workspace_id).update_settings(updates)
 
@@ -540,7 +540,12 @@ async def run_workspace_workflow(
     user: CurrentUser = Depends(require_skills_write),
 ) -> dict:
     from cognix.api.state import agent_registry
+    from cognix.billing.entitlement import EntitlementService
     from cognix.orchestrator.workflow import execute_workflow, parse_workflow
+
+    entitlement = await EntitlementService.check_model_execution(user.id, workspace_id)
+    if not entitlement.allowed:
+        raise HTTPException(402, detail=entitlement.to_dict())
 
     store = _workflow_store(workspace_id)
     try:
@@ -835,33 +840,28 @@ def _file_store(workspace_id: str) -> WorkspaceFileStore:
 
 
 def resolve_workspace_llm(workspace_id: str) -> dict:
-    """Resolve effective LLM config for a workspace.
+    """Resolve effective LLM config for a workspace. Delegates to unified resolver."""
+    from cognix.providers.resolver import resolve_provider
 
-    Precedence: workspace settings > global config > defaults.
-    Returns dict with keys: base_url, api_key, default_model.
-    """
-    from cognix.local.config import ConfigStore
-
-    global_cfg = ConfigStore().get_llm()
-    ws_settings = _workspace_config(workspace_id).get_settings()
-    ws_llm = ws_settings.get("llm", {})
-
+    provider = resolve_provider(workspace_id)
     return {
-        "base_url": ws_llm.get("base_url") or global_cfg.base_url,
-        "api_key": ws_llm.get("api_key") or global_cfg.api_key,
-        "default_model": ws_llm.get("default_model") or global_cfg.default_model or "gpt-4o",
+        "base_url": provider.base_url,
+        "api_key": provider.api_key,
+        "default_model": provider.default_model,
     }
 
 
 def _chat_agent(*, workspace_id: str, name: str, model: str, system_prompt: str) -> Agent:
-    llm = resolve_workspace_llm(workspace_id)
+    from cognix.providers.resolver import resolve_provider
+
+    provider = resolve_provider(workspace_id)
     agent = Agent(
         name=name,
-        model=model or llm["default_model"],
+        model=model or provider.default_model,
         system_prompt=system_prompt,
         workspace_id=workspace_id,
-        api_key=llm["api_key"],
-        api_base=llm["base_url"],
+        api_key=provider.api_key,
+        api_base=provider.base_url,
     )
     return agent
 

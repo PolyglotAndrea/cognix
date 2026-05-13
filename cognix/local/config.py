@@ -29,9 +29,14 @@ class ConfigStore:
     def get_llm(self) -> LLMConfig:
         data = self._read()
         llm = data.get("llm", {})
+        api_key = llm.get("api_key")
+        if api_key:
+            from cognix.secrets import decrypt_secret
+
+            api_key = decrypt_secret(api_key)
         return LLMConfig(
             base_url=llm.get("base_url"),
-            api_key=llm.get("api_key"),
+            api_key=api_key,
             default_model=llm.get("default_model", "gpt-4o"),
         )
 
@@ -47,7 +52,12 @@ class ConfigStore:
         if base_url is not _MISSING:
             llm["base_url"] = base_url
         if api_key is not _MISSING:
-            llm["api_key"] = api_key
+            if api_key:
+                from cognix.secrets import encrypt_secret
+
+                llm["api_key"] = encrypt_secret(api_key)
+            else:
+                llm["api_key"] = api_key
         if default_model is not _MISSING:
             llm["default_model"] = default_model
         data["llm"] = llm

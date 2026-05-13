@@ -159,9 +159,17 @@ async def agent_chat(
     body: ChatRequest,
     user: CurrentUser = Depends(require_agents_write),
 ) -> dict:
+    from cognix.billing.entitlement import EntitlementService
+
     agent = await get_agent_runtime(agent_id)
     if not agent:
         raise HTTPException(404, "Agent not found")
+
+    entitlement = await EntitlementService.check_model_execution(
+        user.id, getattr(agent, "workspace_id", None)
+    )
+    if not entitlement.allowed:
+        raise HTTPException(402, detail=entitlement.to_dict())
 
     await _attach_runtime_mcp_tools(agent)
     response = await agent.run(body.message)
@@ -175,9 +183,17 @@ async def agent_chat_stream(
     user: CurrentUser = Depends(require_agents_write),
 ) -> StreamingResponse:
     """SSE endpoint using the stable AgentEvent protocol."""
+    from cognix.billing.entitlement import EntitlementService
+
     agent = await get_agent_runtime(agent_id)
     if not agent:
         raise HTTPException(404, "Agent not found")
+
+    entitlement = await EntitlementService.check_model_execution(
+        user.id, getattr(agent, "workspace_id", None)
+    )
+    if not entitlement.allowed:
+        raise HTTPException(402, detail=entitlement.to_dict())
 
     await _attach_runtime_mcp_tools(agent)
 
@@ -247,6 +263,21 @@ async def agent_chat_ws(websocket: WebSocket, agent_id: str) -> None:
         await websocket.send_json({"type": "error", "message": "Agent not found"})
         await websocket.close()
         return
+
+    from cognix.billing.entitlement import EntitlementService
+
+    entitlement = await EntitlementService.check_model_execution(
+        user.id, getattr(agent, "workspace_id", None)
+    )
+    if not entitlement.allowed:
+        await websocket.send_json({
+            "type": "error",
+            "message": entitlement.reason,
+            "code": "entitlement_required",
+        })
+        await websocket.close()
+        return
+
     await _attach_runtime_mcp_tools(agent)
 
     try:

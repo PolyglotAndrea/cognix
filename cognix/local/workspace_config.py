@@ -99,6 +99,13 @@ class WorkspaceConfigStore:
         settings.setdefault("enabled_skills", [])
         settings.setdefault("context", self.default_settings()["context"])
         settings.setdefault("llm", self.default_settings()["llm"])
+        # Decrypt LLM API key if encrypted
+        llm = settings.get("llm", {})
+        api_key = llm.get("api_key")
+        if api_key:
+            from cognix.secrets import decrypt_secret
+
+            llm["api_key"] = decrypt_secret(api_key)
         return settings
 
     def update_settings(self, updates: dict[str, Any]) -> dict[str, Any]:
@@ -108,8 +115,17 @@ class WorkspaceConfigStore:
                 settings[key] = {**settings.get(key, {}), **value}
             else:
                 settings[key] = value
+        # Encrypt LLM API key before persisting
+        llm = settings.get("llm", {})
+        api_key = llm.get("api_key")
+        if api_key:
+            from cognix.secrets import encrypt_secret, is_encrypted
+
+            if not is_encrypted(api_key):
+                llm["api_key"] = encrypt_secret(api_key)
         self._write_json(self.settings_path, settings)
-        return settings
+        # Return with decrypted key for API response
+        return self.get_settings()
 
     def set_skill_enabled(self, skill_name: str, enabled: bool) -> dict[str, Any]:
         settings = self.get_settings()

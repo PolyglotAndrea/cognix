@@ -63,7 +63,7 @@ def _mask_key(key: str | None) -> str | None:
 
 def _is_masked_key(value: str) -> bool:
     """Detect masked keys like 'sk-***' returned by GET endpoints."""
-    return bool(value) and value.endswith("***") and len(value) < 10
+    return bool(value) and value.endswith("***")
 
 
 @router.get("/llm")

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Loader2, Send, Sparkles } from 'lucide-react'
+import { CheckCircle2, Loader2, Send, Sparkles, XCircle } from 'lucide-react'
 import { api } from '@/shared/api/client'
 import { PlanCard } from './PlanCard'
 
@@ -26,17 +26,33 @@ interface WorkspacePlan {
   created_at: string
 }
 
+interface ExecutionResult {
+  task_id: string
+  result?: string
+  error?: string
+}
+
+interface ApplyResult {
+  plan_id: string
+  status: string
+  created: Record<string, string[]>
+  execution_results?: ExecutionResult[]
+}
+
 export function TaskComposer({
   workspaceId,
   onPlanApplied,
+  onAgentCreated,
 }: {
   workspaceId: string
-  onPlanApplied?: (result: { plan_id: string; status: string; created: Record<string, string[]> }) => void
+  onPlanApplied?: (result: ApplyResult) => void
+  onAgentCreated?: (agentId: string) => void
 }) {
   const queryClient = useQueryClient()
   const [intent, setIntent] = useState('')
   const [plan, setPlan] = useState<WorkspacePlan | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [applyResult, setApplyResult] = useState<ApplyResult | null>(null)
 
   const createPlanMutation = useMutation({
     mutationFn: (intentText: string) =>
@@ -59,9 +75,14 @@ export function TaskComposer({
       queryClient.invalidateQueries({ queryKey: ['agents'] })
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
       queryClient.invalidateQueries({ queryKey: ['workspace-settings', workspaceId] })
-      onPlanApplied?.(response.data)
+      const result: ApplyResult = response.data
+      setApplyResult(result)
+      onPlanApplied?.(result)
+      const createdAgents = result.created?.agents
+      if (createdAgents?.length > 0) {
+        onAgentCreated?.(createdAgents[0])
+      }
       setPlan(null)
-      setIntent('')
     },
     onError: (err: unknown) => {
       const detail =
@@ -132,6 +153,69 @@ export function TaskComposer({
       {error && (
         <div className="p-4 rounded-xl border border-rose-500/20 bg-rose-500/5 text-xs text-rose-600">
           {error}
+        </div>
+      )}
+
+      {/* Apply Result */}
+      {applyResult && (
+        <div className="p-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 space-y-3">
+          <div className="flex items-center gap-2 text-xs font-bold text-emerald-700">
+            <CheckCircle2 className="h-4 w-4" />
+            Plan applied successfully
+          </div>
+          <div className="space-y-1 text-[11px] text-foreground/70">
+            {applyResult.created.agents?.length > 0 && (
+              <div>Created {applyResult.created.agents.length} agent(s)</div>
+            )}
+            {applyResult.created.tasks?.length > 0 && (
+              <div>Created {applyResult.created.tasks.length} task(s)</div>
+            )}
+            {applyResult.created.skills?.length > 0 && (
+              <div>Installed {applyResult.created.skills.length} skill(s)</div>
+            )}
+            {applyResult.created.mcp_servers?.length > 0 && (
+              <div>Configured {applyResult.created.mcp_servers.length} MCP server(s)</div>
+            )}
+          </div>
+          {applyResult.execution_results && applyResult.execution_results.length > 0 && (
+            <div className="space-y-2 pt-2 border-t border-emerald-500/10">
+              <div className="text-[10px] font-bold uppercase tracking-widest text-foreground/50">
+                Execution Results
+              </div>
+              {applyResult.execution_results.map((er, i) => (
+                <div
+                  key={er.task_id || i}
+                  className="flex items-start gap-2 text-[11px]"
+                >
+                  {er.error ? (
+                    <>
+                      <XCircle className="h-3.5 w-3.5 text-rose-500 mt-0.5 shrink-0" />
+                      <div>
+                        <span className="font-bold text-rose-600">Task {er.task_id}: </span>
+                        <span className="text-rose-500">{er.error}</span>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 mt-0.5 shrink-0" />
+                      <div>
+                        <span className="font-bold text-emerald-600">Task {er.task_id}: </span>
+                        <span className="text-foreground/60 line-clamp-3">
+                          {er.result || 'Completed'}
+                        </span>
+                      </div>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          <button
+            onClick={() => { setApplyResult(null); setIntent('') }}
+            className="text-[11px] font-bold text-primary hover:underline"
+          >
+            Start over
+          </button>
         </div>
       )}
 

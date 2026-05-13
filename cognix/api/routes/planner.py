@@ -25,8 +25,13 @@ async def create_plan(
     user: CurrentUser = Depends(require_agents_write),
 ) -> dict:
     """Generate a structured plan from user intent."""
+    from cognix.billing.entitlement import EntitlementService
     from cognix.local.workspace import WorkspaceManager
     from cognix.planner.service import PlannerService
+
+    entitlement = await EntitlementService.check_model_execution(user.id, workspace_id)
+    if not entitlement.allowed:
+        raise HTTPException(402, detail=entitlement.to_dict())
 
     if not WorkspaceManager().get(workspace_id):
         raise HTTPException(404, "Workspace not found")

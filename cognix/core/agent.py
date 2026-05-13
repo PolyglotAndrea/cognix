@@ -306,16 +306,16 @@ class Agent:
 
         tools_schema = [t.to_openai_schema() for t in self.tools] if self.tools else None
 
-        # Fallback to global LLM config for missing fields
+        # Fallback to unified provider resolver
         api_base = self.api_base
         api_key = self.api_key
         model = self.model
         if not api_base or not api_key:
-            from cognix.local.config import ConfigStore
-            llm_cfg = ConfigStore().get_llm()
-            api_base = api_base or llm_cfg.base_url
-            api_key = api_key or llm_cfg.api_key
-            model = model or llm_cfg.default_model
+            from cognix.providers.resolver import resolve_provider
+            provider = resolve_provider(self.workspace_id)
+            api_base = api_base or provider.base_url
+            api_key = api_key or provider.api_key
+            model = model or provider.default_model
 
         kwargs: dict[str, Any] = {
             "model": model,
@@ -387,16 +387,16 @@ class Agent:
 
         tools_schema = [t.to_openai_schema() for t in self.tools] if self.tools else None
 
-        # Fallback to global LLM config for missing fields
+        # Fallback to unified provider resolver
         api_base = self.api_base
         api_key = self.api_key
         model = self.model
         if not api_base or not api_key:
-            from cognix.local.config import ConfigStore
-            llm_cfg = ConfigStore().get_llm()
-            api_base = api_base or llm_cfg.base_url
-            api_key = api_key or llm_cfg.api_key
-            model = model or llm_cfg.default_model
+            from cognix.providers.resolver import resolve_provider
+            provider = resolve_provider(self.workspace_id)
+            api_base = api_base or provider.base_url
+            api_key = api_key or provider.api_key
+            model = model or provider.default_model
 
         kwargs: dict[str, Any] = {
             "model": model,

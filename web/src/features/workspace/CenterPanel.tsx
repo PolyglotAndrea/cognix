@@ -76,7 +76,7 @@ interface PendingAttachment {
 }
 
 export function CenterPanel({ dragHandleProps }: { dragHandleProps?: any }) {
-  const { selectedAgentId, addToolResult, addLog } = useWorkspaceStore()
+  const { selectedAgentId, setSelectedAgent, addToolResult, addLog } = useWorkspaceStore()
   const queryClient = useQueryClient()
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
@@ -668,6 +668,7 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: any }) {
                       timestamp: Date.now(),
                     })
                   }}
+                  onAgentCreated={(agentId) => setSelectedAgent(agentId)}
                 />
               )}
             </div>

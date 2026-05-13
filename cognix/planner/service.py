@@ -115,7 +115,7 @@ class PlannerService:
         context = self._build_workspace_context(workspace_id)
 
         # Call LLM to generate plan
-        plan_json = await self._generate_plan_json(user_intent, context)
+        plan_json = await self._generate_plan_json(user_intent, context, workspace_id)
 
         # Parse and validate
         plan_id = uuid.uuid4().hex[:12]
@@ -170,14 +170,22 @@ class PlannerService:
         }
 
         ws_config = WorkspaceConfigStore(workspace_id)
+        task_steps: list[tuple[str, dict]] = []
+        agent_name_to_id: dict[str, str] = {}
 
         for step in plan.steps:
             if step.action == "create_agent":
-                agent_id = self._apply_create_agent(workspace_id, step.params)
+                agent_id = await self._apply_create_agent(workspace_id, step.params)
                 created["agents"].append(agent_id)
+                agent_name = step.params.get("name", "")
+                if agent_name:
+                    agent_name_to_id[agent_name] = agent_id
             elif step.action == "create_task":
-                task_id = self._apply_create_task(workspace_id, step.params)
+                task_id = await self._apply_create_task(
+                    workspace_id, step.params, agent_name_to_id,
+                )
                 created["tasks"].append(task_id)
+                task_steps.append((task_id, step.params))
             elif step.action == "install_skill":
                 skill_name = step.params.get("name", step.params.get("skill_name", ""))
                 if skill_name:
@@ -195,7 +203,20 @@ class PlannerService:
         plan.status = "applied"
         self._save_plan(plan)
 
-        return {"plan_id": plan_id, "status": "applied", "created": created}
+        # Trigger immediate execution for "once" tasks
+        execution_results = []
+        for task_id, params in task_steps:
+            schedule = params.get("schedule_type") or params.get("cron") or "once"
+            if schedule == "once":
+                exec_result = await self._trigger_task(task_id, workspace_id)
+                execution_results.append({"task_id": task_id, **exec_result})
+
+        return {
+            "plan_id": plan_id,
+            "status": "applied",
+            "created": created,
+            "execution_results": execution_results,
+        }
 
     def reject_plan(self, workspace_id: str, plan_id: str) -> dict:
         plan = self._load_plan(workspace_id, plan_id)
@@ -212,6 +233,36 @@ class PlannerService:
         plan.status = "confirmed"
         self._save_plan(plan)
         return {"plan_id": plan_id, "status": "confirmed"}
+
+    async def _trigger_task(self, task_id: str, workspace_id: str) -> dict:
+        """Trigger immediate execution of a once-off task.
+
+        Returns ``{"result": str}`` on success or ``{"error": str}`` on failure.
+        """
+        from sqlalchemy import select
+
+        from cognix.api.state import agent_registry
+        from cognix.scheduler.executor import TaskExecutor
+        from cognix.storage.database import get_session
+        from cognix.storage.models import ScheduledTaskModel
+
+        async with get_session() as session:
+            result = await session.execute(
+                select(ScheduledTaskModel).where(ScheduledTaskModel.id == task_id)
+            )
+            task = result.scalar_one_or_none()
+
+        if not task:
+            return {"error": "Task not found in database"}
+
+        payload = json.loads(task.payload) if task.payload else {}
+        executor = TaskExecutor(agent_registry=agent_registry)
+        try:
+            output = await executor.execute(task_id, payload)
+            return {"result": output or "Completed"}
+        except Exception as exc:
+            logger.warning("Plan task execution failed: %s", exc)
+            return {"error": str(exc)}
 
     def _build_workspace_context(self, workspace_id: str) -> dict:
         """Load current workspace state for the planner."""
@@ -253,12 +304,13 @@ class PlannerService:
         self,
         user_intent: str,
         context: dict,
+        workspace_id: str | None = None,
     ) -> dict[str, Any]:
         """Call LLM to generate a structured plan."""
-        from cognix.local.config import ConfigStore
+        from cognix.providers.resolver import resolve_provider
 
-        llm_cfg = ConfigStore().get_llm()
-        if not llm_cfg.api_key:
+        provider = resolve_provider(workspace_id)
+        if not provider.api_key:
             # Fallback: generate a simple default plan
             return self._default_plan(user_intent)
 
@@ -272,16 +324,20 @@ class PlannerService:
                 "Generate a plan as JSON."
             )
 
+            kwargs: dict = {}
+            if provider.base_url:
+                kwargs["api_base"] = provider.base_url
+
             response = await litellm.acompletion(
-                model=llm_cfg.default_model,
+                model=provider.default_model,
                 messages=[
                     {"role": "system", "content": PLAN_SYSTEM_PROMPT},
                     {"role": "user", "content": prompt},
                 ],
                 max_tokens=2000,
                 temperature=0.3,
-                api_key=llm_cfg.api_key,
-                **({"api_base": llm_cfg.base_url} if llm_cfg.base_url else {}),
+                api_key=provider.api_key,
+                **kwargs,
             )
 
             content = response.choices[0].message.content.strip()
@@ -343,7 +399,7 @@ class PlannerService:
         }
 
     @staticmethod
-    def _apply_create_agent(workspace_id: str, params: dict) -> str:
+    async def _apply_create_agent(workspace_id: str, params: dict) -> str:
         """Create an agent from plan step params."""
         from cognix.storage.database import get_session
         from cognix.storage.models import AgentModel
@@ -356,50 +412,43 @@ class PlannerService:
             model=params.get("model", "gpt-4o"),
             system_prompt=params.get("system_prompt", ""),
         )
-
-        import asyncio
-
-        async def _insert():
-            async with get_session() as session:
-                session.add(agent)
-
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(_insert())
-        except RuntimeError:
-            asyncio.run(_insert())
-
+        async with get_session() as session:
+            session.add(agent)
         return agent_id
 
     @staticmethod
-    def _apply_create_task(workspace_id: str, params: dict) -> str:
+    async def _apply_create_task(
+        workspace_id: str,
+        params: dict,
+        agent_name_to_id: dict[str, str] | None = None,
+    ) -> str:
         """Create a scheduled task from plan step params."""
         from cognix.storage.database import get_session
-        from cognix.storage.models import ScheduledTaskModel
+        from cognix.storage.models import ScheduledTaskModel, TaskState, TaskType
 
         task_id = uuid.uuid4().hex[:12]
+        schedule = params.get("cron") or params.get("schedule") or "once"
+
+        # Resolve agent_name -> agent_id from the name mapping built during apply
+        agent_id = params.get("agent_id", "")
+        agent_name = params.get("agent_name", "")
+        if not agent_id and agent_name and agent_name_to_id:
+            agent_id = agent_name_to_id.get(agent_name, "")
+
+        payload = json.dumps({
+            "agent_id": agent_id,
+            "agent_name": agent_name,
+            "message": params.get("input", ""),
+            "workspace_id": workspace_id,
+        })
         task = ScheduledTaskModel(
             id=task_id,
-            workspace_id=workspace_id,
             name=params.get("name", "plan-task"),
-            task_type="agent_call",
-            agent_name=params.get("agent_name", ""),
-            schedule_type=params.get("schedule_type", "once"),
-            cron_expression=params.get("cron", None),
-            interval_seconds=params.get("interval_seconds", None),
-            input_data=params.get("input", ""),
+            task_type=TaskType.AGENT_CALL,
+            schedule=schedule,
+            payload=payload,
+            state=TaskState.ACTIVE,
         )
-
-        import asyncio
-
-        async def _insert():
-            async with get_session() as session:
-                session.add(task)
-
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(_insert())
-        except RuntimeError:
-            asyncio.run(_insert())
-
+        async with get_session() as session:
+            session.add(task)
         return task_id

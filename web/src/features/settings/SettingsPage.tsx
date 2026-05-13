@@ -637,7 +637,7 @@ export default function SettingsPage() {
                           type={showWsApiKey ? 'text' : 'password'}
                           placeholder="Leave empty to use global default"
                           value={wsLlmApiKey}
-                          onChange={(e) => setWsLlmApiKey(e.target.value)}
+                          onChange={(e) => { setWsLlmApiKey(e.target.value); setWsLlmKeyDirty(true) }}
                           className="pr-10"
                         />
                         <button
@@ -681,6 +681,7 @@ export default function SettingsPage() {
                           setWsLlmBaseUrl('')
                           setWsLlmApiKey('')
                           setWsLlmDefaultModel('')
+                          setWsLlmKeyDirty(true)
                         }}
                       >
                         Clear Overrides
