@@ -306,17 +306,28 @@ class Agent:
 
         tools_schema = [t.to_openai_schema() for t in self.tools] if self.tools else None
 
+        # Fallback to global LLM config for missing fields
+        api_base = self.api_base
+        api_key = self.api_key
+        model = self.model
+        if not api_base or not api_key:
+            from cognix.local.config import ConfigStore
+            llm_cfg = ConfigStore().get_llm()
+            api_base = api_base or llm_cfg.base_url
+            api_key = api_key or llm_cfg.api_key
+            model = model or llm_cfg.default_model
+
         kwargs: dict[str, Any] = {
-            "model": self.model,
+            "model": model,
             "messages": messages,
             "temperature": self.temperature,
         }
 
         # Support custom API base URL and key
-        if self.api_base:
-            kwargs["api_base"] = self.api_base
-        if self.api_key:
-            kwargs["api_key"] = self.api_key
+        if api_base:
+            kwargs["api_base"] = api_base
+        if api_key:
+            kwargs["api_key"] = api_key
 
         if tools_schema:
             kwargs["tools"] = tools_schema
@@ -376,18 +387,29 @@ class Agent:
 
         tools_schema = [t.to_openai_schema() for t in self.tools] if self.tools else None
 
+        # Fallback to global LLM config for missing fields
+        api_base = self.api_base
+        api_key = self.api_key
+        model = self.model
+        if not api_base or not api_key:
+            from cognix.local.config import ConfigStore
+            llm_cfg = ConfigStore().get_llm()
+            api_base = api_base or llm_cfg.base_url
+            api_key = api_key or llm_cfg.api_key
+            model = model or llm_cfg.default_model
+
         kwargs: dict[str, Any] = {
-            "model": self.model,
+            "model": model,
             "messages": messages,
             "temperature": self.temperature,
             "stream": True,
         }
 
         # Support custom API base URL and key
-        if self.api_base:
-            kwargs["api_base"] = self.api_base
-        if self.api_key:
-            kwargs["api_key"] = self.api_key
+        if api_base:
+            kwargs["api_base"] = api_base
+        if api_key:
+            kwargs["api_key"] = api_key
 
         if tools_schema:
             kwargs["tools"] = tools_schema

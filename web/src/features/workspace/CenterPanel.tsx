@@ -19,6 +19,7 @@ import {
 import { api } from '@/shared/api/client'
 import { useAuthStore } from '@/features/auth/store'
 import { useWorkspaceStore } from './store'
+import { TaskComposer } from './TaskComposer'
 import { Spinner, Badge, RichMessage, Panel, PanelHeader } from '@/shared/ui'
 
 interface Agent {
@@ -131,7 +132,7 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: any }) {
     [agentChats, chatId]
   )
 
-  const { data: storedMessages, isLoading: messagesLoading } = useQuery<StoredMessage[]>({
+  const { data: storedMessages } = useQuery<StoredMessage[]>({
     queryKey: ['workspace-chat-messages', workspaceId, chatId],
     queryFn: () => api.get(`/workspaces/${workspaceId}/chats/${chatId}/messages`).then((r) => r.data),
     enabled: !!workspaceId && !!chatId && !isStreaming,
@@ -290,7 +291,23 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: any }) {
             body: JSON.stringify(requestBody),
           }
         )
-        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        if (!response.ok) {
+          if (response.status === 402) {
+            const detail = await response.json().catch(() => null)
+            setMessages((prev) => [
+              ...prev.slice(0, -1),
+              {
+                role: 'assistant',
+                content:
+                  '⚠️ **Model Provider Required**\n\n' +
+                  (detail?.message || 'Configure a model provider or upgrade your plan to continue.') +
+                  '\n\nGo to **Settings → Model Providers** to configure your workspace LLM provider.',
+              },
+            ])
+            return
+          }
+          throw new Error(`HTTP ${response.status}`)
+        }
         const data = await response.json()
         setMessages((prev) => [
           ...prev,
@@ -320,7 +337,23 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: any }) {
         }
       )
 
-      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      if (!response.ok) {
+        if (response.status === 402) {
+          const detail = await response.json().catch(() => null)
+          setMessages((prev) => [
+            ...prev.slice(0, -1),
+            {
+              role: 'assistant',
+              content:
+                '⚠️ **Model Provider Required**\n\n' +
+                (detail?.message || 'Configure a model provider or upgrade your plan to continue.') +
+                '\n\nGo to **Settings → Model Providers** to configure your workspace LLM provider.',
+            },
+          ])
+          return
+        }
+        throw new Error(`HTTP ${response.status}`)
+      }
 
       const reader = response.body?.getReader()
       if (!reader) throw new Error('No reader')
@@ -614,21 +647,30 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: any }) {
       {/* Messages */}
       <div className="flex-1 overflow-auto p-8 space-y-8 scrollbar-hide">
         {messages.length === 0 && (
-          <div className="h-full flex flex-col items-center justify-center py-12 animate-in fade-in duration-700">
-            <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center mb-6 border border-border relative">
+          <div className="h-full flex flex-col items-center justify-center py-8 animate-in fade-in duration-700">
+            <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mb-4 border border-border relative">
                <div className="absolute inset-0 bg-primary/10 blur-xl rounded-full animate-pulse" />
-               <Bot className="h-10 w-10 text-muted-foreground/40 relative z-10" />
+               <Bot className="h-8 w-8 text-muted-foreground/40 relative z-10" />
             </div>
-            <h3 className="text-lg font-bold text-foreground mb-2">Awaiting Instructions</h3>
-            <p className="text-sm text-muted-foreground max-w-[260px] text-center leading-relaxed font-medium">
-              {messagesLoading
-                ? 'Restoring local conversation context...'
-                : (
-                  <>
-                    Start a high-context conversation with <span className="text-primary">{agent?.name || 'the agent'}</span> to begin problem solving.
-                  </>
-                )}
+            <h3 className="text-lg font-bold text-foreground mb-1">What do you want to do?</h3>
+            <p className="text-xs text-muted-foreground mb-6 text-center">
+              Describe a task and Cognix will create an execution plan.
             </p>
+            <div className="w-full max-w-xl">
+              {workspaceId && (
+                <TaskComposer
+                  workspaceId={workspaceId}
+                  onPlanApplied={(result) => {
+                    addLog({
+                      id: '',
+                      level: 'info',
+                      message: `Plan applied: ${result.status}. Created ${result.created.agents?.length || 0} agents, ${result.created.tasks?.length || 0} tasks.`,
+                      timestamp: Date.now(),
+                    })
+                  }}
+                />
+              )}
+            </div>
           </div>
         )}
 

@@ -90,3 +90,7 @@ Agent Runtime
 3. **Event-driven**: modules decoupled via EventBus
 4. **Progressive storage**: SQLite for dev (zero config), PostgreSQL for prod
 5. **LLM abstraction**: LiteLLM provides unified interface; Agent falls back to echo if not configured
+
+## Product Refactor Plan
+
+See [Cognix Product Refactor Plan](product-refactor-plan.md) for the task-first workspace architecture, BYOK and entitlement flow, sandbox policy, memory router, artifact studio, and phased implementation roadmap.

@@ -52,6 +52,7 @@ class UpdateChatRequest(BaseModel):
 
 class UpdateWorkspaceSettingsRequest(BaseModel):
     default_model: str | None = None
+    llm: dict | None = None
     enabled_skills: list[str] | None = None
     context: dict | None = None
 
@@ -166,7 +167,13 @@ async def get_workspace_settings(
     workspace_id: str,
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
-    return _workspace_config(workspace_id).get_settings()
+    settings = _workspace_config(workspace_id).get_settings()
+    # Mask API key in LLM settings for display
+    llm = settings.get("llm", {})
+    if llm.get("api_key"):
+        key = llm["api_key"]
+        settings["llm"] = {**llm, "api_key": key[:3] + "***" if len(key) > 3 else "***"}
+    return settings
 
 
 @router.patch("/{workspace_id}/settings")
@@ -176,7 +183,28 @@ async def update_workspace_settings(
     user: CurrentUser = Depends(require_skills_write),
 ) -> dict:
     updates = body.model_dump(exclude_unset=True)
+    # Don't overwrite real API key with masked value from GET response
+    llm = updates.get("llm")
+    if llm and isinstance(llm, dict):
+        api_key = llm.get("api_key", "")
+        if isinstance(api_key, str) and api_key.endswith("***") and len(api_key) < 10:
+            llm.pop("api_key", None)
     return _workspace_config(workspace_id).update_settings(updates)
+
+
+@router.get("/{workspace_id}/llm")
+async def get_workspace_llm(
+    workspace_id: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """Return resolved LLM config for a workspace (workspace overrides + global fallback)."""
+    llm = resolve_workspace_llm(workspace_id)
+    key = llm.get("api_key")
+    return {
+        "base_url": llm["base_url"],
+        "api_key": (key[:3] + "***" if len(key) > 3 else "***") if key else None,
+        "default_model": llm["default_model"],
+    }
 
 
 @router.get("/{workspace_id}/skills")
@@ -421,8 +449,13 @@ async def stream_claude_agent(
     body: ClaudeAgentRunRequestBody,
     user: CurrentUser = Depends(require_agents_write),
 ) -> StreamingResponse:
+    from cognix.billing.entitlement import EntitlementService
     from cognix.claude.runtime import ClaudeAgentRunRequest, ClaudeAgentRuntime
     from cognix.core.permissions import clamp_permission_mode
+
+    entitlement = await EntitlementService.check_model_execution(user.id, workspace_id)
+    if not entitlement.allowed:
+        raise HTTPException(402, detail=entitlement.to_dict())
 
     if not WorkspaceManager().get(workspace_id):
         raise HTTPException(404, "Workspace not found")
@@ -430,11 +463,15 @@ async def stream_claude_agent(
     # Server-side ceiling: prevent client from escalating beyond role-allowed level
     effective_mode = clamp_permission_mode(body.permission_mode, user.role)
 
+    # Resolve workspace LLM for model fallback
+    ws_llm = resolve_workspace_llm(workspace_id)
+    effective_model = body.model or ws_llm["default_model"]
+
     request = ClaudeAgentRunRequest(
         workspace_id=workspace_id,
         prompt=body.prompt,
         agent_id=body.agent_id,
-        model=body.model,
+        model=effective_model,
         system_prompt=body.system_prompt,
         permission_mode=effective_mode,
         max_turns=body.max_turns,
@@ -660,6 +697,12 @@ async def send_chat_message(
     body: SendChatMessageRequest,
     user: CurrentUser = Depends(require_agents_write),
 ) -> dict:
+    from cognix.billing.entitlement import EntitlementService
+
+    entitlement = await EntitlementService.check_model_execution(user.id, workspace_id)
+    if not entitlement.allowed:
+        raise HTTPException(402, detail=entitlement.to_dict())
+
     store = _chat_store(workspace_id)
     chat = store.get(chat_id)
     if not chat:
@@ -704,6 +747,12 @@ async def stream_chat_message(
     body: SendChatMessageRequest,
     user: CurrentUser = Depends(require_agents_write),
 ) -> StreamingResponse:
+    from cognix.billing.entitlement import EntitlementService
+
+    entitlement = await EntitlementService.check_model_execution(user.id, workspace_id)
+    if not entitlement.allowed:
+        raise HTTPException(402, detail=entitlement.to_dict())
+
     store = _chat_store(workspace_id)
     chat = store.get(chat_id)
     if not chat:
@@ -785,12 +834,34 @@ def _file_store(workspace_id: str) -> WorkspaceFileStore:
         raise HTTPException(404, "Workspace not found") from None
 
 
+def resolve_workspace_llm(workspace_id: str) -> dict:
+    """Resolve effective LLM config for a workspace.
+
+    Precedence: workspace settings > global config > defaults.
+    Returns dict with keys: base_url, api_key, default_model.
+    """
+    from cognix.local.config import ConfigStore
+
+    global_cfg = ConfigStore().get_llm()
+    ws_settings = _workspace_config(workspace_id).get_settings()
+    ws_llm = ws_settings.get("llm", {})
+
+    return {
+        "base_url": ws_llm.get("base_url") or global_cfg.base_url,
+        "api_key": ws_llm.get("api_key") or global_cfg.api_key,
+        "default_model": ws_llm.get("default_model") or global_cfg.default_model or "gpt-4o",
+    }
+
+
 def _chat_agent(*, workspace_id: str, name: str, model: str, system_prompt: str) -> Agent:
+    llm = resolve_workspace_llm(workspace_id)
     agent = Agent(
         name=name,
-        model=model,
+        model=model or llm["default_model"],
         system_prompt=system_prompt,
         workspace_id=workspace_id,
+        api_key=llm["api_key"],
+        api_base=llm["base_url"],
     )
     return agent
 

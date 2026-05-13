@@ -78,6 +78,11 @@ class WorkspaceConfigStore:
     def default_settings() -> dict[str, Any]:
         return {
             "default_model": None,
+            "llm": {
+                "base_url": None,
+                "api_key": None,
+                "default_model": None,
+            },
             "enabled_skills": [],
             "context": {
                 "max_history_messages": 20,
@@ -93,13 +98,14 @@ class WorkspaceConfigStore:
         settings.update(json.loads(self.settings_path.read_text(encoding="utf-8")))
         settings.setdefault("enabled_skills", [])
         settings.setdefault("context", self.default_settings()["context"])
+        settings.setdefault("llm", self.default_settings()["llm"])
         return settings
 
     def update_settings(self, updates: dict[str, Any]) -> dict[str, Any]:
         settings = self.get_settings()
         for key, value in updates.items():
-            if key == "context" and isinstance(value, dict):
-                settings["context"] = {**settings.get("context", {}), **value}
+            if key in ("context", "llm") and isinstance(value, dict):
+                settings[key] = {**settings.get(key, {}), **value}
             else:
                 settings[key] = value
         self._write_json(self.settings_path, settings)

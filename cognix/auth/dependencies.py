@@ -38,6 +38,8 @@ PERMISSIONS = {
     "skills:write": "Install/uninstall skills",
     "connectors:read": "View connectors",
     "connectors:write": "Connect/disconnect platforms",
+    "settings:read": "View settings",
+    "settings:write": "Modify settings",
     "admin": "Full admin access",
 }
 
@@ -48,12 +50,14 @@ ROLE_PERMISSIONS: dict[str, list[str]] = {
         "tasks:read", "tasks:write",
         "skills:read", "skills:write",
         "connectors:read", "connectors:write",
+        "settings:read", "settings:write",
     ],
     "viewer": [
         "agents:read",
         "tasks:read",
         "skills:read",
         "connectors:read",
+        "settings:read",
     ],
 }
 
@@ -166,3 +170,5 @@ require_skills_read = require_permission("skills:read")
 require_skills_write = require_permission("skills:write")
 require_connectors_read = require_permission("connectors:read")
 require_connectors_write = require_permission("connectors:write")
+require_settings_read = require_permission("settings:read")
+require_settings_write = require_permission("settings:write")

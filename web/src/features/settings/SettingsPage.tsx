@@ -5,7 +5,11 @@ import {
   Brain,
   Check,
   Copy,
+  Cpu,
+  Eye,
+  EyeOff,
   Key,
+  Play,
   RadioTower,
   Search,
   Trash2,
@@ -62,6 +66,7 @@ const PROVIDERS = ['lark', 'feishu', 'dingtalk', 'wechat']
 
 const SETTINGS_SECTIONS = [
   { id: 'memory', label: 'Memory Studio', icon: Brain, description: 'Knowledge & Context' },
+  { id: 'llm', label: 'Model Providers', icon: Cpu, description: 'LLM Configuration' },
   { id: 'api', label: 'API Access', icon: Key, description: 'Keys & Authorization' },
   { id: 'bots', label: 'Integrations', icon: Bot, description: 'Remote Bridges' },
 ] as const
@@ -86,6 +91,17 @@ export default function SettingsPage() {
   const [memoryContent, setMemoryContent] = useState('')
   const [memorySummary, setMemorySummary] = useState('')
   const [memorySearch, setMemorySearch] = useState('')
+
+  // State for LLM
+  const [llmBaseUrl, setLlmBaseUrl] = useState('')
+  const [llmApiKey, setLlmApiKey] = useState('')
+  const [llmDefaultModel, setLlmDefaultModel] = useState('')
+  const [llmInitialized, setLlmInitialized] = useState(false)
+  const [llmKeyDirty, setLlmKeyDirty] = useState(false)
+  const [showApiKey, setShowApiKey] = useState(false)
+  const [testModel, setTestModel] = useState('')
+  const [testResult, setTestResult] = useState<{ ok: boolean; latency_ms?: number; error?: string } | null>(null)
+  const [discoveredModels, setDiscoveredModels] = useState<string[]>([])
 
   const { data: apiKeys = [] } = useQuery({
     queryKey: ['api-keys'],
@@ -131,6 +147,89 @@ export default function SettingsPage() {
         })
         .then((r) => r.data),
     enabled: !!workspace,
+  })
+
+  // LLM settings query
+  const { data: llmConfig } = useQuery<{
+    base_url?: string
+    api_key?: string
+    default_model?: string
+  }>({
+    queryKey: ['settings', 'llm'],
+    queryFn: () => api.get('/settings/llm').then((r) => r.data),
+  })
+
+  if (llmConfig && !llmInitialized) {
+    setLlmBaseUrl(llmConfig.base_url || '')
+    setLlmApiKey(llmConfig.api_key || '')
+    setLlmDefaultModel(llmConfig.default_model || 'gpt-4o')
+    setLlmInitialized(true)
+  }
+
+  const saveLlmMutation = useMutation({
+    mutationFn: () =>
+      api.patch('/settings/llm', {
+        base_url: llmBaseUrl.trim() || null,
+        api_key: llmKeyDirty ? (llmApiKey.trim() || null) : undefined,
+        default_model: llmDefaultModel.trim() || 'gpt-4o',
+      }),
+    onSuccess: () => {
+      setLlmKeyDirty(false)
+      queryClient.invalidateQueries({ queryKey: ['settings', 'llm'] })
+    },
+  })
+
+  const testLlmMutation = useMutation({
+    mutationFn: () =>
+      api.post('/settings/llm/test', {
+        model: testModel || llmDefaultModel || undefined,
+      }),
+    onSuccess: (response) => setTestResult(response.data),
+    onError: () => setTestResult({ ok: false, error: 'Request failed' }),
+  })
+
+  const discoverModelsMutation = useMutation({
+    mutationFn: () => api.post('/settings/llm/models', {}),
+    onSuccess: (response) => setDiscoveredModels(response.data.models || []),
+  })
+
+  // Workspace-scoped LLM overrides
+  const [wsLlmBaseUrl, setWsLlmBaseUrl] = useState('')
+  const [wsLlmApiKey, setWsLlmApiKey] = useState('')
+  const [wsLlmDefaultModel, setWsLlmDefaultModel] = useState('')
+  const [wsLlmInitialized, setWsLlmInitialized] = useState(false)
+  const [wsLlmKeyDirty, setWsLlmKeyDirty] = useState(false)
+  const [showWsApiKey, setShowWsApiKey] = useState(false)
+
+  const { data: workspaceSettings } = useQuery<{
+    llm?: { base_url?: string | null; api_key?: string | null; default_model?: string | null }
+    [key: string]: unknown
+  }>({
+    queryKey: ['workspace-settings', workspace?.id],
+    queryFn: () => api.get(`/workspaces/${workspace!.id}/settings`).then((r) => r.data),
+    enabled: !!workspace,
+  })
+
+  if (workspaceSettings?.llm && !wsLlmInitialized) {
+    setWsLlmBaseUrl(workspaceSettings.llm.base_url || '')
+    setWsLlmApiKey(workspaceSettings.llm.api_key || '')
+    setWsLlmDefaultModel(workspaceSettings.llm.default_model || '')
+    setWsLlmInitialized(true)
+  }
+
+  const saveWsLlmMutation = useMutation({
+    mutationFn: () =>
+      api.patch(`/workspaces/${workspace!.id}/settings`, {
+        llm: {
+          base_url: wsLlmBaseUrl.trim() || null,
+          api_key: wsLlmKeyDirty ? (wsLlmApiKey.trim() || null) : undefined,
+          default_model: wsLlmDefaultModel.trim() || null,
+        },
+      }),
+    onSuccess: () => {
+      setWsLlmKeyDirty(false)
+      queryClient.invalidateQueries({ queryKey: ['workspace-settings', workspace?.id] })
+    },
   })
 
   const createKeyMutation = useMutation({
@@ -357,6 +456,240 @@ export default function SettingsPage() {
                   </div>
                </div>
              </div>
+          </div>
+        )}
+
+        {activeSection === 'llm' && (
+          <div className="space-y-8 animate-in fade-in slide-in-from-right-4 duration-300">
+            <div>
+              <h3 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">
+                Model Providers
+                <Badge variant="info" className="text-[9px] uppercase tracking-widest">Global</Badge>
+              </h3>
+              <p className="text-sm text-muted-foreground mt-1">Configure default LLM provider, API credentials, and model selection.</p>
+            </div>
+
+            <div className="rounded-2xl border border-border bg-card p-6 shadow-sm space-y-6">
+              <div>
+                <h4 className="text-sm font-bold text-foreground mb-4">Provider Settings</h4>
+                <div className="grid grid-cols-1 gap-4">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 px-1">Base URL</label>
+                    <Input
+                      placeholder="https://api.openai.com/v1 (leave empty for default)"
+                      value={llmBaseUrl}
+                      onChange={(e) => setLlmBaseUrl(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 px-1">API Key</label>
+                    <div className="relative">
+                      <Input
+                        type={showApiKey ? 'text' : 'password'}
+                        placeholder="sk-..."
+                        value={llmApiKey}
+                        onChange={(e) => { setLlmApiKey(e.target.value); setLlmKeyDirty(true) }}
+                        className="pr-10"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowApiKey(!showApiKey)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        {showApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 px-1">Default Model</label>
+                    <Input
+                      placeholder="gpt-4o"
+                      value={llmDefaultModel}
+                      onChange={(e) => setLlmDefaultModel(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div className="mt-4">
+                  <Button
+                    className="h-10 px-6 shadow-lg shadow-primary/20"
+                    disabled={saveLlmMutation.isPending}
+                    onClick={() => saveLlmMutation.mutate()}
+                  >
+                    {saveLlmMutation.isPending ? 'Saving...' : 'Save Configuration'}
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-border bg-card p-6 shadow-sm space-y-4">
+              <h4 className="text-sm font-bold text-foreground">Test Connection</h4>
+              <p className="text-xs text-muted-foreground">Verify your API key works by sending a minimal request.</p>
+              <div className="flex items-end gap-3">
+                <div className="flex-1 space-y-2">
+                  <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 px-1">Model</label>
+                  <Input
+                    placeholder={llmDefaultModel || 'gpt-4o'}
+                    value={testModel}
+                    onChange={(e) => setTestModel(e.target.value)}
+                  />
+                </div>
+                <Button
+                  className="h-10 px-5"
+                  variant="secondary"
+                  disabled={testLlmMutation.isPending}
+                  onClick={() => { setTestResult(null); testLlmMutation.mutate() }}
+                >
+                  <Play className="h-3.5 w-3.5 mr-1.5" />
+                  {testLlmMutation.isPending ? 'Testing...' : 'Test'}
+                </Button>
+              </div>
+              {testResult && (
+                <div className={`p-4 rounded-xl border ${testResult.ok ? 'bg-emerald-500/5 border-emerald-500/20' : 'bg-rose-500/5 border-rose-500/20'}`}>
+                  <div className="flex items-center gap-2">
+                    {testResult.ok ? (
+                      <Check className="h-4 w-4 text-emerald-500" />
+                    ) : (
+                      <span className="w-4 h-4 rounded-full bg-rose-500 flex items-center justify-center text-white text-[10px] font-bold">!</span>
+                    )}
+                    <span className={`text-xs font-bold ${testResult.ok ? 'text-emerald-600' : 'text-rose-600'}`}>
+                      {testResult.ok ? `Connected (${testResult.latency_ms}ms)` : 'Connection Failed'}
+                    </span>
+                  </div>
+                  {testResult.error && <p className="mt-2 text-xs text-rose-500 font-mono">{testResult.error}</p>}
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-2xl border border-border bg-card p-6 shadow-sm space-y-4">
+              <div className="flex items-center justify-between">
+                <h4 className="text-sm font-bold text-foreground">Available Models</h4>
+                <Button
+                  variant="secondary"
+                  className="h-9 px-4"
+                  disabled={discoverModelsMutation.isPending}
+                  onClick={() => discoverModelsMutation.mutate()}
+                >
+                  {discoverModelsMutation.isPending ? 'Discovering...' : 'Discover Models'}
+                </Button>
+              </div>
+              {discoveredModels.length > 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  {discoveredModels.map((model) => (
+                    <button
+                      key={model}
+                      onClick={() => { setLlmDefaultModel(model); setTestModel(model) }}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-mono border transition-all ${
+                        llmDefaultModel === model
+                          ? 'bg-primary/10 border-primary/30 text-primary font-bold'
+                          : 'bg-muted/30 border-border text-muted-foreground hover:border-primary/20 hover:text-foreground'
+                      }`}
+                    >
+                      {model}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground/60">Click "Discover Models" to list available models from your provider.</p>
+              )}
+            </div>
+
+            {/* Workspace-scoped provider override */}
+            {workspace && (
+              <div className="space-y-6 pt-4 border-t border-border">
+                <div>
+                  <h3 className="text-lg font-bold tracking-tight text-foreground flex items-center gap-2">
+                    Workspace Provider
+                    <Badge variant="warning" className="text-[9px] uppercase tracking-widest">Override</Badge>
+                  </h3>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Override the global provider for this workspace. Leave empty to use global defaults.
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-border bg-card p-6 shadow-sm space-y-6">
+                  <div className="grid grid-cols-1 gap-4">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 px-1">
+                        Base URL
+                        {!wsLlmBaseUrl && llmBaseUrl && (
+                          <span className="ml-2 text-muted-foreground/40 normal-case font-normal">
+                            (inherits: {llmBaseUrl})
+                          </span>
+                        )}
+                      </label>
+                      <Input
+                        placeholder="Leave empty to use global default"
+                        value={wsLlmBaseUrl}
+                        onChange={(e) => setWsLlmBaseUrl(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 px-1">
+                        API Key
+                        {!wsLlmApiKey && llmApiKey && (
+                          <span className="ml-2 text-muted-foreground/40 normal-case font-normal">
+                            (inherits global key)
+                          </span>
+                        )}
+                      </label>
+                      <div className="relative">
+                        <Input
+                          type={showWsApiKey ? 'text' : 'password'}
+                          placeholder="Leave empty to use global default"
+                          value={wsLlmApiKey}
+                          onChange={(e) => setWsLlmApiKey(e.target.value)}
+                          className="pr-10"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowWsApiKey(!showWsApiKey)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                        >
+                          {showWsApiKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 px-1">
+                        Default Model
+                        {!wsLlmDefaultModel && llmDefaultModel && (
+                          <span className="ml-2 text-muted-foreground/40 normal-case font-normal">
+                            (inherits: {llmDefaultModel})
+                          </span>
+                        )}
+                      </label>
+                      <Input
+                        placeholder="Leave empty to use global default"
+                        value={wsLlmDefaultModel}
+                        onChange={(e) => setWsLlmDefaultModel(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <Button
+                      className="h-10 px-6 shadow-lg shadow-primary/20"
+                      disabled={saveWsLlmMutation.isPending}
+                      onClick={() => saveWsLlmMutation.mutate()}
+                    >
+                      {saveWsLlmMutation.isPending ? 'Saving...' : 'Save Workspace Provider'}
+                    </Button>
+                    {(wsLlmBaseUrl || wsLlmApiKey || wsLlmDefaultModel) && (
+                      <Button
+                        variant="secondary"
+                        className="h-10 px-4"
+                        onClick={() => {
+                          setWsLlmBaseUrl('')
+                          setWsLlmApiKey('')
+                          setWsLlmDefaultModel('')
+                        }}
+                      >
+                        Clear Overrides
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
