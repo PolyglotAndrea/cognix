@@ -173,7 +173,10 @@ class PlannerService:
         task_steps: list[tuple[str, dict]] = []
         agent_name_to_id: dict[str, str] = {}
 
-        for step in plan.steps:
+        # Topological sort: ensures create_agent runs before create_task that depends on it
+        sorted_steps = self._sort_steps(plan.steps)
+
+        for step in sorted_steps:
             if step.action == "create_agent":
                 agent_id = await self._apply_create_agent(workspace_id, step.params)
                 created["agents"].append(agent_id)
@@ -368,6 +371,38 @@ class PlannerService:
         except Exception as exc:
             logger.warning("LLM plan generation failed: %s — using default plan", exc)
             return self._default_plan(user_intent)
+
+    @staticmethod
+    def _sort_steps(steps: list[PlanStep]) -> list[PlanStep]:
+        """Topological sort of plan steps by depends_on.
+
+        Ensures e.g. create_agent runs before create_task that references it.
+        Falls back to original order on cycles or missing refs.
+        """
+        by_id = {s.id: s for s in steps}
+        visited: set[str] = set()
+        result: list[PlanStep] = []
+
+        def _visit(step_id: str) -> None:
+            if step_id in visited:
+                return
+            visited.add(step_id)
+            step = by_id.get(step_id)
+            if not step:
+                return
+            for dep in step.depends_on:
+                _visit(dep)
+            result.append(step)
+
+        for step in steps:
+            _visit(step.id)
+
+        # Append any steps not reachable via depends_on (shouldn't happen)
+        for step in steps:
+            if step.id not in visited:
+                result.append(step)
+
+        return result
 
     @staticmethod
     def _default_plan(user_intent: str) -> dict[str, Any]:
