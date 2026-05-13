@@ -209,3 +209,30 @@ class UsageRecordModel(Base):
     metric: Mapped[str] = mapped_column(String(64))  # api_calls, tokens, agent_runs
     quantity: Mapped[int] = mapped_column(Integer, default=1)
     recorded_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+# ── Artifact models ─────────────────────────────────────────────
+
+
+class ArtifactType(StrEnum):
+    REPORT = "report"
+    PLAN = "plan"
+    CHECKLIST = "checklist"
+    NOTEBOOK = "notebook"
+    NOTE = "note"
+    LOG = "log"
+
+
+class ArtifactModel(Base):
+    __tablename__ = "artifacts"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), index=True)
+    task_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    agent_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    artifact_type: Mapped[ArtifactType] = mapped_column(Enum(ArtifactType))
+    title: Mapped[str] = mapped_column(String(256))
+    content: Mapped[str] = mapped_column(Text, default="")
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)

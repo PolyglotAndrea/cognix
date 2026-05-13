@@ -11,6 +11,7 @@ from cognix import __version__
 from cognix.api.routes.agents import agent_chat_ws
 from cognix.api.routes.agents import router as agents_router
 from cognix.api.routes.approvals import router as approvals_router
+from cognix.api.routes.artifacts import router as artifacts_router
 from cognix.api.routes.auth import router as auth_router
 from cognix.api.routes.billing import router as billing_router
 from cognix.api.routes.bots import router as bots_router
@@ -97,6 +98,7 @@ app = FastAPI(
 
 app.include_router(auth_router)
 app.include_router(approvals_router)
+app.include_router(artifacts_router)
 app.include_router(billing_router)
 app.include_router(connectors_router)
 app.include_router(bots_router)

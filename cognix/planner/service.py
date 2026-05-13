@@ -205,17 +205,25 @@ class PlannerService:
 
         # Trigger immediate execution for "once" tasks
         execution_results = []
+        artifacts: list[str] = []
         for task_id, params in task_steps:
             schedule = params.get("schedule_type") or params.get("cron") or "once"
             if schedule == "once":
                 exec_result = await self._trigger_task(task_id, workspace_id)
                 execution_results.append({"task_id": task_id, **exec_result})
+                # Persist execution output as an artifact
+                artifact_id = await self._store_task_artifact(
+                    workspace_id, task_id, params, exec_result,
+                )
+                if artifact_id:
+                    artifacts.append(artifact_id)
 
         return {
             "plan_id": plan_id,
             "status": "applied",
             "created": created,
             "execution_results": execution_results,
+            "artifacts": artifacts,
         }
 
     def reject_plan(self, workspace_id: str, plan_id: str) -> dict:
@@ -397,6 +405,45 @@ class PlannerService:
             "expected_artifacts": [],
             "estimated_cost": "low",
         }
+
+    @staticmethod
+    async def _store_task_artifact(
+        workspace_id: str,
+        task_id: str,
+        params: dict,
+        exec_result: dict,
+    ) -> str | None:
+        """Persist task execution output as a workspace artifact. Returns artifact id."""
+        from cognix.storage.database import get_session
+        from cognix.storage.models import ArtifactModel, ArtifactType
+
+        has_output = exec_result.get("result") or exec_result.get("error")
+        if not has_output:
+            return None
+
+        artifact_id = uuid.uuid4().hex[:12]
+        is_error = "error" in exec_result
+        title = params.get("name", f"Task {task_id}")
+        content = exec_result.get("error") if is_error else exec_result.get("result", "")
+        atype = ArtifactType.LOG if is_error else ArtifactType.REPORT
+
+        artifact = ArtifactModel(
+            id=artifact_id,
+            workspace_id=workspace_id,
+            task_id=task_id,
+            artifact_type=atype,
+            title=f"{title}{' — error' if is_error else ''}",
+            content=content[:50000],
+            metadata_json={
+                "source": "plan_apply",
+                "agent_name": params.get("agent_name", ""),
+                "schedule": params.get("schedule_type", "once"),
+                "is_error": is_error,
+            },
+        )
+        async with get_session() as session:
+            session.add(artifact)
+        return artifact_id
 
     @staticmethod
     async def _apply_create_agent(workspace_id: str, params: dict) -> str:

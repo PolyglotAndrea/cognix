@@ -37,6 +37,7 @@ interface ApplyResult {
   status: string
   created: Record<string, string[]>
   execution_results?: ExecutionResult[]
+  artifacts?: string[]
 }
 
 export function TaskComposer({
@@ -208,6 +209,16 @@ export function TaskComposer({
                   )}
                 </div>
               ))}
+            </div>
+          )}
+          {applyResult.artifacts && applyResult.artifacts.length > 0 && (
+            <div className="pt-2 border-t border-emerald-500/10">
+              <div className="text-[10px] font-bold uppercase tracking-widest text-foreground/50 mb-1">
+                Artifacts
+              </div>
+              <div className="text-[11px] text-foreground/60">
+                {applyResult.artifacts.length} artifact(s) saved — view in Artifacts panel
+              </div>
             </div>
           )}
           <button
