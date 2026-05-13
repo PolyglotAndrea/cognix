@@ -29,12 +29,14 @@ class TaskStore:
         max_retries: int = 3,
         max_execution_seconds: int = 300,
         idempotency_key: str | None = None,
+        user_id: str | None = None,
     ) -> ScheduledTaskModel:
         """Create a new scheduled task."""
         async with get_session() as session:
             task = ScheduledTaskModel(
                 id=task_id,
                 name=name,
+                user_id=user_id,
                 task_type=task_type,
                 schedule=schedule,
                 payload=json.dumps(payload),

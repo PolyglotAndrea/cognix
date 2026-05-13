@@ -40,7 +40,7 @@ async def create_task(
     task_id = uuid.uuid4().hex[:12]
     store = TaskStore()
     schedule = body.schedule.strip()
-    payload = {**body.payload, "task_type": body.task_type}
+    payload = {**body.payload, "task_type": body.task_type, "user_id": user.id}
     task_type = TaskType(body.task_type)
 
     await store.create(
@@ -52,6 +52,7 @@ async def create_task(
         max_retries=body.max_retries,
         max_execution_seconds=body.max_execution_seconds,
         idempotency_key=body.idempotency_key or payload.get("idempotency_key"),
+        user_id=user.id,
     )
 
     engine = get_scheduler_engine()

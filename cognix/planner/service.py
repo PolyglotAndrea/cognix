@@ -182,7 +182,7 @@ class PlannerService:
                     agent_name_to_id[agent_name] = agent_id
             elif step.action == "create_task":
                 task_id = await self._apply_create_task(
-                    workspace_id, step.params, agent_name_to_id,
+                    workspace_id, step.params, agent_name_to_id, user_id,
                 )
                 created["tasks"].append(task_id)
                 task_steps.append((task_id, step.params))
@@ -468,6 +468,7 @@ class PlannerService:
         workspace_id: str,
         params: dict,
         agent_name_to_id: dict[str, str] | None = None,
+        user_id: str | None = None,
     ) -> str:
         """Create a scheduled task from plan step params."""
         from cognix.storage.database import get_session
@@ -487,10 +488,12 @@ class PlannerService:
             "agent_name": agent_name,
             "message": params.get("input", ""),
             "workspace_id": workspace_id,
+            "user_id": user_id or "",
         })
         task = ScheduledTaskModel(
             id=task_id,
             name=params.get("name", "plan-task"),
+            user_id=user_id,
             task_type=TaskType.AGENT_CALL,
             schedule=schedule,
             payload=payload,

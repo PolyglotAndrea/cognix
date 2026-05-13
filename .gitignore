@@ -42,5 +42,8 @@ htmlcov/
 .pytest_cache/
 .mypy_cache/
 
+# TypeScript build cache
+*.tsbuildinfo
+
 # Claude Code
 .claude/

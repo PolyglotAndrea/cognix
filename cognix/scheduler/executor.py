@@ -32,6 +32,7 @@ class TaskExecutor:
         """Execute a task based on its type."""
         task_type = payload.get("task_type", "agent_call")
         workspace_id = payload.get("workspace_id")
+        user_id = payload.get("user_id")
         start_time = time.monotonic()
         self._append_workspace_event(
             workspace_id,
@@ -66,6 +67,7 @@ class TaskExecutor:
                 "started_at": datetime.now(UTC).isoformat(),
                 "finished_at": datetime.now(UTC).isoformat(),
                 "workspace_id": workspace_id,
+                "user_id": user_id,
             }
 
         except Exception as e:
@@ -78,6 +80,7 @@ class TaskExecutor:
                 "started_at": datetime.now(UTC).isoformat(),
                 "finished_at": datetime.now(UTC).isoformat(),
                 "workspace_id": workspace_id,
+                "user_id": user_id,
             }
             logger.exception("Task %s failed", task_id)
 
@@ -218,6 +221,7 @@ class TaskExecutor:
                 # Save run record
                 db_run = TaskRunModel(
                     task_id=run["task_id"],
+                    user_id=run.get("user_id"),
                     status=run["status"],
                     result=run.get("result", ""),
                     error=run.get("error", ""),

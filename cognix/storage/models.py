@@ -96,6 +96,7 @@ class ScheduledTaskModel(Base):
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     name: Mapped[str] = mapped_column(String(128), index=True)
+    user_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     task_type: Mapped[TaskType] = mapped_column(Enum(TaskType))
     schedule: Mapped[str] = mapped_column(String(256))  # cron expr or ISO datetime
     payload: Mapped[str] = mapped_column(Text, default="{}")  # JSON
@@ -119,6 +120,7 @@ class TaskRunModel(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     task_id: Mapped[str] = mapped_column(String(32), index=True)
+    user_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(32))  # success / failure
     result: Mapped[str] = mapped_column(Text, default="")
     error: Mapped[str] = mapped_column(Text, default="")
