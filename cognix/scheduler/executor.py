@@ -89,6 +89,12 @@ class TaskExecutor:
 
         # Persist to DB
         await self._persist_run(run)
+
+        # Flag substantial outputs as playbook candidates
+        if run["status"] == "success" and workspace_id:
+            result_text = run.get("result", "")
+            if isinstance(result_text, str) and len(result_text) > 500:
+                await self._flag_playbook_candidate(workspace_id, task_id, result_text)
         self._append_workspace_event(
             workspace_id,
             {
@@ -292,6 +298,33 @@ class TaskExecutor:
         from cognix.core.permissions import ensure_permission
 
         ensure_permission(permission_mode, access_level, operation)
+
+    @staticmethod
+    async def _flag_playbook_candidate(
+        workspace_id: str, task_id: str, result_text: str,
+    ) -> None:
+        """Flag substantial task outputs as playbook candidates."""
+        try:
+            from sqlalchemy import select, update
+
+            from cognix.storage.database import get_session
+            from cognix.storage.models import ArtifactModel
+
+            async with get_session() as session:
+                result = await session.execute(
+                    select(ArtifactModel).where(ArtifactModel.task_id == task_id)
+                )
+                artifact = result.scalar_one_or_none()
+                if artifact:
+                    meta = dict(artifact.metadata_json or {})
+                    meta["suggest_playbook"] = True
+                    await session.execute(
+                        update(ArtifactModel)
+                        .where(ArtifactModel.id == artifact.id)
+                        .values(metadata_json=meta)
+                    )
+        except Exception:
+            logger.debug("Failed to flag playbook candidate", exc_info=True)
 
     @staticmethod
     async def _post_remote_bot_response(payload: dict[str, Any], response_text: str) -> None:

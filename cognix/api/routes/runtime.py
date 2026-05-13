@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
 from cognix.api.state import get_scheduler_engine, get_task_dispatcher, runtime_node_id
 from cognix.auth.dependencies import CurrentUser, get_current_user
@@ -71,7 +71,9 @@ async def cluster_capacity(user: CurrentUser = Depends(get_current_user)) -> dic
             {
                 "node_id": n.id,
                 "status": n.status,
-                "last_seen": n.last_seen.isoformat() if hasattr(n, "last_seen") and n.last_seen else None,
+                "last_seen": (
+                    n.last_seen.isoformat() if hasattr(n, "last_seen") and n.last_seen else None
+                ),
                 "metadata": n.metadata if hasattr(n, "metadata") else {},
             }
             for n in nodes
@@ -84,3 +86,30 @@ async def cluster_capacity(user: CurrentUser = Depends(get_current_user)) -> dic
             "metrics": local_status.get("metrics", {}),
         },
     }
+
+
+# ── Worker node management ─────────────────────────────────────
+
+
+@router.get("/workers")
+async def list_workers(
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    """List registered worker nodes with their load and status."""
+    from cognix.scheduler.registry import WorkerRegistry
+
+    registry = WorkerRegistry()
+    return await registry.list_all()
+
+
+@router.post("/workers/{node_id}/drain")
+async def drain_worker(
+    node_id: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """Gracefully drain a worker node (stop receiving new tasks)."""
+    from cognix.scheduler.registry import WorkerRegistry
+
+    registry = WorkerRegistry()
+    await registry.drain_node(node_id)
+    return {"node_id": node_id, "status": "draining"}

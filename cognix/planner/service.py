@@ -469,6 +469,7 @@ class PlannerService:
             artifact_type=atype,
             title=f"{title}{' — error' if is_error else ''}",
             content=content[:50000],
+            source="plan_apply",
             metadata_json={
                 "source": "plan_apply",
                 "agent_name": params.get("agent_name", ""),

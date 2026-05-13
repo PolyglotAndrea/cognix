@@ -23,6 +23,9 @@ class CreateArtifactRequest(BaseModel):
     task_id: str | None = None
     agent_id: str | None = None
     metadata: dict | None = None
+    source: str = "manual"
+    context_type: str | None = None
+    parent_id: str | None = None
 
 
 class UpdateArtifactRequest(BaseModel):
@@ -30,6 +33,7 @@ class UpdateArtifactRequest(BaseModel):
     content: str | None = None
     artifact_type: str | None = None
     metadata: dict | None = None
+    status: str | None = None
 
 
 def _artifact_to_dict(row: ArtifactModel) -> dict:
@@ -42,6 +46,11 @@ def _artifact_to_dict(row: ArtifactModel) -> dict:
         "title": row.title,
         "content": row.content,
         "metadata": row.metadata_json,
+        "version": row.version,
+        "parent_id": row.parent_id,
+        "status": row.status,
+        "source": row.source,
+        "context_type": row.context_type,
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
     }
@@ -52,16 +61,25 @@ async def list_artifacts(
     workspace_id: str,
     artifact_type: str | None = None,
     task_id: str | None = None,
+    status: str | None = None,
+    source: str | None = None,
+    context_type: str | None = None,
     limit: int = 50,
     user: CurrentUser = Depends(get_current_user),
 ) -> list[dict]:
-    """List artifacts for a workspace, optionally filtered by type or task."""
+    """List artifacts for a workspace, optionally filtered."""
     async with get_session() as session:
         stmt = select(ArtifactModel).where(ArtifactModel.workspace_id == workspace_id)
         if artifact_type:
             stmt = stmt.where(ArtifactModel.artifact_type == artifact_type)
         if task_id:
             stmt = stmt.where(ArtifactModel.task_id == task_id)
+        if status:
+            stmt = stmt.where(ArtifactModel.status == status)
+        if source:
+            stmt = stmt.where(ArtifactModel.source == source)
+        if context_type:
+            stmt = stmt.where(ArtifactModel.context_type == context_type)
         stmt = stmt.order_by(ArtifactModel.created_at.desc()).limit(limit)
         result = await session.execute(stmt)
         rows = result.scalars().all()
@@ -86,6 +104,18 @@ async def create_artifact(
 
     artifact_id = uuid.uuid4().hex[:12]
     now = datetime.now(UTC)
+
+    # If parent_id provided, increment version
+    version = 1
+    if body.parent_id:
+        async with get_session() as session:
+            parent = await session.execute(
+                select(ArtifactModel).where(ArtifactModel.id == body.parent_id)
+            )
+            parent_row = parent.scalar_one_or_none()
+            if parent_row:
+                version = parent_row.version + 1
+
     artifact = ArtifactModel(
         id=artifact_id,
         workspace_id=workspace_id,
@@ -95,6 +125,11 @@ async def create_artifact(
         title=body.title,
         content=body.content,
         metadata_json=body.metadata or {},
+        version=version,
+        parent_id=body.parent_id,
+        status="draft",
+        source=body.source,
+        context_type=body.context_type,
         created_at=now,
         updated_at=now,
     )
@@ -156,6 +191,10 @@ async def update_artifact(
                 raise HTTPException(400, f"Invalid artifact_type: {body.artifact_type}")
         if body.metadata is not None:
             changes["metadata_json"] = body.metadata
+        if body.status is not None:
+            if body.status not in ("draft", "published", "archived"):
+                raise HTTPException(400, f"Invalid status: {body.status}")
+            changes["status"] = body.status
         if changes:
             changes["updated_at"] = datetime.now(UTC)
             await session.execute(
@@ -195,3 +234,127 @@ async def delete_artifact(
     if not deleted:
         raise HTTPException(404, "Artifact not found")
     return {"deleted": artifact_id}
+
+
+@router.post("/{workspace_id}/artifacts/{artifact_id}/publish")
+async def publish_artifact(
+    workspace_id: str,
+    artifact_id: str,
+    user: CurrentUser = Depends(require_agents_write),
+) -> dict:
+    """Publish an artifact — sets status to published, increments version."""
+    from sqlalchemy import update
+
+    async with get_session() as session:
+        result = await session.execute(
+            select(ArtifactModel).where(
+                ArtifactModel.id == artifact_id,
+                ArtifactModel.workspace_id == workspace_id,
+            )
+        )
+        row = result.scalar_one_or_none()
+        if not row:
+            raise HTTPException(404, "Artifact not found")
+
+        new_version = row.version + 1
+        await session.execute(
+            update(ArtifactModel)
+            .where(ArtifactModel.id == artifact_id)
+            .values(
+                status="published",
+                version=new_version,
+                updated_at=datetime.now(UTC),
+            )
+        )
+
+    async with get_session() as session:
+        result = await session.execute(
+            select(ArtifactModel).where(ArtifactModel.id == artifact_id)
+        )
+        row = result.scalar_one()
+    return _artifact_to_dict(row)
+
+
+@router.post("/{workspace_id}/artifacts/{artifact_id}/archive")
+async def archive_artifact(
+    workspace_id: str,
+    artifact_id: str,
+    user: CurrentUser = Depends(require_agents_write),
+) -> dict:
+    """Archive an artifact."""
+    from sqlalchemy import update
+
+    async with get_session() as session:
+        result = await session.execute(
+            select(ArtifactModel).where(
+                ArtifactModel.id == artifact_id,
+                ArtifactModel.workspace_id == workspace_id,
+            )
+        )
+        row = result.scalar_one_or_none()
+        if not row:
+            raise HTTPException(404, "Artifact not found")
+
+        await session.execute(
+            update(ArtifactModel)
+            .where(ArtifactModel.id == artifact_id)
+            .values(status="archived", updated_at=datetime.now(UTC))
+        )
+
+    async with get_session() as session:
+        result = await session.execute(
+            select(ArtifactModel).where(ArtifactModel.id == artifact_id)
+        )
+        row = result.scalar_one()
+    return _artifact_to_dict(row)
+
+
+@router.get("/{workspace_id}/artifacts/{artifact_id}/versions")
+async def get_artifact_versions(
+    workspace_id: str,
+    artifact_id: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    """Get the version chain for an artifact by following parent_id links."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(ArtifactModel).where(
+                ArtifactModel.id == artifact_id,
+                ArtifactModel.workspace_id == workspace_id,
+            )
+        )
+        row = result.scalar_one_or_none()
+        if not row:
+            raise HTTPException(404, "Artifact not found")
+
+        # Walk the chain: collect all ancestors via parent_id
+        versions = [row]
+        current = row
+        while current.parent_id:
+            parent_result = await session.execute(
+                select(ArtifactModel).where(ArtifactModel.id == current.parent_id)
+            )
+            parent = parent_result.scalar_one_or_none()
+            if not parent:
+                break
+            versions.append(parent)
+            current = parent
+
+    # Also find children (artifacts whose parent_id points to this one)
+    async with get_session() as session:
+        children_result = await session.execute(
+            select(ArtifactModel).where(ArtifactModel.parent_id == artifact_id)
+        )
+        children = children_result.scalars().all()
+
+    # Combine: ancestors + self + children, sorted by version
+    all_versions = list(versions) + list(children)
+    seen = set()
+    unique = []
+    for v in all_versions:
+        if v.id not in seen:
+            seen.add(v.id)
+            unique.append(v)
+    unique.sort(key=lambda x: x.version)
+
+    return [_artifact_to_dict(v) for v in unique]

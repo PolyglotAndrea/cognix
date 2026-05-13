@@ -33,9 +33,41 @@ class Context:
         self.messages.append(msg)
         return msg
 
-    def get_history(self, limit: int | None = None) -> list[dict[str, Any]]:
-        """Return conversation history as list of dicts for LLM APIs."""
+    def get_history(
+        self,
+        limit: int | None = None,
+        max_tokens: int | None = None,
+        model: str = "gpt-4o",
+    ) -> list[dict[str, Any]]:
+        """Return conversation history as list of dicts for LLM APIs.
+
+        Args:
+            limit: Maximum number of messages to return.
+            max_tokens: If set, walk messages newest-to-oldest and drop
+                oldest messages that exceed this token budget.
+            model: Model name for token counting (used with max_tokens).
+        """
         msgs = self.messages[-limit:] if limit else self.messages
+
+        if max_tokens is not None:
+            from cognix.memory.token_counter import count_message_tokens
+
+            # Build history, then trim from the front if over budget
+            history = self._build_history_dicts(msgs)
+            while len(history) > 1 and count_message_tokens(history, model) > max_tokens:
+                # Drop the oldest non-system message
+                for i, h in enumerate(history):
+                    if h.get("role") != "system":
+                        history.pop(i)
+                        break
+                else:
+                    break
+            return history
+
+        return self._build_history_dicts(msgs)
+
+    @staticmethod
+    def _build_history_dicts(msgs: list[Message]) -> list[dict[str, Any]]:
         history: list[dict[str, Any]] = []
         for m in msgs:
             item: dict[str, Any] = {"role": m.role, "content": m.content}

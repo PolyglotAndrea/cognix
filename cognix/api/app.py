@@ -18,6 +18,7 @@ from cognix.api.routes.bots import router as bots_router
 from cognix.api.routes.connectors import router as connectors_router
 from cognix.api.routes.memory import router as memory_router
 from cognix.api.routes.planner import router as planner_router
+from cognix.api.routes.playbooks import router as playbooks_router
 from cognix.api.routes.rpc import router as rpc_router
 from cognix.api.routes.runtime import router as runtime_router
 from cognix.api.routes.settings import router as settings_router
@@ -105,6 +106,7 @@ app.include_router(bots_router)
 app.include_router(memory_router)
 app.include_router(settings_router)
 app.include_router(planner_router)
+app.include_router(playbooks_router)
 app.include_router(agents_router)
 app.include_router(tasks_router)
 app.include_router(skills_router)

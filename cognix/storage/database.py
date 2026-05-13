@@ -64,6 +64,7 @@ async def init_db() -> None:
         await _ensure_agent_runtime_columns(conn)
         await _ensure_task_lease_columns(conn)
         await _ensure_connector_credentials_table(conn)
+        await _ensure_artifact_columns(conn)
     logger.info("Database initialized")
 
 
@@ -140,3 +141,25 @@ async def _ensure_connector_credentials_table(conn) -> None:
                 f" ADD COLUMN {column} {ddl_type}"
             )
             await conn.execute(text(sql))
+
+
+async def _ensure_artifact_columns(conn) -> None:
+    """Add versioning, status, source columns to artifacts table."""
+
+    def _columns(sync_conn) -> set[str]:
+        inspector = inspect(sync_conn)
+        return {column["name"] for column in inspector.get_columns("artifacts")}
+
+    columns = await conn.run_sync(_columns)
+    additions = {
+        "version": "INTEGER DEFAULT 1",
+        "parent_id": "VARCHAR(32)",
+        "status": "VARCHAR(32) DEFAULT 'draft'",
+        "source": "VARCHAR(32) DEFAULT 'manual'",
+        "context_type": "VARCHAR(32)",
+    }
+    for column, ddl_type in additions.items():
+        if column not in columns:
+            await conn.execute(
+                text(f"ALTER TABLE artifacts ADD COLUMN {column} {ddl_type}")
+            )

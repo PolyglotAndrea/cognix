@@ -302,7 +302,15 @@ class Agent:
             return AgentResponse(content=f"[{self.name}] Echo: {text}")
 
         messages = [{"role": "system", "content": self.system_prompt}]
-        messages.extend(ctx.get_history())
+        # Use history_window from workspace settings to limit conversation length
+        memory_options = self._workspace_memory_options()
+        history_window = memory_options.get("max_history_messages", 20)
+        token_budget = memory_options.get("token_budget")
+        messages.extend(ctx.get_history(
+            limit=history_window,
+            max_tokens=token_budget,
+            model=self.model,
+        ))
 
         tools_schema = [t.to_openai_schema() for t in self.tools] if self.tools else None
 
@@ -383,7 +391,15 @@ class Agent:
             return
 
         messages = [{"role": "system", "content": self.system_prompt}]
-        messages.extend(ctx.get_history())
+        # Use history_window from workspace settings to limit conversation length
+        memory_options = self._workspace_memory_options()
+        history_window = memory_options.get("max_history_messages", 20)
+        token_budget = memory_options.get("token_budget")
+        messages.extend(ctx.get_history(
+            limit=history_window,
+            max_tokens=token_budget,
+            model=self.model,
+        ))
 
         tools_schema = [t.to_openai_schema() for t in self.tools] if self.tools else None
 
@@ -835,10 +851,14 @@ class Agent:
                     include_cold_memory=memory_options.get("include_cold_memory", True),
                     include_skills=memory_options.get("include_skills", True),
                     include_deep_memory=memory_options.get("include_deep_memory", False),
+                    token_budget=memory_options.get("token_budget", 8000),
+                    routing_strategy=memory_options.get("routing_strategy", "priority"),
+                    model=self.model,
                 )
-                rendered = pack.render_system_context()
+                rendered = pack.render_system_context(model=self.model)
                 if rendered:
                     ctx.add_message("system", rendered)
+                    ctx.metadata["context_token_usage"] = pack.token_usage
                     return
             except Exception:
                 logger.exception("ContextBuilder failed for agent %s", self.id)

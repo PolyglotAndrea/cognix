@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -12,7 +11,7 @@ from sqlalchemy import select
 from cognix.auth.dependencies import CurrentUser, get_current_user
 from cognix.billing.plans import get_all_plans, get_plan_by_id
 from cognix.billing.stripe_client import stripe_client
-from cognix.billing.usage import get_current_usage, get_user_plan
+from cognix.billing.usage import get_current_usage, get_usage_breakdown, get_user_plan
 from cognix.storage.database import get_session
 from cognix.storage.models import SubscriptionModel, SubscriptionStatus
 
@@ -68,8 +67,12 @@ async def get_subscription(
     return {
         "plan": plan.to_dict() if plan else None,
         "status": sub.status.value if sub else "free",
-        "current_period_start": sub.current_period_start.isoformat() if sub and sub.current_period_start else None,
-        "current_period_end": sub.current_period_end.isoformat() if sub and sub.current_period_end else None,
+        "current_period_start": (
+            sub.current_period_start.isoformat() if sub and sub.current_period_start else None
+        ),
+        "current_period_end": (
+            sub.current_period_end.isoformat() if sub and sub.current_period_end else None
+        ),
         "stripe_customer_id": sub.stripe_customer_id if sub else None,
     }
 
@@ -192,6 +195,77 @@ async def get_usage(
             "tokens": plan.limits.tokens_monthly if plan else 10000,
             "agent_runs": plan.limits.agent_runs_monthly if plan else 100,
         },
+    }
+
+
+@router.get("/entitlement")
+async def get_entitlement(
+    workspace_id: str | None = None,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """Get unified entitlement status: BYOK configured, plan level, usage vs limits."""
+    from cognix.billing.entitlement import PAID_PLANS, EntitlementService
+
+    entitlement = await EntitlementService.check_model_execution(user.id, workspace_id)
+    plan_id = await get_user_plan(user.id)
+    usage = await get_current_usage(user.id)
+
+    # Check BYOK status
+    byok_configured = False
+    if workspace_id:
+        try:
+            from cognix.local.workspace_config import WorkspaceConfigStore
+            ws_settings = WorkspaceConfigStore(workspace_id).get_settings()
+            byok_configured = bool(ws_settings.get("llm", {}).get("api_key"))
+        except FileNotFoundError:
+            pass
+    if not byok_configured:
+        from cognix.local.config import ConfigStore
+        global_cfg = ConfigStore().get_llm()
+        byok_configured = bool(global_cfg.api_key)
+
+    return {
+        "allowed": entitlement.allowed,
+        "reason": entitlement.reason,
+        "byok_configured": byok_configured,
+        "plan_id": plan_id,
+        "is_paid": plan_id in PAID_PLANS,
+        "usage": {
+            "api_calls": usage.get("api_calls", 0),
+            "tokens": usage.get("tokens", 0),
+            "agent_runs": usage.get("agent_runs", 0),
+        },
+    }
+
+
+@router.get("/usage/breakdown")
+async def get_usage_breakdown_endpoint(
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    """Get daily usage breakdown for the current billing period."""
+    return await get_usage_breakdown(user.id)
+
+
+class UsageCheckRequest(BaseModel):
+    metric: str  # api_calls, tokens, agent_runs
+
+
+@router.post("/usage/check")
+async def check_usage(
+    body: UsageCheckRequest,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """Check if user has quota for a specific metric."""
+    from cognix.billing.usage import check_quota
+
+    allowed, current, limit = await check_quota(user.id, body.metric)
+    percent = (current / limit * 100) if limit > 0 else 0
+
+    return {
+        "allowed": allowed,
+        "current": current,
+        "limit": limit,
+        "percent": round(percent, 1),
     }
 
 

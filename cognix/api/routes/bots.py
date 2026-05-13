@@ -171,3 +171,77 @@ def _signature_parts(provider: str, request: Request) -> tuple[str, str]:
     if provider in ("lark", "feishu"):
         signature = signature or headers.get("X-Lark-Request-Signature", "")
     return timestamp, signature
+
+
+# ── Health and DLQ endpoints ─────────────────────────────────────
+
+
+@router.get("/{bot_id}/health")
+async def get_bot_health(
+    bot_id: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """Get health metrics for a bot."""
+    from cognix.bots.health import get_health_monitor
+
+    return get_health_monitor().get_health(bot_id)
+
+
+@router.get("/health")
+async def get_all_bot_health(
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    """Get health metrics for all bots."""
+    from cognix.bots.health import get_health_monitor
+
+    return get_health_monitor().get_all_health()
+
+
+@router.get("/{bot_id}/dead-letters")
+async def get_bot_dead_letters(
+    bot_id: str,
+    status: str | None = None,
+    limit: int = 20,
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    """Get dead letter queue entries for a bot."""
+    from sqlalchemy import select
+
+    from cognix.storage.database import get_session
+    from cognix.storage.models import BotDeadLetterModel
+
+    async with get_session() as session:
+        stmt = select(BotDeadLetterModel).where(BotDeadLetterModel.bot_id == bot_id)
+        if status:
+            stmt = stmt.where(BotDeadLetterModel.status == status)
+        stmt = stmt.order_by(BotDeadLetterModel.created_at.desc()).limit(limit)
+        result = await session.execute(stmt)
+        rows = result.scalars().all()
+
+    return [
+        {
+            "id": r.id,
+            "bot_id": r.bot_id,
+            "provider": r.provider,
+            "sender": r.sender,
+            "chat_id": r.chat_id,
+            "message_text": r.message_text[:500],
+            "error": r.error,
+            "attempts": r.attempts,
+            "status": r.status,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows
+    ]
+
+
+@router.post("/dead-letters/{dlq_id}/retry")
+async def retry_dead_letter(
+    dlq_id: int,
+    user: CurrentUser = Depends(require_agents_write),
+) -> dict:
+    """Retry a message from the dead letter queue."""
+    try:
+        return await BotBridgeService.retry_dead_letter(dlq_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc

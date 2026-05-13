@@ -16,12 +16,23 @@ import {
   ChevronLeft,
   ShieldQuestion,
   ShieldCheck,
+  BookOpen,
+  Bot,
+  Server,
+  ScrollText,
+  Shield,
 } from 'lucide-react'
 import { api } from '@/shared/api/client'
 import { useAuthStore } from '@/features/auth/store'
 import { useWorkspaceStore } from './store'
 import { Panel, PanelHeader, PanelBody, Badge } from '@/shared/ui'
 import { TaskDetailModal } from './TaskDetailModal'
+import { ArtifactPanel } from './ArtifactPanel'
+import { PolicyPanel } from './PolicyPanel'
+import { AuditLog } from './AuditLog'
+import { PlaybookPanel } from './PlaybookPanel'
+import { BotHealthPanel } from './BotHealthPanel'
+import { RuntimePanel } from './RuntimePanel'
 
 const TABS = [
   { key: 'approvals' as const, label: 'Approval', icon: ShieldQuestion, color: 'text-amber-500' },
@@ -29,6 +40,12 @@ const TABS = [
   { key: 'files' as const, label: 'Files', icon: Folder, color: 'text-indigo-500' },
   { key: 'events' as const, label: 'Events', icon: Activity, color: 'text-rose-500' },
   { key: 'results' as const, label: 'Results', icon: Wrench, color: 'text-emerald-500' },
+  { key: 'artifacts' as const, label: 'Artifacts', icon: FileText, color: 'text-cyan-500' },
+  { key: 'playbooks' as const, label: 'Playbooks', icon: BookOpen, color: 'text-violet-500' },
+  { key: 'policy' as const, label: 'Policy', icon: Shield, color: 'text-orange-500' },
+  { key: 'audit' as const, label: 'Audit', icon: ScrollText, color: 'text-lime-500' },
+  { key: 'bots' as const, label: 'Bots', icon: Bot, color: 'text-pink-500' },
+  { key: 'runtime' as const, label: 'Runtime', icon: Server, color: 'text-teal-500' },
   { key: 'logs' as const, label: 'Logs', icon: Terminal, color: 'text-slate-500' },
   { key: 'json' as const, label: 'JSON', icon: FileJson, color: 'text-purple-500' },
 ]
@@ -214,12 +231,18 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: any }) {
         title="Open output panel"
       >
         <ChevronLeft className="h-5 w-5 text-muted-foreground group-hover:text-foreground transition-colors" />
-        <div className="flex flex-col gap-6">
+        <div className="flex flex-col gap-4">
            <ShieldQuestion className="h-4 w-4 text-muted-foreground/30" />
            <Clock className="h-4 w-4 text-muted-foreground/30" />
            <Folder className="h-4 w-4 text-muted-foreground/30" />
            <Activity className="h-4 w-4 text-muted-foreground/30" />
            <Wrench className="h-4 w-4 text-muted-foreground/30" />
+           <FileText className="h-4 w-4 text-muted-foreground/30" />
+           <BookOpen className="h-4 w-4 text-muted-foreground/30" />
+           <Shield className="h-4 w-4 text-muted-foreground/30" />
+           <ScrollText className="h-4 w-4 text-muted-foreground/30" />
+           <Bot className="h-4 w-4 text-muted-foreground/30" />
+           <Server className="h-4 w-4 text-muted-foreground/30" />
            <Terminal className="h-4 w-4 text-muted-foreground/30" />
            <FileJson className="h-4 w-4 text-muted-foreground/30" />
         </div>
@@ -470,6 +493,36 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: any }) {
             )}
             <div ref={logsEndRef} />
           </div>
+        )}
+
+        {/* Artifacts Tab */}
+        {rightPanelTab === 'artifacts' && workspaceId && (
+          <ArtifactPanel workspaceId={workspaceId} />
+        )}
+
+        {/* Playbooks Tab */}
+        {rightPanelTab === 'playbooks' && workspaceId && (
+          <PlaybookPanel workspaceId={workspaceId} />
+        )}
+
+        {/* Policy Tab */}
+        {rightPanelTab === 'policy' && workspaceId && (
+          <PolicyPanel workspaceId={workspaceId} />
+        )}
+
+        {/* Audit Tab */}
+        {rightPanelTab === 'audit' && workspaceId && (
+          <AuditLog workspaceId={workspaceId} />
+        )}
+
+        {/* Bots Tab */}
+        {rightPanelTab === 'bots' && (
+          <BotHealthPanel workspaceId={workspaceId} />
+        )}
+
+        {/* Runtime Tab */}
+        {rightPanelTab === 'runtime' && (
+          <RuntimePanel workspaceId={workspaceId} />
         )}
 
         {/* JSON Tab */}

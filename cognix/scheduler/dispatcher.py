@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from cognix.scheduler.executor import TaskExecutor
+from cognix.scheduler.registry import WorkerRegistry
 from cognix.scheduler.retry import compute_retry_at
 from cognix.scheduler.schedules import next_run_time
 from cognix.scheduler.store import TaskStore
@@ -27,6 +28,7 @@ class DistributedTaskDispatcher:
         *,
         executor: TaskExecutor,
         store: TaskStore | None = None,
+        worker_registry: WorkerRegistry | None = None,
         node_id: str | None = None,
         poll_interval: float = 5.0,
         batch_size: int = 10,
@@ -37,6 +39,7 @@ class DistributedTaskDispatcher:
     ) -> None:
         self.executor = executor
         self.store = store or TaskStore()
+        self.worker_registry = worker_registry or WorkerRegistry()
         self.node_id = (
             node_id
             or os.environ.get("COGNIX_RUNTIME_NODE_ID")
@@ -80,6 +83,12 @@ class DistributedTaskDispatcher:
             pass
         self._task = None
 
+        # Deregister from worker registry
+        try:
+            await self.worker_registry.deregister(self.node_id)
+        except Exception:
+            logger.debug("Failed to deregister worker node", exc_info=True)
+
         # Drain active tasks
         if self._active_task_ids:
             logger.info(
@@ -117,12 +126,30 @@ class DistributedTaskDispatcher:
         return len(claimed)
 
     async def _run_loop(self) -> None:
+        # Register self with worker registry
+        try:
+            await self.worker_registry.register(
+                self.node_id,
+                max_concurrent=self.max_concurrent,
+            )
+        except Exception:
+            logger.debug("Failed to register worker node", exc_info=True)
+
         reap_counter = 0
+        stale_counter = 0
         while True:
             try:
                 await self.dispatch_once()
             except Exception:
                 logger.exception("Distributed task dispatch cycle failed")
+            # Heartbeat every cycle
+            try:
+                await self.worker_registry.heartbeat(
+                    self.node_id, current_load=len(self._active_task_ids),
+                )
+            except Exception:
+                logger.debug("Worker heartbeat failed", exc_info=True)
+
             # Reap orphaned leases every 10 cycles (~50s at default 5s interval)
             reap_counter += 1
             if reap_counter >= 10:
@@ -134,6 +161,18 @@ class DistributedTaskDispatcher:
                         logger.info("Reaped %d orphaned task leases", reaped)
                 except Exception:
                     logger.exception("Orphan lease reaper failed")
+
+                # Mark stale nodes as offline every 10 cycles
+                stale_counter += 1
+                if stale_counter >= 3:  # every ~30 cycles
+                    stale_counter = 0
+                    try:
+                        marked = await self.worker_registry.mark_offline_stale()
+                        if marked:
+                            logger.info("Marked %d stale worker nodes offline", marked)
+                    except Exception:
+                        logger.debug("Stale node marking failed", exc_info=True)
+
             await asyncio.sleep(self.poll_interval)
 
     async def _run_claimed(self, task: ScheduledTaskModel) -> None:

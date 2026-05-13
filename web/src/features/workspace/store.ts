@@ -15,14 +15,29 @@ export interface LogEntry {
   timestamp: number
 }
 
+type RightPanelTab =
+  | 'approvals'
+  | 'tasks'
+  | 'files'
+  | 'events'
+  | 'results'
+  | 'artifacts'
+  | 'playbooks'
+  | 'policy'
+  | 'audit'
+  | 'bots'
+  | 'runtime'
+  | 'logs'
+  | 'json'
+
 interface WorkspaceState {
   selectedAgentId: string | null
-  rightPanelTab: 'approvals' | 'tasks' | 'files' | 'events' | 'results' | 'logs' | 'json'
+  rightPanelTab: RightPanelTab
   rightPanelOpen: boolean
   toolResults: ToolResult[]
   executionLogs: LogEntry[]
   setSelectedAgent: (id: string | null) => void
-  setRightPanelTab: (tab: 'approvals' | 'tasks' | 'files' | 'events' | 'results' | 'logs' | 'json') => void
+  setRightPanelTab: (tab: RightPanelTab) => void
   addToolResult: (result: ToolResult) => void
   addLog: (log: LogEntry) => void
   clearResults: () => void

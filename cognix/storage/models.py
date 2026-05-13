@@ -225,6 +225,12 @@ class ArtifactType(StrEnum):
     LOG = "log"
 
 
+class ArtifactStatus(StrEnum):
+    DRAFT = "draft"
+    PUBLISHED = "published"
+    ARCHIVED = "archived"
+
+
 class ArtifactModel(Base):
     __tablename__ = "artifacts"
 
@@ -236,5 +242,82 @@ class ArtifactModel(Base):
     title: Mapped[str] = mapped_column(String(256))
     content: Mapped[str] = mapped_column(Text, default="")
     metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    parent_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(32), default="draft")
+    source: Mapped[str] = mapped_column(String(32), default="manual")
+    context_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
+# ── Policy audit log ─────────────────────────────────────────────
+
+
+class PolicyAuditLogModel(Base):
+    __tablename__ = "policy_audit_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), index=True)
+    user_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    agent_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    operation: Mapped[str] = mapped_column(String(256))
+    access_level: Mapped[str] = mapped_column(String(32))
+    permission_mode: Mapped[str] = mapped_column(String(32))
+    decision: Mapped[str] = mapped_column(String(32))
+    reason: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+# ── Playbook models ─────────────────────────────────────────────
+
+
+class PlaybookModel(Base):
+    __tablename__ = "playbooks"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    workspace_id: Mapped[str] = mapped_column(String(64), index=True)
+    name: Mapped[str] = mapped_column(String(128))
+    description: Mapped[str] = mapped_column(Text, default="")
+    source_artifact_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    source_task_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    template: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(32), default="draft")
+    usage_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+
+# ── Bot dead letter queue ───────────────────────────────────────
+
+
+class BotDeadLetterModel(Base):
+    __tablename__ = "bot_dead_letters"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    bot_id: Mapped[str] = mapped_column(String(32), index=True)
+    provider: Mapped[str] = mapped_column(String(32))
+    sender: Mapped[str] = mapped_column(String(128), default="")
+    chat_id: Mapped[str] = mapped_column(String(128), default="")
+    message_text: Mapped[str] = mapped_column(Text)
+    error: Mapped[str] = mapped_column(Text)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+# ── Worker node registry ────────────────────────────────────────
+
+
+class WorkerNodeModel(Base):
+    __tablename__ = "worker_nodes"
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    hostname: Mapped[str] = mapped_column(String(256), default="")
+    ip_address: Mapped[str] = mapped_column(String(64), default="")
+    capabilities: Mapped[dict] = mapped_column(JSON, default=dict)
+    max_concurrent: Mapped[int] = mapped_column(Integer, default=3)
+    current_load: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(32), default="active")
+    last_heartbeat: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    registered_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)

@@ -86,11 +86,30 @@ class WorkspaceConfigStore:
             "enabled_skills": [],
             "context": {
                 "max_history_messages": 20,
+                "token_budget": 8000,
+                "routing_strategy": "priority",
                 "include_hot_memory": True,
                 "include_cold_memory": True,
                 "include_skills": True,
                 "include_deep_memory": False,
             },
+            "policy": {
+                "file_write": "workspace-write",
+                "network_access": "ask",
+                "mcp_tools": "workspace-write",
+                "connector_access": "ask",
+                "max_file_size_mb": 10,
+                "allowed_domains": [],
+                "blocked_commands": ["rm -rf", "sudo"],
+            },
+            "bot_limits": {
+                "rate_per_minute": 30,
+                "rate_per_hour": 500,
+                "max_message_length": 4000,
+                "dlq_enabled": True,
+            },
+            "ui_mode": "advanced",
+            "onboarding_completed": False,
         }
 
     def get_settings(self) -> dict[str, Any]:

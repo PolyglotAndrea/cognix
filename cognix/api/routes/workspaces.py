@@ -55,6 +55,7 @@ class UpdateWorkspaceSettingsRequest(BaseModel):
     llm: dict | None = None
     enabled_skills: list[str] | None = None
     context: dict | None = None
+    ui_mode: str | None = None
 
 
 class SetWorkspaceSkillRequest(BaseModel):
@@ -315,7 +316,11 @@ async def call_workspace_mcp_tool(
         (
             item
             for item in tools
-            if item.name == tool_name or item.name.endswith(f"_{tool_name}") or tool_name == item.name.split("_")[-1]
+            if (
+                item.name == tool_name
+                or item.name.endswith(f"_{tool_name}")
+                or tool_name == item.name.split("_")[-1]
+            )
         ),
         None,
     )
@@ -1003,3 +1008,93 @@ def _message_to_dict(message) -> dict:
     data = message.__dict__.copy()
     data["attachments"] = [attachment.__dict__ for attachment in message.attachments]
     return data
+
+
+# ── Policy endpoints ───────────────────────────────────────────────
+
+
+@router.get("/{workspace_id}/policy")
+async def get_workspace_policy(
+    workspace_id: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    """Get workspace sandbox policy settings."""
+    store = WorkspaceConfigStore(workspace_id)
+    settings = store.get_settings()
+    return settings.get("policy", {})
+
+
+class UpdatePolicyRequest(BaseModel):
+    file_write: str | None = None
+    network_access: str | None = None
+    mcp_tools: str | None = None
+    connector_access: str | None = None
+    max_file_size_mb: int | None = None
+    allowed_domains: list[str] | None = None
+    blocked_commands: list[str] | None = None
+
+
+@router.patch("/{workspace_id}/policy")
+async def update_workspace_policy(
+    workspace_id: str,
+    body: UpdatePolicyRequest,
+    user: CurrentUser = Depends(require_skills_write),
+) -> dict:
+    """Update workspace sandbox policy settings."""
+    store = WorkspaceConfigStore(workspace_id)
+    updates = {"policy": body.model_dump(exclude_unset=True)}
+    store.update_settings(updates)
+    return store.get_settings().get("policy", {})
+
+
+@router.post("/{workspace_id}/onboarding/complete")
+async def complete_onboarding(
+    workspace_id: str,
+    user: CurrentUser = Depends(require_skills_write),
+) -> dict:
+    """Mark onboarding as completed and optionally set UI mode."""
+    store = _workspace_config(workspace_id)
+    store.update_settings({"onboarding_completed": True})
+    return {"workspace_id": workspace_id, "onboarding_completed": True}
+
+
+@router.get("/{workspace_id}/audit-log")
+async def get_policy_audit_log(
+    workspace_id: str,
+    agent_id: str | None = None,
+    decision: str | None = None,
+    limit: int = 50,
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    """Get policy audit log for a workspace."""
+    from sqlalchemy import select
+
+    from cognix.storage.database import get_session
+    from cognix.storage.models import PolicyAuditLogModel
+
+    async with get_session() as session:
+        stmt = select(PolicyAuditLogModel).where(
+            PolicyAuditLogModel.workspace_id == workspace_id,
+        )
+        if agent_id:
+            stmt = stmt.where(PolicyAuditLogModel.agent_id == agent_id)
+        if decision:
+            stmt = stmt.where(PolicyAuditLogModel.decision == decision)
+        stmt = stmt.order_by(PolicyAuditLogModel.created_at.desc()).limit(limit)
+        result = await session.execute(stmt)
+        rows = result.scalars().all()
+
+    return [
+        {
+            "id": r.id,
+            "user_id": r.user_id,
+            "agent_id": r.agent_id,
+            "operation": r.operation,
+            "access_level": r.access_level,
+            "permission_mode": r.permission_mode,
+            "decision": r.decision,
+            "reason": r.reason,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in rows
+    ]

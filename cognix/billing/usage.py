@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 
 from cognix.storage.database import get_session
-from cognix.storage.models import PlanModel, SubscriptionModel, SubscriptionStatus, UsageRecordModel
+from cognix.storage.models import SubscriptionModel, SubscriptionStatus, UsageRecordModel
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ async def record_usage(
             subscription_id=subscription_id,
             metric=metric,
             quantity=quantity,
-            recorded_at=datetime.now(timezone.utc),
+            recorded_at=datetime.now(UTC),
         )
         session.add(record)
 
@@ -35,7 +35,7 @@ async def get_current_usage(user_id: str, period_start: datetime | None = None) 
     """Get current usage for a user in the current billing period."""
     if period_start is None:
         # Default to start of current month
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         period_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
     async with get_session() as session:
@@ -112,3 +112,42 @@ async def enforce_quota(user_id: str, metric: str, quantity: int = 1) -> bool:
 
     await record_usage(user_id, metric, quantity)
     return True
+
+
+async def get_usage_breakdown(
+    user_id: str,
+    period_start: datetime | None = None,
+    period_end: datetime | None = None,
+) -> list[dict]:
+    """Get daily usage breakdown for charts.
+
+    Returns list of {date, metric, quantity} dicts.
+    """
+    if period_start is None:
+        now = datetime.now(UTC)
+        period_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    async with get_session() as session:
+        stmt = (
+            select(
+                func.date(UsageRecordModel.recorded_at).label("date"),
+                UsageRecordModel.metric,
+                func.sum(UsageRecordModel.quantity).label("total"),
+            )
+            .where(UsageRecordModel.user_id == user_id)
+            .where(UsageRecordModel.recorded_at >= period_start)
+        )
+        if period_end:
+            stmt = stmt.where(UsageRecordModel.recorded_at <= period_end)
+        stmt = stmt.group_by(
+            func.date(UsageRecordModel.recorded_at),
+            UsageRecordModel.metric,
+        ).order_by(func.date(UsageRecordModel.recorded_at))
+
+        result = await session.execute(stmt)
+        rows = result.all()
+
+    return [
+        {"date": str(row.date), "metric": row.metric, "quantity": row.total or 0}
+        for row in rows
+    ]

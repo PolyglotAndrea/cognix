@@ -77,23 +77,53 @@ class ContextPack:
     deep_memory: str = ""
     token_budget: int = 8000
     sources: list[dict[str, Any]] = field(default_factory=list)
+    token_usage: dict[str, int] = field(default_factory=dict)
 
-    def render_system_context(self) -> str:
-        sections = []
+    def render_system_context(self, *, model: str = "gpt-4o") -> str:
+        from cognix.memory.token_counter import count_tokens, truncate_to_budget
+
+        sections: list[str] = []
+        usage: dict[str, int] = {}
+
+        # Hot memory always included (highest priority)
         hot = self.hot_memory.render()
         if hot:
+            hot_tokens = count_tokens(hot, model)
+            usage["hot"] = hot_tokens
             sections.append("# Hot Memory\n" + hot)
-        if self.cold_memories:
-            recalled = "\n".join(f"- {m.compact()}" for m in self.cold_memories)
-            sections.append("# Recalled History\n" + recalled)
+
+        # Procedural memory (second priority)
         if self.procedural_memories:
-            skills = "\n\n".join(
+            skills_text = "\n\n".join(
                 f"## {skill.name}\n{skill.compact()}" for skill in self.procedural_memories
             )
-            sections.append("# Relevant Skills\n" + skills)
+            skills_tokens = count_tokens(skills_text, model)
+            usage["procedural"] = skills_tokens
+            sections.append("# Relevant Skills\n" + skills_text)
+
+        # Cold memory (third priority)
+        if self.cold_memories:
+            recalled = "\n".join(f"- {m.compact()}" for m in self.cold_memories)
+            cold_tokens = count_tokens(recalled, model)
+            usage["cold"] = cold_tokens
+            sections.append("# Recalled History\n" + recalled)
+
+        # Deep memory (lowest priority)
         if self.deep_memory.strip():
+            deep_tokens = count_tokens(self.deep_memory.strip(), model)
+            usage["deep"] = deep_tokens
             sections.append("# User Model\n" + self.deep_memory.strip())
-        return "\n\n".join(sections)
+
+        self.token_usage = usage
+        result = "\n\n".join(sections)
+
+        # Enforce token budget: truncate from the end if over budget
+        total_tokens = sum(usage.values())
+        if total_tokens > self.token_budget:
+            result = truncate_to_budget(result, self.token_budget, model)
+            self.token_usage["truncated"] = True
+
+        return result
 
     def source_summary(self) -> list[dict[str, Any]]:
         """Return a list of memory sources used in this context pack."""
@@ -101,17 +131,29 @@ class ContextPack:
             return self.sources
         sources: list[dict[str, Any]] = []
         if self.hot_memory.user.strip():
-            sources.append({"type": "hot", "name": "USER.md", "chars": len(self.hot_memory.user.strip())})
+            sources.append({"type": "hot", "name": "USER.md", "chars": len(self.hot_memory.user)})
         if self.hot_memory.global_memory.strip():
-            sources.append({"type": "hot", "name": "MEMORY.md", "chars": len(self.hot_memory.global_memory.strip())})
+            sources.append({
+                "type": "hot", "name": "MEMORY.md",
+                "chars": len(self.hot_memory.global_memory),
+            })
         if self.hot_memory.workspace_memory.strip():
-            sources.append({"type": "hot", "name": "workspace/MEMORY.md", "chars": len(self.hot_memory.workspace_memory.strip())})
+            sources.append({
+                "type": "hot", "name": "workspace/MEMORY.md",
+                "chars": len(self.hot_memory.workspace_memory),
+            })
         for m in self.cold_memories:
-            sources.append({"type": "cold", "id": m.id, "kind": m.kind, "chars": len(m.content), "created_at": m.created_at})
+            sources.append({
+                "type": "cold", "id": m.id, "kind": m.kind,
+                "chars": len(m.content), "created_at": m.created_at,
+            })
         for s in self.procedural_memories:
             sources.append({"type": "procedural", "name": s.name, "chars": len(s.content)})
         if self.deep_memory.strip():
-            sources.append({"type": "deep", "name": "DEEP_MEMORY.md", "chars": len(self.deep_memory.strip())})
+            sources.append({
+                "type": "deep", "name": "DEEP_MEMORY.md",
+                "chars": len(self.deep_memory),
+            })
         return sources
 
 
@@ -385,26 +427,71 @@ class ContextBuilder:
         include_skills: bool = True,
         include_deep_memory: bool = False,
         token_budget: int = 8000,
+        routing_strategy: str = "priority",
         deep_memory: str = "",
+        model: str = "gpt-4o",
     ) -> ContextPack:
+        from cognix.memory.token_counter import count_tokens
+
         hot = self.load_hot_memory(workspace_id=workspace_id) if include_hot_memory else HotMemory()
-        cold = []
-        if include_cold_memory:
-            cold = await self.cold_store.search(
-                user_message,
-                workspace_id=workspace_id,
-                limit=5,
-            )
-        skills = self.search_procedural_memory(user_message, workspace_id=workspace_id, limit=3)
-        if not include_skills:
-            skills = []
-        if include_deep_memory and not deep_memory:
-            deep_memory = self.load_deep_memory()
+        cold: list[ColdMemoryRecord] = []
+        skills: list[ProceduralMemory] = []
+        deep = deep_memory
+
+        if routing_strategy == "greedy":
+            # Greedy: include everything, let render_system_context truncate
+            if include_cold_memory:
+                cold = await self.cold_store.search(
+                    user_message, workspace_id=workspace_id, limit=5,
+                )
+            if include_skills:
+                skills = self.search_procedural_memory(
+                    user_message, workspace_id=workspace_id, limit=3,
+                )
+            if include_deep_memory and not deep:
+                deep = self.load_deep_memory()
+        else:
+            # Priority-based: add sources until budget is exhausted
+            used = 0
+            hot_text = hot.render()
+            if hot_text:
+                used += count_tokens(hot_text, model)
+
+            # Procedural memory (second priority)
+            if include_skills and used < token_budget:
+                all_skills = self.search_procedural_memory(
+                    user_message, workspace_id=workspace_id, limit=3,
+                )
+                for s in all_skills:
+                    s_tokens = count_tokens(s.compact(), model)
+                    if used + s_tokens <= token_budget:
+                        skills.append(s)
+                        used += s_tokens
+
+            # Cold memory (third priority)
+            if include_cold_memory and used < token_budget:
+                all_cold = await self.cold_store.search(
+                    user_message, workspace_id=workspace_id, limit=5,
+                )
+                for m in all_cold:
+                    m_tokens = count_tokens(m.compact(), model)
+                    if used + m_tokens <= token_budget:
+                        cold.append(m)
+                        used += m_tokens
+
+            # Deep memory (lowest priority)
+            if include_deep_memory and not deep and used < token_budget:
+                deep = self.load_deep_memory()
+                if deep.strip():
+                    deep_tokens = count_tokens(deep.strip(), model)
+                    if used + deep_tokens > token_budget:
+                        deep = ""  # skip if doesn't fit
+
         return ContextPack(
             hot_memory=hot,
             cold_memories=cold,
             procedural_memories=skills,
-            deep_memory=deep_memory,
+            deep_memory=deep,
             token_budget=token_budget,
         )
 
