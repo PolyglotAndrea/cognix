@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings
@@ -24,9 +24,15 @@ class SchedulerSettings(BaseSettings):
     misfire_grace_time: int = Field(
         default=60, description="Seconds after misfire to still execute"
     )
-    dispatcher_poll_interval: float = Field(default=5.0, description="Distributed dispatcher poll interval")
-    dispatcher_batch_size: int = Field(default=10, description="Max tasks claimed per dispatcher poll")
-    dispatcher_max_concurrent: int = Field(default=3, description="Max concurrent distributed task runs per node")
+    dispatcher_poll_interval: float = Field(
+        default=5.0, description="Distributed dispatcher poll interval",
+    )
+    dispatcher_batch_size: int = Field(
+        default=10, description="Max tasks claimed per dispatcher poll",
+    )
+    dispatcher_max_concurrent: int = Field(
+        default=3, description="Max concurrent distributed task runs per node",
+    )
     dispatcher_lease_ttl_seconds: int = Field(default=120, description="Distributed task lease TTL")
     retry_base_seconds: int = Field(default=30, description="Initial distributed task retry delay")
     retry_max_seconds: int = Field(default=3600, description="Maximum distributed task retry delay")
@@ -72,6 +78,18 @@ class AuthSettings(BaseSettings):
         default="http://localhost:5173",
         description="Frontend base URL used for OAuth callback redirects",
     )
+
+    def model_post_init(self, __context: Any) -> None:
+        import os
+
+        if (
+            self.secret_key == "change-me-in-production"
+            and not os.environ.get("COGNIX_DEBUG")
+        ):
+            raise ValueError(
+                "COGNIX_AUTH__SECRET_KEY must be set to a secure value. "
+                "The default 'change-me-in-production' is not allowed in production."
+            )
 
 
 class BillingSettings(BaseSettings):

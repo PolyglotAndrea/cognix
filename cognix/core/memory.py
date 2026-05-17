@@ -6,7 +6,7 @@ import json
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -53,14 +53,14 @@ class InMemoryBackend(MemoryBackend):
     async def get(self, key: str) -> MemoryEntry | None:
         entry = self._store.get(key)
         if entry and entry.ttl is not None:
-            elapsed = (datetime.now(timezone.utc) - entry.updated_at).total_seconds()
+            elapsed = (datetime.now(UTC) - entry.updated_at).total_seconds()
             if elapsed > entry.ttl:
                 del self._store[key]
                 return None
         return entry
 
     async def set(self, key: str, value: Any, ttl: int | None = None) -> None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         existing = self._store.get(key)
         self._store[key] = MemoryEntry(
             key=key,
@@ -143,7 +143,7 @@ class SQLiteBackend(MemoryBackend):
 
                 # Check TTL
                 if entry.ttl is not None:
-                    elapsed = (datetime.now(timezone.utc) - entry.updated_at).total_seconds()
+                    elapsed = (datetime.now(UTC) - entry.updated_at).total_seconds()
                     if elapsed > entry.ttl:
                         await self.delete(key)
                         return None
@@ -154,7 +154,7 @@ class SQLiteBackend(MemoryBackend):
         import aiosqlite
 
         await self._ensure_table()
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         value_json = json.dumps(value)
 
         async with aiosqlite.connect(self.db_path) as db:

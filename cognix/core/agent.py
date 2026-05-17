@@ -87,6 +87,10 @@ class Agent:
         self.tools.append(tool)
         self._tool_map[tool.name] = tool
 
+    def reset(self) -> None:
+        """Reset agent state to IDLE from ERROR."""
+        self.state = AgentState.IDLE
+
     def remove_tool(self, name: str) -> None:
         self.tools = [t for t in self.tools if t.name != name]
         self._tool_map.pop(name, None)
@@ -162,7 +166,7 @@ class Agent:
         message: str,
         context: Context | None = None,
     ) -> AsyncIterator[AgentChunk]:
-        """Stream agent response chunks."""
+        """Stream agent response chunks, including tool-call processing."""
         ctx = context or Context()
         await self._inject_context_pack(ctx, message)
         ctx.add_message("user", self._next_user_content(ctx, message))
@@ -171,10 +175,46 @@ class Agent:
         self.state = AgentState.RUNNING
 
         try:
-            async for chunk in self._stream_llm(ctx):
-                yield chunk
+            if not self.tools:
+                # No tools: simple streaming
+                content = ""
+                async for chunk in self._stream_llm(ctx):
+                    content += chunk.delta
+                    yield chunk
+                ctx.add_message("assistant", content)
+                await self._remember_exchange(message, content)
+                self.state = AgentState.IDLE
+                return
 
-            await self._remember_exchange(message, "")
+            # With tools: use call-based loop (LLM decides when to stop)
+            for _ in range(self.max_iterations):
+                response = await self._call_llm(ctx)
+                if not response.tool_calls:
+                    # Final response — yield as a single chunk
+                    yield AgentChunk(
+                        delta=response.content,
+                        finish_reason="stop",
+                    )
+                    ctx.add_message("assistant", response.content)
+                    await self._remember_exchange(message, response.content)
+                    self.state = AgentState.IDLE
+                    return
+
+                # Execute tool calls
+                ctx.add_message("assistant", response.content, tool_calls=response.tool_calls)
+                for tc in response.tool_calls:
+                    tc_result = await self._execute_tool(tc)
+                    ctx.add_message(
+                        "tool",
+                        tc_result,
+                        tool_call_id=tc.get("id", ""),
+                        name=tc.get("name", ""),
+                    )
+
+            # Max iterations reached
+            warning = "Agent reached max iterations without a final response."
+            logger.warning(warning)
+            yield AgentChunk(delta=warning, finish_reason="max_iterations")
             self.state = AgentState.IDLE
         except Exception as e:
             self.state = AgentState.ERROR
@@ -513,7 +553,97 @@ class Agent:
             )
             return error_msg
 
+        policy_decision = await self._check_workspace_tool_policy(tool, arguments)
+        if policy_decision is not None and not policy_decision.allowed:
+            approval_id = ""
+            if policy_decision.requires_approval:
+                approval_id = self._create_approval_request(
+                    tool_name=name,
+                    arguments=arguments,
+                    access_level=tool.access_level,
+                    reason=policy_decision.reason,
+                )
+                self.state = AgentState.WAITING
+                await self._emit(
+                    Events.APPROVAL_REQUESTED,
+                    {
+                        "approval_id": approval_id,
+                        "agent_id": self.id,
+                        "workspace_id": self.workspace_id,
+                        "tool": name,
+                        "arguments": arguments,
+                        "access_level": tool.access_level,
+                        "reason": policy_decision.reason,
+                    },
+                )
+                self._pending_approval_event = {
+                    "approval_id": approval_id,
+                    "id": approval_id,
+                    "agent_id": self.id,
+                    "workspace_id": self.workspace_id,
+                    "tool": name,
+                    "name": name,
+                    "tool_name": name,
+                    "arguments": arguments,
+                    "args": arguments,
+                    "access_level": tool.access_level,
+                    "reason": policy_decision.reason,
+                    "kind": "tool_permission",
+                    "permission_mode": self.permission_mode,
+                }
+                await self._emit(
+                    Events.AGENT_WAITING,
+                    {
+                        "agent_id": self.id,
+                        "approval_id": approval_id,
+                        "reason": policy_decision.reason,
+                    },
+                )
+            error_msg = (
+                f"Permission denied: {policy_decision.reason}"
+                if not policy_decision.requires_approval
+                else f"Approval required [{approval_id}]: {policy_decision.reason}"
+            )
+            await self._emit(
+                Events.TOOL_ERROR,
+                {
+                    "tool": name,
+                    "error": error_msg,
+                    "permission_mode": self.permission_mode,
+                    "access_level": tool.access_level,
+                    "requires_approval": policy_decision.requires_approval,
+                },
+            )
+            return error_msg
+
         return await self._execute_tool_unchecked(tool_call, tool)
+
+    async def _check_workspace_tool_policy(self, tool: Tool, arguments: dict[str, Any]):
+        """Apply workspace policy for tools mounted from external capability systems."""
+        if not self.workspace_id:
+            return None
+
+        tool_type = tool.metadata.get("type")
+        if tool_type not in {"mcp", "connector"}:
+            return None
+
+        from cognix.core.policy import WorkspacePolicyService
+
+        policy = WorkspacePolicyService(self.workspace_id)
+        if tool_type == "mcp":
+            return await policy.check_mcp_tool(
+                str(tool.metadata.get("original_name") or tool.name),
+                tool.access_level,
+                permission_mode=self.permission_mode,
+                agent_id=self.id,
+            )
+
+        platform = str(tool.metadata.get("platform") or tool.name)
+        return await policy.check_connector(
+            platform,
+            permission_mode=self.permission_mode,
+            agent_id=self.id,
+        )
 
     async def resume_approval(self, approval_id: str) -> str:
         """Execute a previously approved tool call."""
@@ -904,6 +1034,28 @@ class Agent:
         """Persist a summarized exchange in the configured memory backend."""
         if not user_message.strip():
             return
+
+        # Memory write approval gate for restricted permission modes
+        if self.permission_mode in ("ask", "plan") and self.workspace_id:
+            try:
+                from cognix.local.approvals import ApprovalKind, create_approval_request
+
+                await create_approval_request(
+                    workspace_id=self.workspace_id,
+                    kind=ApprovalKind.MEMORY_WRITE,
+                    tool_name="memory.write",
+                    request_args={
+                        "user_message": user_message[:200],
+                        "assistant_message": assistant_message[:200],
+                    },
+                    agent_id=self.id,
+                    policy_decision="ask",
+                    access_level="ask",
+                    reason=f"Agent {self.name} wants to persist conversation to memory",
+                )
+            except Exception:
+                logger.warning("Failed to create memory write approval", exc_info=True)
+
         key = f"conversation:{uuid.uuid4().hex[:12]}"
         value = {
             "user": user_message,

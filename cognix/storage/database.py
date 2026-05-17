@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -14,18 +15,27 @@ from cognix.config import get_settings
 logger = logging.getLogger(__name__)
 
 _engine = None
+_engine_url: str | None = None
 _session_factory = None
+
+
+def _configured_database_url() -> str:
+    """Resolve the current database URL, honoring test/runtime env overrides."""
+    return os.environ.get("COGNIX_DATABASE__URL") or get_settings().database.url
 
 
 def get_engine():
     """Get or create the async SQLAlchemy engine."""
-    global _engine
-    if _engine is None:
+    global _engine, _engine_url, _session_factory
+    database_url = _configured_database_url()
+    if _engine is None or _engine_url != database_url:
         settings = get_settings()
         _engine = create_async_engine(
-            settings.database.url,
+            database_url,
             echo=settings.database.echo,
         )
+        _engine_url = database_url
+        _session_factory = None
     return _engine
 
 
@@ -63,6 +73,7 @@ async def init_db() -> None:
         await conn.run_sync(Base.metadata.create_all)
         await _ensure_agent_runtime_columns(conn)
         await _ensure_task_lease_columns(conn)
+        await _ensure_task_run_columns(conn)
         await _ensure_connector_credentials_table(conn)
         await _ensure_artifact_columns(conn)
     logger.info("Database initialized")
@@ -70,10 +81,11 @@ async def init_db() -> None:
 
 async def close_db() -> None:
     """Close database connections."""
-    global _engine, _session_factory
+    global _engine, _engine_url, _session_factory
     if _engine:
         await _engine.dispose()
         _engine = None
+        _engine_url = None
         _session_factory = None
 
 
@@ -103,6 +115,7 @@ async def _ensure_task_lease_columns(conn) -> None:
 
     columns = await conn.run_sync(_columns)
     additions = {
+        "user_id": "VARCHAR(36)",
         "lease_owner": "VARCHAR(128)",
         "lease_expires_at": "DATETIME",
         "max_execution_seconds": "INTEGER DEFAULT 300",
@@ -111,6 +124,22 @@ async def _ensure_task_lease_columns(conn) -> None:
     for column, ddl_type in additions.items():
         if column not in columns:
             await conn.execute(text(f"ALTER TABLE scheduled_tasks ADD COLUMN {column} {ddl_type}"))
+
+
+async def _ensure_task_run_columns(conn) -> None:
+    """Add lightweight task run columns for existing DBs."""
+
+    def _columns(sync_conn) -> set[str]:
+        inspector = inspect(sync_conn)
+        return {column["name"] for column in inspector.get_columns("task_runs")}
+
+    columns = await conn.run_sync(_columns)
+    additions = {
+        "user_id": "VARCHAR(36)",
+    }
+    for column, ddl_type in additions.items():
+        if column not in columns:
+            await conn.execute(text(f"ALTER TABLE task_runs ADD COLUMN {column} {ddl_type}"))
 
 
 async def _ensure_connector_credentials_table(conn) -> None:

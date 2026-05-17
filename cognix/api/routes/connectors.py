@@ -19,6 +19,7 @@ from cognix.connectors.exceptions import ConnectorAPIError, ConnectorTokenExpire
 from cognix.connectors.manager import ConnectorManager
 from cognix.connectors.providers import all_providers, get_provider
 from cognix.core.permissions import clamp_permission_mode, decide_permission
+from cognix.core.policy import WorkspacePolicyService
 from cognix.local.approvals import ApprovalStore
 from cognix.local.workspace_config import WorkspaceConfigStore
 
@@ -55,10 +56,10 @@ async def list_platforms(
     """List available connector platforms with connection status."""
     manager = ConnectorManager()
     providers = all_providers()
+    all_creds = await manager.list_credentials(user.id)
     result = []
     for platform, provider in providers.items():
-        creds = await manager.list_credentials(user.id)
-        platform_creds = [c for c in creds if c.platform == platform]
+        platform_creds = [c for c in all_creds if c.platform == platform]
         result.append({
             "platform": platform,
             "display_name": provider.display_name,
@@ -372,6 +373,17 @@ async def call_connector_tool(
 
     access_level = connector_access_level(spec, metadata)
     effective_mode = clamp_permission_mode(body.permission_mode, user.role)
+    if workspace_id:
+        policy_result = await WorkspacePolicyService(workspace_id).check_connector(
+            platform,
+            permission_mode=effective_mode,
+            user_id=user.id,
+            agent_id=f"connector-debug:{user.id}",
+        )
+        if not policy_result.allowed:
+            if not policy_result.requires_approval:
+                raise HTTPException(403, policy_result.reason or "Connector denied by policy")
+            effective_mode = "ask"
     decision = decide_permission(
         effective_mode,
         access_level,

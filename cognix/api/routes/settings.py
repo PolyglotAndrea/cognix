@@ -66,6 +66,12 @@ def _is_masked_key(value: str) -> bool:
     return bool(value) and value.endswith("***")
 
 
+def _usable_request_key(value: str | None) -> str | None:
+    if not value or _is_masked_key(value):
+        return None
+    return value
+
+
 @router.get("/llm")
 async def get_llm_config(
     user: CurrentUser = Depends(require_settings_read),
@@ -112,7 +118,7 @@ async def test_llm_connection(
     store = ConfigStore()
     cfg = store.get_llm()
     model = body.model or cfg.default_model
-    api_key = body.api_key or cfg.api_key
+    api_key = _usable_request_key(body.api_key) or cfg.api_key
     base_url = body.base_url or cfg.base_url
 
     if not api_key:
@@ -147,7 +153,7 @@ async def list_models(
 ) -> dict:
     store = ConfigStore()
     cfg = store.get_llm()
-    api_key = body.api_key or cfg.api_key
+    api_key = _usable_request_key(body.api_key) or cfg.api_key
     base_url = body.base_url or cfg.base_url
 
     models: list[str] = []

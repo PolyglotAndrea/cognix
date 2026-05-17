@@ -47,3 +47,9 @@ htmlcov/
 
 # Claude Code
 .claude/
+
+# OpenClaude
+.openclaude/
+
+# Ruff cache
+.ruff_cache/

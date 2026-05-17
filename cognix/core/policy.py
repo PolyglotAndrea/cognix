@@ -183,12 +183,56 @@ class WorkspacePolicyService:
         permission_mode: str = "workspace-write",
         user_id: str | None = None,
         agent_id: str | None = None,
+        timeout_seconds: int | None = None,
     ) -> PolicyResult:
         policy = self._get_policy()
         blocked = policy.get("blocked_commands", [])
+        allowed = policy.get("allowed_commands", [])
+        max_timeout = policy.get("max_command_timeout_seconds")
+
+        # Enforce timeout limit from policy
+        if max_timeout and timeout_seconds and timeout_seconds > max_timeout:
+            result = PolicyResult(
+                allowed=False,
+                reason=f"Command timeout {timeout_seconds}s exceeds policy limit {max_timeout}s",
+            )
+            await self._log(
+                operation=f"command:{command}",
+                access_level="dangerous",
+                permission_mode=permission_mode,
+                decision="denied",
+                reason=result.reason,
+                user_id=user_id,
+                agent_id=agent_id,
+            )
+            return result
+
+        cmd_lower = command.lower().strip()
+
+        # If allowlist is defined, only allowlisted commands are permitted
+        if allowed:
+            cmd_base = cmd_lower.split()[0] if cmd_lower.split() else cmd_lower
+            is_allowed = any(
+                a and (a.lower() == cmd_base or a.lower() in cmd_lower)
+                for a in allowed
+            )
+            if not is_allowed:
+                result = PolicyResult(
+                    allowed=False,
+                    reason=f"Command not in allowlist: '{command}'",
+                )
+                await self._log(
+                    operation=f"command:{command}",
+                    access_level="dangerous",
+                    permission_mode=permission_mode,
+                    decision="denied",
+                    reason=result.reason,
+                    user_id=user_id,
+                    agent_id=agent_id,
+                )
+                return result
 
         # Check blocklist
-        cmd_lower = command.lower().strip()
         for blocked_cmd in blocked:
             if blocked_cmd and blocked_cmd.lower() in cmd_lower:
                 result = PolicyResult(

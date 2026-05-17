@@ -1,44 +1,10 @@
-import { useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useState, useEffect, useRef } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { CheckCircle2, Loader2, Send, Sparkles, XCircle } from 'lucide-react'
 import { api } from '@/shared/api/client'
 import { PlanCard } from './PlanCard'
-
-interface PlanStep {
-  id: string
-  action: string
-  description: string
-  params: Record<string, unknown>
-  depends_on: string[]
-}
-
-interface WorkspacePlan {
-  id: string
-  workspace_id: string
-  summary: string
-  steps: PlanStep[]
-  required_skills: string[]
-  required_connectors: string[]
-  sandbox_permissions: string[]
-  expected_artifacts: string[]
-  estimated_cost: string
-  status: string
-  created_at: string
-}
-
-interface ExecutionResult {
-  task_id: string
-  result?: string
-  error?: string
-}
-
-interface ApplyResult {
-  plan_id: string
-  status: string
-  created: Record<string, string[]>
-  execution_results?: ExecutionResult[]
-  artifacts?: string[]
-}
+import { useWorkspaceStore } from './store'
+import type { WorkspacePlan, ApplyResult } from './types'
 
 export function TaskComposer({
   workspaceId,
@@ -54,6 +20,30 @@ export function TaskComposer({
   const [plan, setPlan] = useState<WorkspacePlan | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [applyResult, setApplyResult] = useState<ApplyResult | null>(null)
+  const [applyingPlanId, setApplyingPlanId] = useState<string | null>(null)
+
+  // Poll plan status during execution for step-by-step progress
+  const { data: polledPlan } = useQuery<WorkspacePlan>({
+    queryKey: ['plan-status', workspaceId, applyingPlanId],
+    queryFn: () => api.get(`/workspaces/${workspaceId}/plans/${applyingPlanId}`).then((r) => r.data),
+    enabled: !!applyingPlanId && !!workspaceId,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status
+      return status === 'executing' ? 500 : false
+    },
+  })
+
+  // Update plan with polled data for live step progress
+  const lastPolledRef = useRef<WorkspacePlan | null>(null)
+  useEffect(() => {
+    if (polledPlan && applyingPlanId) {
+      lastPolledRef.current = polledPlan
+      setPlan(polledPlan)
+      if (polledPlan.status === 'applied' || polledPlan.status === 'failed') {
+        setApplyingPlanId(null)
+      }
+    }
+  }, [polledPlan, applyingPlanId])
 
   const createPlanMutation = useMutation({
     mutationFn: (intentText: string) =>
@@ -70,25 +60,37 @@ export function TaskComposer({
   })
 
   const applyPlanMutation = useMutation({
-    mutationFn: (planId: string) =>
-      api.post(`/workspaces/${workspaceId}/plans/${planId}/apply`),
+    mutationFn: (planId: string) => {
+      setApplyingPlanId(planId)
+      return api.post(`/workspaces/${workspaceId}/plans/${planId}/apply`)
+    },
     onSuccess: (response) => {
       queryClient.invalidateQueries({ queryKey: ['agents'] })
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
+      queryClient.invalidateQueries({ queryKey: ['artifacts', workspaceId] })
       queryClient.invalidateQueries({ queryKey: ['workspace-settings', workspaceId] })
       const result: ApplyResult = response.data
       setApplyResult(result)
+      if (result.plan) {
+        setPlan(result.plan)
+      }
       onPlanApplied?.(result)
       const createdAgents = result.created?.agents
       if (createdAgents?.length > 0) {
         onAgentCreated?.(createdAgents[0])
       }
-      setPlan(null)
+      if (result.artifacts && result.artifacts.length > 0) {
+        const workspaceStore = useWorkspaceStore.getState()
+        workspaceStore.setRightPanelTab('artifacts')
+        workspaceStore.setRightPanelOpen(true)
+      }
+      setApplyingPlanId(null)
     },
     onError: (err: unknown) => {
       const detail =
         (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
       setError(detail || 'Failed to apply plan')
+      setApplyingPlanId(null)
     },
   })
 
@@ -159,10 +161,20 @@ export function TaskComposer({
 
       {/* Apply Result */}
       {applyResult && (
-        <div className="p-4 rounded-xl border border-emerald-500/20 bg-emerald-500/5 space-y-3">
-          <div className="flex items-center gap-2 text-xs font-bold text-emerald-700">
-            <CheckCircle2 className="h-4 w-4" />
-            Plan applied successfully
+        <div className={`p-4 rounded-xl border space-y-3 ${
+          applyResult.status === 'failed'
+            ? 'border-rose-500/20 bg-rose-500/5'
+            : 'border-emerald-500/20 bg-emerald-500/5'
+        }`}>
+          <div className={`flex items-center gap-2 text-xs font-bold ${
+            applyResult.status === 'failed' ? 'text-rose-700' : 'text-emerald-700'
+          }`}>
+            {applyResult.status === 'failed' ? (
+              <XCircle className="h-4 w-4" />
+            ) : (
+              <CheckCircle2 className="h-4 w-4" />
+            )}
+            {applyResult.status === 'failed' ? 'Plan applied with failures' : 'Plan applied successfully'}
           </div>
           <div className="space-y-1 text-[11px] text-foreground/70">
             {applyResult.created.agents?.length > 0 && (
@@ -188,12 +200,12 @@ export function TaskComposer({
                   key={er.task_id || i}
                   className="flex items-start gap-2 text-[11px]"
                 >
-                  {er.error ? (
+                  {er.error || er.status === 'failure' ? (
                     <>
                       <XCircle className="h-3.5 w-3.5 text-rose-500 mt-0.5 shrink-0" />
                       <div>
                         <span className="font-bold text-rose-600">Task {er.task_id}: </span>
-                        <span className="text-rose-500">{er.error}</span>
+                        <span className="text-rose-500">{er.error || 'Execution failed'}</span>
                       </div>
                     </>
                   ) : (
@@ -236,7 +248,7 @@ export function TaskComposer({
           plan={plan}
           onApply={() => applyPlanMutation.mutate(plan.id)}
           onReject={() => rejectPlanMutation.mutate(plan.id)}
-          isApplying={applyPlanMutation.isPending}
+          isApplying={applyPlanMutation.isPending || !!applyingPlanId}
         />
       )}
     </div>

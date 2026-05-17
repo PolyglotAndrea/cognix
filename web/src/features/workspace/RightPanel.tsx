@@ -14,6 +14,7 @@ import {
   Zap,
   ChevronRight,
   ChevronLeft,
+  ChevronDown,
   ShieldQuestion,
   ShieldCheck,
   BookOpen,
@@ -33,21 +34,59 @@ import { AuditLog } from './AuditLog'
 import { PlaybookPanel } from './PlaybookPanel'
 import { BotHealthPanel } from './BotHealthPanel'
 import { RuntimePanel } from './RuntimePanel'
+import type { DragHandleProps } from './types'
 
-const TABS = [
-  { key: 'approvals' as const, label: 'Approval', icon: ShieldQuestion, color: 'text-amber-500' },
-  { key: 'tasks' as const, label: 'Tasks', icon: Clock, color: 'text-blue-500' },
-  { key: 'files' as const, label: 'Files', icon: Folder, color: 'text-indigo-500' },
-  { key: 'events' as const, label: 'Events', icon: Activity, color: 'text-rose-500' },
-  { key: 'results' as const, label: 'Results', icon: Wrench, color: 'text-emerald-500' },
-  { key: 'artifacts' as const, label: 'Artifacts', icon: FileText, color: 'text-cyan-500' },
-  { key: 'playbooks' as const, label: 'Playbooks', icon: BookOpen, color: 'text-violet-500' },
-  { key: 'policy' as const, label: 'Policy', icon: Shield, color: 'text-orange-500' },
-  { key: 'audit' as const, label: 'Audit', icon: ScrollText, color: 'text-lime-500' },
-  { key: 'bots' as const, label: 'Bots', icon: Bot, color: 'text-pink-500' },
-  { key: 'runtime' as const, label: 'Runtime', icon: Server, color: 'text-teal-500' },
-  { key: 'logs' as const, label: 'Logs', icon: Terminal, color: 'text-slate-500' },
-  { key: 'json' as const, label: 'JSON', icon: FileJson, color: 'text-purple-500' },
+type TabKey = 'approvals' | 'tasks' | 'files' | 'events' | 'results' | 'artifacts' | 'playbooks' | 'policy' | 'audit' | 'bots' | 'runtime' | 'logs' | 'json'
+
+interface TabDef {
+  key: TabKey
+  label: string
+  icon: typeof Clock
+  color: string
+}
+
+interface TabGroup {
+  key: string
+  label: string
+  defaultOpen: boolean
+  tabs: TabDef[]
+}
+
+const TAB_GROUPS: TabGroup[] = [
+  {
+    key: 'activity',
+    label: 'Activity',
+    defaultOpen: false,
+    tabs: [
+      { key: 'approvals', label: 'Approvals', icon: ShieldQuestion, color: 'text-amber-500' },
+      { key: 'tasks', label: 'Tasks', icon: Clock, color: 'text-blue-500' },
+      { key: 'events', label: 'Events', icon: Activity, color: 'text-rose-500' },
+    ],
+  },
+  {
+    key: 'outputs',
+    label: 'Outputs',
+    defaultOpen: false,
+    tabs: [
+      { key: 'results', label: 'Results', icon: Wrench, color: 'text-emerald-500' },
+      { key: 'artifacts', label: 'Artifacts', icon: FileText, color: 'text-cyan-500' },
+      { key: 'playbooks', label: 'Playbooks', icon: BookOpen, color: 'text-violet-500' },
+      { key: 'files', label: 'Files', icon: Folder, color: 'text-indigo-500' },
+    ],
+  },
+  {
+    key: 'system',
+    label: 'System',
+    defaultOpen: false,
+    tabs: [
+      { key: 'policy', label: 'Policy', icon: Shield, color: 'text-orange-500' },
+      { key: 'audit', label: 'Audit', icon: ScrollText, color: 'text-lime-500' },
+      { key: 'bots', label: 'Bots', icon: Bot, color: 'text-pink-500' },
+      { key: 'runtime', label: 'Runtime', icon: Server, color: 'text-teal-500' },
+      { key: 'logs', label: 'Logs', icon: Terminal, color: 'text-slate-500' },
+      { key: 'json', label: 'JSON', icon: FileJson, color: 'text-purple-500' },
+    ],
+  },
 ]
 
 interface TaskSummary {
@@ -110,7 +149,7 @@ interface ApprovalRequest {
   updated_at: string
 }
 
-export function RightPanel({ dragHandleProps }: { dragHandleProps?: any }) {
+export function RightPanel({ dragHandleProps }: { dragHandleProps?: DragHandleProps }) {
   const queryClient = useQueryClient()
   const {
     rightPanelTab,
@@ -127,6 +166,9 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: any }) {
   const [currentDir, setCurrentDir] = useState('')
   const [previewPath, setPreviewPath] = useState<string | null>(null)
   const [selectedTask, setSelectedTask] = useState<TaskSummary | null>(null)
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() =>
+    Object.fromEntries(TAB_GROUPS.map((g) => [g.key, g.defaultOpen]))
+  )
   
   const { data: workspaces = [] } = useQuery<WorkspaceInfo[]>({
     queryKey: ['workspaces'],
@@ -150,26 +192,27 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: any }) {
         })
       )
     },
-    refetchInterval: 5000,
+    enabled: rightPanelTab === 'tasks',
+    refetchInterval: rightPanelTab === 'tasks' ? 5000 : false,
   })
-  
+
   const { data: files = [], isLoading: filesLoading } = useQuery<WorkspaceFile[]>({
     queryKey: ['workspace-files', workspaceId, currentDir],
     queryFn: () => api.get(`/workspaces/${workspaceId}/files`, { params: { path: currentDir } }).then((r) => r.data),
-    enabled: !!workspaceId,
+    enabled: !!workspaceId && rightPanelTab === 'files',
   })
-  
+
   const { data: preview } = useQuery<{ path: string; content: string }>({
     queryKey: ['workspace-file-preview', workspaceId, previewPath],
     queryFn: () => api.get(`/workspaces/${workspaceId}/files/preview`, { params: { path: previewPath } }).then((r) => r.data),
     enabled: !!workspaceId && !!previewPath,
   })
-  
+
   const { data: events = [], isLoading: eventsLoading } = useQuery<WorkspaceEvent[]>({
     queryKey: ['workspace-events', workspaceId],
     queryFn: () => api.get(`/workspaces/${workspaceId}/events`, { params: { limit: 50 } }).then((r) => r.data),
-    enabled: !!workspaceId,
-    refetchInterval: 5000,
+    enabled: !!workspaceId && rightPanelTab === 'events',
+    refetchInterval: rightPanelTab === 'events' ? 5000 : false,
   })
 
   const { data: approvals = [], isLoading: approvalsLoading } = useQuery<ApprovalRequest[]>({
@@ -178,8 +221,8 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: any }) {
       api
         .get('/approvals', { params: { workspace_id: workspaceId, include_resolved: true } })
         .then((r) => r.data),
-    enabled: !!workspaceId,
-    refetchInterval: 5000,
+    enabled: !!workspaceId && rightPanelTab === 'approvals',
+    refetchInterval: rightPanelTab === 'approvals' ? 5000 : false,
   })
 
   const approvalMutation = useMutation({
@@ -223,28 +266,29 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: any }) {
     }
   }, [executionLogs, rightPanelTab])
 
+  const pendingCount = approvals.filter((a) => a.status === 'pending').length
+  const toggleGroup = (key: string) => setOpenGroups((s) => ({ ...s, [key]: !s[key] }))
+
   if (!rightPanelOpen) {
     return (
       <button
         onClick={toggleRightPanel}
-        className="w-10 shrink-0 border-l border-border bg-card flex flex-col items-center py-6 gap-8 hover:bg-muted transition-colors group h-full"
+        className="w-10 shrink-0 border-l border-border bg-card flex flex-col items-center py-6 gap-6 hover:bg-muted transition-colors group h-full relative"
         title="Open output panel"
       >
         <ChevronLeft className="h-5 w-5 text-muted-foreground group-hover:text-foreground transition-colors" />
+        {pendingCount > 0 && (
+          <div className="absolute top-14 w-4 h-4 rounded-full bg-amber-500 text-white text-[8px] font-bold flex items-center justify-center">
+            {pendingCount}
+          </div>
+        )}
         <div className="flex flex-col gap-4">
            <ShieldQuestion className="h-4 w-4 text-muted-foreground/30" />
            <Clock className="h-4 w-4 text-muted-foreground/30" />
-           <Folder className="h-4 w-4 text-muted-foreground/30" />
            <Activity className="h-4 w-4 text-muted-foreground/30" />
            <Wrench className="h-4 w-4 text-muted-foreground/30" />
            <FileText className="h-4 w-4 text-muted-foreground/30" />
-           <BookOpen className="h-4 w-4 text-muted-foreground/30" />
-           <Shield className="h-4 w-4 text-muted-foreground/30" />
-           <ScrollText className="h-4 w-4 text-muted-foreground/30" />
-           <Bot className="h-4 w-4 text-muted-foreground/30" />
            <Server className="h-4 w-4 text-muted-foreground/30" />
-           <Terminal className="h-4 w-4 text-muted-foreground/30" />
-           <FileJson className="h-4 w-4 text-muted-foreground/30" />
         </div>
       </button>
     )
@@ -253,26 +297,55 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: any }) {
   return (
     <Panel className="w-80 shrink-0 border-l border-border bg-card/50 backdrop-blur-xl h-full flex flex-col shadow-2xl">
       <PanelHeader dragHandleProps={dragHandleProps} className="justify-between px-4 h-14 border-b border-border/50 shrink-0">
-        <div className="flex bg-muted/50 p-1 rounded-xl border border-border/50 overflow-x-auto scrollbar-hide max-w-[230px] shadow-inner">
-          {TABS.map((tab) => (
-            <button
-              key={tab.key}
-              onClick={() => setRightPanelTab(tab.key)}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all shrink-0 ${
-                rightPanelTab === tab.key
-                  ? 'bg-background text-foreground shadow-sm ring-1 ring-border'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-background/50'
-              }`}
-            >
-              <tab.icon className={`h-3.5 w-3.5 ${rightPanelTab === tab.key ? tab.color : 'text-current'}`} />
-              {tab.label}
-            </button>
-          ))}
-        </div>
+        <span className="text-xs font-black uppercase tracking-widest text-foreground">Panel</span>
         <button onClick={toggleRightPanel} className="p-2 rounded-xl hover:bg-muted text-muted-foreground hover:text-foreground transition-all shrink-0">
           <ChevronRight className="h-4 w-4" />
         </button>
       </PanelHeader>
+
+      <div className="border-b border-border/50 shrink-0 overflow-y-auto max-h-48 scrollbar-hide">
+        {TAB_GROUPS.map((group) => (
+          <div key={group.key}>
+            <button
+              onClick={() => toggleGroup(group.key)}
+              className="flex items-center justify-between w-full px-4 py-2 text-[10px] font-black uppercase tracking-widest text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
+            >
+              <span className="flex items-center gap-2">
+                {openGroups[group.key] ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                {group.label}
+              </span>
+              {group.key === 'activity' && pendingCount > 0 && (
+                <span className="min-w-4 h-4 px-1 rounded-full bg-amber-500 text-white text-[8px] font-bold flex items-center justify-center">
+                  {pendingCount}
+                </span>
+              )}
+            </button>
+            {openGroups[group.key] && (
+              <div className="pb-1">
+                {group.tabs.map((tab) => (
+                  <button
+                    key={tab.key}
+                    onClick={() => setRightPanelTab(tab.key)}
+                    className={`flex items-center gap-2.5 w-full px-4 py-1.5 text-[11px] font-semibold transition-all ${
+                      rightPanelTab === tab.key
+                        ? 'bg-primary/10 text-foreground border-r-2 border-primary'
+                        : 'text-muted-foreground hover:text-foreground hover:bg-muted/30'
+                    }`}
+                  >
+                    <tab.icon className={`h-3.5 w-3.5 ${rightPanelTab === tab.key ? tab.color : ''}`} />
+                    {tab.label}
+                    {tab.key === 'approvals' && pendingCount > 0 && (
+                      <span className="ml-auto min-w-4 h-4 px-1 rounded-full bg-amber-500 text-white text-[8px] font-bold flex items-center justify-center">
+                        {pendingCount}
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
 
       <PanelBody className="flex-1 overflow-hidden p-0 bg-transparent">
         <div className="h-full overflow-y-auto scrollbar-hide">
@@ -556,7 +629,7 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: any }) {
   )
 }
 
-function EmptyState({ icon: Icon, title, description }: { icon: any, title: string, description?: string }) {
+function EmptyState({ icon: Icon, title, description }: { icon: React.ComponentType<{ className?: string }>, title: string, description?: string }) {
   return (
     <div className="flex flex-col items-center justify-center py-24 px-6 text-center animate-in fade-in zoom-in-95 duration-500">
       <div className="relative mb-6">
@@ -827,7 +900,12 @@ async function streamResumeAfterApproval(
       const jsonStr = line.slice(6).trim()
       if (!jsonStr) continue
 
-      const event = JSON.parse(jsonStr)
+      let event: { type?: string; delta?: string; name?: string; args?: Record<string, unknown>; result?: unknown; reason?: string; tool_name?: string; message?: string; error?: string }
+      try {
+        event = JSON.parse(jsonStr)
+      } catch {
+        continue
+      }
       if (event.type === 'delta' && event.delta) {
         addLog({
           id: '',
@@ -845,7 +923,7 @@ async function streamResumeAfterApproval(
       } else if (event.type === 'tool_result') {
         addToolResult({
           id: '',
-          name: event.name,
+          name: event.name ?? '',
           args: event.args,
           result: event.result,
           timestamp: Date.now(),
@@ -915,6 +993,7 @@ function parentDir(path: string) {
 }
 
 function formatBytes(bytes: number) {
+  if (bytes < 0) return '0 B'
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`

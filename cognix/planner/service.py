@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -64,6 +65,19 @@ class PlannerService:
     def _plan_path(self, workspace_id: str, plan_id: str) -> Path:
         return self._workspace_plans_dir(workspace_id) / f"{plan_id}.json"
 
+    def _cleanup_old_plans(self) -> None:
+        """Remove plan JSON files older than 30 days."""
+        try:
+            cutoff = time.time() - 30 * 86400
+            for p in self.plans_dir.rglob("*.json"):
+                try:
+                    if p.stat().st_mtime < cutoff:
+                        p.unlink()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
     def _save_plan(self, plan: WorkspacePlan) -> None:
         path = self._plan_path(plan.workspace_id, plan.id)
         path.write_text(
@@ -88,6 +102,7 @@ class PlannerService:
             expected_artifacts=data.get("expected_artifacts", []),
             estimated_cost=data.get("estimated_cost", "unknown"),
             status=data.get("status", "proposed"),
+            step_statuses=data.get("step_statuses", {}),
             created_at=data.get("created_at", ""),
         )
 
@@ -111,6 +126,8 @@ class PlannerService:
         user_id: str,
     ) -> WorkspacePlan:
         """Analyze user intent and produce a structured plan."""
+        self._cleanup_old_plans()
+
         # Load workspace context
         context = self._build_workspace_context(workspace_id)
 
@@ -170,63 +187,91 @@ class PlannerService:
         }
 
         ws_config = WorkspaceConfigStore(workspace_id)
-        task_steps: list[tuple[str, dict]] = []
+        task_steps: list[tuple[str, dict, str]] = []
         agent_name_to_id: dict[str, str] = {}
+        failed_steps: list[str] = []
 
         # Topological sort: ensures create_agent runs before create_task that depends on it
         sorted_steps = self._sort_steps(plan.steps)
 
-        for step in sorted_steps:
-            if step.action == "create_agent":
-                agent_id = await self._apply_create_agent(workspace_id, step.params)
-                created["agents"].append(agent_id)
-                agent_name = step.params.get("name", "")
-                if agent_name:
-                    agent_name_to_id[agent_name] = agent_id
-            elif step.action == "create_task":
-                task_id = await self._apply_create_task(
-                    workspace_id, step.params, agent_name_to_id, user_id,
-                )
-                created["tasks"].append(task_id)
-                task_steps.append((task_id, step.params))
-            elif step.action == "install_skill":
-                skill_name = step.params.get("name", step.params.get("skill_name", ""))
-                if skill_name:
-                    ws_config.set_skill_enabled(skill_name, True)
-                    created["skills"].append(skill_name)
-            elif step.action == "configure_mcp":
-                server = ws_config.upsert_mcp_server(
-                    name=step.params.get("name", "unnamed"),
-                    command=step.params.get("command", ""),
-                    args=step.params.get("args", []),
-                    env=step.params.get("env", {}),
-                )
-                created["mcp_servers"].append(server.id)
-
-        plan.status = "applied"
+        # Initialize all step statuses to pending
+        plan.step_statuses = {s.id: "pending" for s in sorted_steps}
+        plan.status = "executing"
         self._save_plan(plan)
+
+        for step in sorted_steps:
+            plan.step_statuses[step.id] = "executing"
+            self._save_plan(plan)
+            try:
+                if step.action == "create_agent":
+                    agent_id = await self._apply_create_agent(workspace_id, step.params)
+                    created["agents"].append(agent_id)
+                    agent_name = step.params.get("name", "")
+                    if agent_name:
+                        agent_name_to_id[agent_name] = agent_id
+                elif step.action == "create_task":
+                    task_id = await self._apply_create_task(
+                        workspace_id, step.params, agent_name_to_id, user_id,
+                    )
+                    created["tasks"].append(task_id)
+                    task_steps.append((task_id, step.params, step.id))
+                elif step.action == "install_skill":
+                    skill_name = step.params.get("name", step.params.get("skill_name", ""))
+                    if skill_name:
+                        ws_config.set_skill_enabled(skill_name, True)
+                        created["skills"].append(skill_name)
+                elif step.action == "configure_mcp":
+                    server = ws_config.upsert_mcp_server(
+                        name=step.params.get("name", "unnamed"),
+                        command=step.params.get("command", ""),
+                        args=step.params.get("args", []),
+                        env=step.params.get("env", {}),
+                    )
+                    created["mcp_servers"].append(server.id)
+                else:
+                    raise ValueError(f"Unknown plan step action: {step.action}")
+                plan.step_statuses[step.id] = "completed"
+            except Exception as exc:
+                logger.warning("Plan step %s failed: %s", step.id, exc)
+                plan.step_statuses[step.id] = "failed"
+                failed_steps.append(step.id)
+            self._save_plan(plan)
 
         # Trigger immediate execution for "once" tasks
         execution_results = []
         artifacts: list[str] = []
-        for task_id, params in task_steps:
+        for task_id, params, step_id in task_steps:
+            if step_id in failed_steps:
+                continue
             schedule = params.get("schedule_type") or params.get("cron") or "once"
             if schedule == "once":
+                plan.step_statuses[step_id] = "executing"
+                self._save_plan(plan)
                 exec_result = await self._trigger_task(task_id, workspace_id)
                 execution_results.append({"task_id": task_id, **exec_result})
-                # Persist execution output as an artifact
-                artifact_id = await self._store_task_artifact(
+                if exec_result.get("status") == "failure" or exec_result.get("error"):
+                    plan.step_statuses[step_id] = "failed"
+                    failed_steps.append(step_id)
+                else:
+                    plan.step_statuses[step_id] = "completed"
+                # TaskExecutor creates success artifacts; fall back to plan-level artifact creation.
+                artifact_id = exec_result.get("artifact_id") or await self._store_task_artifact(
                     workspace_id, task_id, params, exec_result,
                 )
                 if artifact_id:
                     artifacts.append(artifact_id)
+                self._save_plan(plan)
+
+        plan.status = "failed" if failed_steps else "applied"
+        self._save_plan(plan)
 
         return {
             "plan_id": plan_id,
-            "status": "applied",
+            "status": plan.status,
             "created": created,
             "execution_results": execution_results,
             "artifacts": artifacts,
+            "plan": plan.to_dict(),
         }
 
     def reject_plan(self, workspace_id: str, plan_id: str) -> dict:
@@ -248,7 +293,7 @@ class PlannerService:
     async def _trigger_task(self, task_id: str, workspace_id: str) -> dict:
         """Trigger immediate execution of a once-off task.
 
-        Returns ``{"result": str}`` on success or ``{"error": str}`` on failure.
+        Returns a normalized execution result with status, result, and error.
         """
         from sqlalchemy import select
 
@@ -264,16 +309,26 @@ class PlannerService:
             task = result.scalar_one_or_none()
 
         if not task:
-            return {"error": "Task not found in database"}
+            return {"status": "failure", "result": "", "error": "Task not found in database"}
 
         payload = json.loads(task.payload) if task.payload else {}
         executor = TaskExecutor(agent_registry=agent_registry)
         try:
-            output = await executor.execute(task_id, payload)
-            return {"result": output or "Completed"}
+            run = await executor.execute(task_id, payload)
         except Exception as exc:
             logger.warning("Plan task execution failed: %s", exc)
-            return {"error": str(exc)}
+            return {"status": "failure", "result": "", "error": str(exc)}
+
+        status = run.get("status", "success")
+        return {
+            "status": status,
+            "result": run.get("result", "") if status == "success" else "",
+            "error": run.get("error", "") if status != "success" else "",
+            "artifact_id": run.get("artifact_id"),
+            "duration_ms": run.get("duration_ms", 0),
+            "started_at": run.get("started_at"),
+            "finished_at": run.get("finished_at"),
+        }
 
     def _build_workspace_context(self, workspace_id: str) -> dict:
         """Load current workspace state for the planner."""
@@ -457,24 +512,44 @@ class PlannerService:
             return None
 
         artifact_id = uuid.uuid4().hex[:12]
-        is_error = "error" in exec_result
+        is_error = bool(exec_result.get("error")) or exec_result.get("status") == "failure"
         title = params.get("name", f"Task {task_id}")
-        content = exec_result.get("error") if is_error else exec_result.get("result", "")
+        raw_content = exec_result.get("error") if is_error else exec_result.get("result", "")
         atype = ArtifactType.LOG if is_error else ArtifactType.REPORT
+        summary = (
+            f"Task failed: {raw_content[:240]}"
+            if is_error
+            else f"Task completed successfully. Output preview: {raw_content[:240]}"
+        )
+        content = (
+            f"# {title}{' - Error' if is_error else ''}\n\n"
+            f"## Summary\n{summary}\n\n"
+            f"## Output\n{raw_content}\n\n"
+            f"## Provenance\n"
+            f"- Source: plan_apply\n"
+            f"- Task ID: {task_id}\n"
+            f"- Agent ID: {params.get('_resolved_agent_id') or params.get('agent_id', '')}\n"
+            f"- Agent Name: {params.get('agent_name', '')}\n"
+        )
 
         artifact = ArtifactModel(
             id=artifact_id,
             workspace_id=workspace_id,
             task_id=task_id,
+            agent_id=params.get("_resolved_agent_id") or params.get("agent_id") or None,
             artifact_type=atype,
             title=f"{title}{' — error' if is_error else ''}",
             content=content[:50000],
             source="plan_apply",
             metadata_json={
                 "source": "plan_apply",
+                "summary": summary,
                 "agent_name": params.get("agent_name", ""),
+                "agent_id": params.get("_resolved_agent_id") or params.get("agent_id", ""),
                 "schedule": params.get("schedule_type", "once"),
                 "is_error": is_error,
+                "status": exec_result.get("status", "failure" if is_error else "success"),
+                "duration_ms": exec_result.get("duration_ms", 0),
             },
         )
         async with get_session() as session:
@@ -518,10 +593,14 @@ class PlannerService:
         agent_name = params.get("agent_name", "")
         if not agent_id and agent_name and agent_name_to_id:
             agent_id = agent_name_to_id.get(agent_name, "")
+        if agent_id:
+            params["_resolved_agent_id"] = agent_id
 
         payload = json.dumps({
             "agent_id": agent_id,
             "agent_name": agent_name,
+            "name": params.get("name", "plan-task"),
+            "artifact_title": params.get("artifact_title") or params.get("name", "plan-task"),
             "message": params.get("input", ""),
             "workspace_id": workspace_id,
             "user_id": user_id or "",

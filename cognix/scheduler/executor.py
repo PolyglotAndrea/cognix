@@ -13,6 +13,11 @@ import httpx
 from cognix.core.registry import AgentRegistry
 from cognix.rpc.client import RPCClient
 
+try:
+    from cognix.billing.entitlement import EntitlementService
+except ImportError:
+    EntitlementService = None  # type: ignore[assignment,misc]
+
 logger = logging.getLogger(__name__)
 
 
@@ -90,6 +95,11 @@ class TaskExecutor:
         # Persist to DB
         await self._persist_run(run)
 
+        if run["status"] == "success" and workspace_id:
+            artifact_id = await self._ensure_task_artifact(payload, run)
+            if artifact_id:
+                run["artifact_id"] = artifact_id
+
         # Flag substantial outputs as playbook candidates
         if run["status"] == "success" and workspace_id:
             result_text = run.get("result", "")
@@ -122,9 +132,7 @@ class TaskExecutor:
         # Entitlement gate: verify user has BYOK or paid plan
         user_id = payload.get("user_id")
         workspace_id = payload.get("workspace_id")
-        if user_id:
-            from cognix.billing.entitlement import EntitlementService
-
+        if user_id and EntitlementService is not None:
             entitlement = await EntitlementService.check_model_execution(
                 user_id, workspace_id,
             )
@@ -159,6 +167,18 @@ class TaskExecutor:
 
         if not url:
             raise ValueError("url required for http_webhook task")
+
+        workspace_id = payload.get("workspace_id")
+        if workspace_id:
+            from cognix.core.policy import WorkspacePolicyService
+
+            policy_result = await WorkspacePolicyService(workspace_id).check_network_access(
+                url,
+                permission_mode=payload.get("permission_mode", "workspace-write"),
+                user_id=payload.get("user_id"),
+            )
+            if not policy_result.allowed or policy_result.requires_approval:
+                raise PermissionError(policy_result.reason or "Network access denied by policy")
 
         async with httpx.AsyncClient() as client:
             resp = await client.request(
@@ -201,6 +221,19 @@ class TaskExecutor:
         tool = tools.get(tool_name)
         if not tool:
             raise ValueError(f"Tool '{tool_name}' not found in skill '{skill_name}'")
+
+        workspace_id = payload.get("workspace_id")
+        if workspace_id:
+            from cognix.core.policy import WorkspacePolicyService
+
+            policy_result = await WorkspacePolicyService(workspace_id).check_mcp_tool(
+                tool.name,
+                tool.access_level,
+                permission_mode=payload.get("permission_mode", "workspace-write"),
+                user_id=payload.get("user_id"),
+            )
+            if not policy_result.allowed or policy_result.requires_approval:
+                raise PermissionError(policy_result.reason or "Scheduled tool denied by policy")
 
         self._ensure_tool_allowed(
             permission_mode=payload.get("permission_mode", "workspace-write"),
@@ -325,6 +358,77 @@ class TaskExecutor:
                     )
         except Exception:
             logger.debug("Failed to flag playbook candidate", exc_info=True)
+
+    @staticmethod
+    async def _ensure_task_artifact(
+        payload: dict[str, Any],
+        run: dict[str, Any],
+    ) -> str | None:
+        """Create a durable artifact for successful task output if one does not exist."""
+        workspace_id = run.get("workspace_id") or payload.get("workspace_id")
+        task_id = run.get("task_id")
+        result_text = run.get("result", "")
+        if not workspace_id or not task_id or not isinstance(result_text, str) or not result_text:
+            return None
+
+        try:
+            import uuid
+
+            from sqlalchemy import select
+
+            from cognix.storage.database import get_session
+            from cognix.storage.models import ArtifactModel, ArtifactType
+
+            async with get_session() as session:
+                existing = await session.execute(
+                    select(ArtifactModel).where(
+                        ArtifactModel.task_id == task_id,
+                        ArtifactModel.source == "task_executor",
+                    )
+                )
+                row = existing.scalar_one_or_none()
+                if row:
+                    return row.id
+
+            title = str(payload.get("artifact_title") or payload.get("name") or f"Task {task_id}")
+            agent_id = payload.get("agent_id") or None
+            agent_name = payload.get("agent_name", "")
+            summary = f"Task completed successfully. Output preview: {result_text[:240]}"
+            content = (
+                f"# {title}\n\n"
+                f"## Summary\n{summary}\n\n"
+                f"## Output\n{result_text}\n\n"
+                f"## Provenance\n"
+                f"- Source: task_executor\n"
+                f"- Task ID: {task_id}\n"
+                f"- Agent ID: {agent_id or ''}\n"
+                f"- Agent Name: {agent_name}\n"
+            )
+
+            artifact = ArtifactModel(
+                id=uuid.uuid4().hex[:12],
+                workspace_id=str(workspace_id),
+                task_id=str(task_id),
+                agent_id=str(agent_id) if agent_id else None,
+                artifact_type=ArtifactType.REPORT,
+                title=title,
+                content=content[:50000],
+                source="task_executor",
+                metadata_json={
+                    "source": "task_executor",
+                    "summary": summary,
+                    "task_type": payload.get("task_type", "agent_call"),
+                    "agent_id": agent_id or "",
+                    "agent_name": agent_name,
+                    "duration_ms": run.get("duration_ms", 0),
+                },
+            )
+            async with get_session() as session:
+                session.add(artifact)
+            return artifact.id
+        except Exception:
+            logger.debug("Failed to create task artifact", exc_info=True)
+            return None
 
     @staticmethod
     async def _post_remote_bot_response(payload: dict[str, Any], response_text: str) -> None:

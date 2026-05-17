@@ -190,7 +190,12 @@ async def update_workspace_settings(
         api_key = llm.get("api_key", "")
         if isinstance(api_key, str) and api_key.endswith("***"):
             llm.pop("api_key", None)
-    return _workspace_config(workspace_id).update_settings(updates)
+    settings = _workspace_config(workspace_id).update_settings(updates)
+    llm = settings.get("llm", {})
+    if llm.get("api_key"):
+        key = llm["api_key"]
+        settings["llm"] = {**llm, "api_key": key[:3] + "***" if len(key) > 3 else "***"}
+    return settings
 
 
 @router.get("/{workspace_id}/llm")
@@ -302,6 +307,7 @@ async def call_workspace_mcp_tool(
     body: InvokeMCPToolRequest,
     user: CurrentUser = Depends(require_skills_write),
 ) -> dict:
+    from cognix.core.policy import WorkspacePolicyService
     from cognix.core.permissions import PermissionDeniedError, ensure_permission
     from cognix.mcp.adapter import mcp_server_to_core_tools
     from cognix.mcp.manager import default_mcp_runtime
@@ -326,6 +332,23 @@ async def call_workspace_mcp_tool(
     )
     if not tool:
         raise HTTPException(404, "MCP tool not found or disabled")
+
+    policy_result = await WorkspacePolicyService(workspace_id).check_mcp_tool(
+        tool.name,
+        tool.access_level,
+        permission_mode=body.permission_mode,
+        user_id=user.id,
+    )
+    if not policy_result.allowed:
+        if policy_result.requires_approval:
+            raise HTTPException(
+                409,
+                {
+                    "code": "approval_required",
+                    "message": policy_result.reason or "MCP tool requires approval by policy.",
+                },
+            )
+        raise HTTPException(403, policy_result.reason or "MCP tool denied by policy")
 
     try:
         ensure_permission(
@@ -590,6 +613,16 @@ async def preview_workspace_file(
     path: str,
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
+    from cognix.core.policy import WorkspacePolicyService
+
+    policy_result = await WorkspacePolicyService(workspace_id).check_file_access(
+        path,
+        "read",
+        permission_mode="read-only",
+        user_id=user.id,
+    )
+    if not policy_result.allowed:
+        raise HTTPException(403, policy_result.reason or "File read denied by policy")
     store = _file_store(workspace_id)
     try:
         return {"path": path, "content": store.read_text(path)}
@@ -605,6 +638,19 @@ async def write_workspace_file(
     body: WriteWorkspaceFileRequest,
     user: CurrentUser = Depends(require_skills_write),
 ) -> dict:
+    from cognix.core.policy import WorkspacePolicyService
+
+    policy_result = await WorkspacePolicyService(workspace_id).check_file_access(
+        body.path,
+        "write",
+        permission_mode="workspace-write",
+        user_id=user.id,
+    )
+    if not policy_result.allowed or policy_result.requires_approval:
+        raise HTTPException(
+            403 if not policy_result.requires_approval else 409,
+            policy_result.reason or "File write denied by workspace policy",
+        )
     store = _file_store(workspace_id)
     try:
         return store.to_dict(store.write_text(body.path, body.content))
@@ -618,6 +664,19 @@ async def delete_workspace_file(
     path: str,
     user: CurrentUser = Depends(require_skills_write),
 ) -> dict:
+    from cognix.core.policy import WorkspacePolicyService
+
+    policy_result = await WorkspacePolicyService(workspace_id).check_file_access(
+        path,
+        "delete",
+        permission_mode="workspace-write",
+        user_id=user.id,
+    )
+    if not policy_result.allowed or policy_result.requires_approval:
+        raise HTTPException(
+            403 if not policy_result.requires_approval else 409,
+            policy_result.reason or "File delete denied by workspace policy",
+        )
     store = _file_store(workspace_id)
     try:
         if not store.delete(path):

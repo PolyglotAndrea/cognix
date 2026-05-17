@@ -10,10 +10,9 @@ from typing import Any
 
 import yaml
 
-from cognix.core.agent import Agent
 from cognix.core.context import Context
 from cognix.core.registry import AgentRegistry
-from cognix.orchestrator.patterns import Loop, OrchestrationResult, Parallel, Router, Sequential
+from cognix.orchestrator.patterns import Loop, OrchestrationResult, Parallel, Sequential
 
 logger = logging.getLogger(__name__)
 

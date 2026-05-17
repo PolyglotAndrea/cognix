@@ -201,6 +201,12 @@ Cognix normalizes Agent permission modes at runtime:
 
 Approval requests are stored locally and can be typed as `tool_permission`, `plan_confirmation`, or `question`. Hermes Agent waiting snapshots are persisted into approval metadata so approved core tool calls can continue through `/api/v1/approvals/{id}/resume-and-continue/stream` after a runtime reload when the serialized context is still valid. Claude SDK approvals can resume as SSE through `/api/v1/approvals/{id}/resume/stream` or the shared resume-and-continue API.
 
+Workspace policy is enforced on execution paths, not only displayed in the UI. File preview/write/delete APIs, MCP debug calls, connector debug calls, scheduled webhooks/skill execution, mounted MCP/connector Agent tools, and Claude SDK file/command/network/MCP tools all pass through `WorkspacePolicyService` before side effects run.
+
+### Provider Secrets
+
+Global and workspace model provider keys are stored encrypted when saved. Existing plaintext keys remain readable for backward compatibility and are encrypted the next time they are updated. Masked values such as `sk-***` are treated as display-only placeholders, so saving settings, testing a provider, or listing models will not overwrite a real stored key with the masked value.
+
 ### Connectors
 
 Connectors provide OAuth-backed tools for external platforms such as X and Instagram. Credentials are encrypted locally, expose expiry/reauthorization status, and validate missing OAuth scopes after callback. Connector tools are mounted into Agents through the shared runtime mount path.

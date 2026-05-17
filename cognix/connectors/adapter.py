@@ -109,6 +109,7 @@ def connector_to_core_tools(
             parameters=spec.parameters,
             access_level=level,
             metadata={
+                "type": "connector",
                 "original_name": spec.name,
                 "platform": platform,
                 "provider": provider.display_name,

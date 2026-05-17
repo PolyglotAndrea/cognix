@@ -249,7 +249,7 @@ def agent_repl(
 
         while True:
             try:
-                user_input = prompt = input(f"[{agent.name}] You: ")
+                user_input = input(f"[{agent.name}] You: ")
             except (EOFError, KeyboardInterrupt):
                 console.print("\n[dim]Goodbye![/dim]")
                 break
@@ -312,20 +312,22 @@ def agent_delete(
 def task_add(
     name: str = typer.Option(..., help="Task name"),
     cron: str = typer.Option(..., help="Cron expression"),
-    task_type: str = typer.Option("agent_call", help="Task type: agent_call, rpc_call, http_webhook, workflow"),
+    task_type: str = typer.Option(
+        "agent_call",
+        help="Task type: agent_call, rpc_call, http_webhook, workflow",
+    ),
     agent: str = typer.Option(None, help="Agent ID (for agent_call type)"),
     message: str = typer.Option("", help="Message for agent"),
     url: str = typer.Option(None, help="URL (for http_webhook type)"),
     workflow_path: str = typer.Option(None, help="Workflow path (for workflow type)"),
 ) -> None:
     """Add a scheduled task."""
-    import json
     import uuid
 
     async def _add():
         from cognix.scheduler.store import TaskStore
-        from cognix.storage.models import TaskType as DBTaskType
         from cognix.storage.database import init_db
+        from cognix.storage.models import TaskType as DBTaskType
 
         await init_db()
         task_id = uuid.uuid4().hex[:12]

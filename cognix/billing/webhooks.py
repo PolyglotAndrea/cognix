@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import select
 
@@ -11,6 +12,42 @@ from cognix.storage.database import get_session
 from cognix.storage.models import SubscriptionModel, SubscriptionStatus
 
 logger = logging.getLogger(__name__)
+
+# In-memory idempotency cache (event_id → True). Survives within a process.
+_processed_event_ids: set[str] = set()
+_MAX_CACHE_SIZE = 10000
+
+
+def _is_duplicate(event: dict) -> bool:
+    """Check if a webhook event was already processed (idempotency guard)."""
+    event_id = event.get("id", "")
+    if not event_id:
+        return False
+    if event_id in _processed_event_ids:
+        return True
+    # Evict oldest entries if cache grows too large
+    if len(_processed_event_ids) >= _MAX_CACHE_SIZE:
+        _processed_event_ids.clear()
+    _processed_event_ids.add(event_id)
+    return False
+
+
+_STATUS_MAP = {
+    "active": SubscriptionStatus.ACTIVE,
+    "past_due": SubscriptionStatus.PAST_DUE,
+    "canceled": SubscriptionStatus.CANCELED,
+    "trialing": SubscriptionStatus.TRIALING,
+    "incomplete": SubscriptionStatus.INCOMPLETE,
+}
+
+
+def _map_status(stripe_status: str) -> SubscriptionStatus:
+    """Map Stripe status to our status, defaulting to INCOMPLETE for unknowns."""
+    mapped = _STATUS_MAP.get(stripe_status)
+    if mapped is None:
+        logger.warning("Unknown Stripe status '%s', defaulting to INCOMPLETE", stripe_status)
+        return SubscriptionStatus.INCOMPLETE
+    return mapped
 
 
 async def handle_checkout_completed(event: dict) -> None:
@@ -56,15 +93,7 @@ async def handle_subscription_created(event: dict) -> None:
     customer_id = sub_data["customer"]
     status = sub_data["status"]
 
-    # Map Stripe status to our status
-    status_map = {
-        "active": SubscriptionStatus.ACTIVE,
-        "past_due": SubscriptionStatus.PAST_DUE,
-        "canceled": SubscriptionStatus.CANCELED,
-        "trialing": SubscriptionStatus.TRIALING,
-        "incomplete": SubscriptionStatus.INCOMPLETE,
-    }
-    our_status = status_map.get(status, SubscriptionStatus.ACTIVE)
+    our_status = _map_status(status)
 
     logger.info("Subscription created: %s (status: %s)", stripe_sub_id, status)
 
@@ -85,9 +114,9 @@ async def handle_subscription_created(event: dict) -> None:
             period_start = sub_data.get("current_period_start")
             period_end = sub_data.get("current_period_end")
             if period_start:
-                sub.current_period_start = datetime.fromtimestamp(period_start, tz=timezone.utc)
+                sub.current_period_start = datetime.fromtimestamp(period_start, tz=UTC)
             if period_end:
-                sub.current_period_end = datetime.fromtimestamp(period_end, tz=timezone.utc)
+                sub.current_period_end = datetime.fromtimestamp(period_end, tz=UTC)
         else:
             logger.warning("No subscription found for stripe_sub_id=%s", stripe_sub_id)
 
@@ -98,14 +127,7 @@ async def handle_subscription_updated(event: dict) -> None:
     stripe_sub_id = sub_data["id"]
     status = sub_data["status"]
 
-    status_map = {
-        "active": SubscriptionStatus.ACTIVE,
-        "past_due": SubscriptionStatus.PAST_DUE,
-        "canceled": SubscriptionStatus.CANCELED,
-        "trialing": SubscriptionStatus.TRIALING,
-        "incomplete": SubscriptionStatus.INCOMPLETE,
-    }
-    our_status = status_map.get(status, SubscriptionStatus.ACTIVE)
+    our_status = _map_status(status)
 
     logger.info("Subscription updated: %s (status: %s)", stripe_sub_id, status)
 
@@ -119,12 +141,16 @@ async def handle_subscription_updated(event: dict) -> None:
 
         if sub:
             sub.status = our_status
+            # Update plan_id from Stripe metadata if available
+            plan_id = sub_data.get("metadata", {}).get("plan_id")
+            if plan_id:
+                sub.plan_id = plan_id
             period_start = sub_data.get("current_period_start")
             period_end = sub_data.get("current_period_end")
             if period_start:
-                sub.current_period_start = datetime.fromtimestamp(period_start, tz=timezone.utc)
+                sub.current_period_start = datetime.fromtimestamp(period_start, tz=UTC)
             if period_end:
-                sub.current_period_end = datetime.fromtimestamp(period_end, tz=timezone.utc)
+                sub.current_period_end = datetime.fromtimestamp(period_end, tz=UTC)
 
 
 async def handle_subscription_deleted(event: dict) -> None:
@@ -187,7 +213,7 @@ async def handle_invoice_payment_failed(event: dict) -> None:
 
 
 # Event handler registry
-WEBHOOK_HANDLERS: dict[str, callable] = {
+WEBHOOK_HANDLERS: dict[str, Any] = {
     "checkout.session.completed": handle_checkout_completed,
     "customer.subscription.created": handle_subscription_created,
     "customer.subscription.updated": handle_subscription_updated,
@@ -199,6 +225,10 @@ WEBHOOK_HANDLERS: dict[str, callable] = {
 
 async def process_webhook_event(event: dict) -> bool:
     """Process a Stripe webhook event. Returns True if handled."""
+    if _is_duplicate(event):
+        logger.info("Skipping duplicate webhook event: %s", event.get("id"))
+        return True
+
     event_type = event.get("type")
     handler = WEBHOOK_HANDLERS.get(event_type)
 

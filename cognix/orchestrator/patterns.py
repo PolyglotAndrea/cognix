@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import enum
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from cognix.core.agent import Agent, AgentResponse
 from cognix.core.context import Context
@@ -72,11 +72,13 @@ class Parallel(Pattern):
         self.name = name
 
     async def run(self, message: str, context: Context | None = None) -> OrchestrationResult:
-        ctx = context or Context()
+        base_ctx = context or Context()
 
         async def _run_agent(agent: Agent) -> dict[str, Any]:
+            # Deep-copy context so concurrent agents don't corrupt each other
+            agent_ctx = Context.from_dict(base_ctx.to_dict())
             await _prepare_agent(agent)
-            response = await agent.run(message, context=ctx)
+            response = await agent.run(message, context=agent_ctx)
             return {
                 "agent": agent.name,
                 "output": response.content,
@@ -126,13 +128,27 @@ class Router(Pattern):
         classify_response = await self.classifier.run(classify_prompt, context=ctx)
         chosen = classify_response.content.strip().lower()
 
-        # Find matching agent (fuzzy match)
+        # Find matching agent: exact → case-insensitive → fuzzy
         target_agent = None
-        for name, agent in self.agents.items():
-            if name.lower() in chosen or chosen in name.lower():
-                target_agent = agent
-                chosen = name
-                break
+        # 1. Exact match
+        if chosen in self.agents:
+            target_agent = self.agents[chosen]
+        else:
+            # 2. Case-insensitive exact
+            chosen_lower = chosen.lower()
+            for name, agent in self.agents.items():
+                if name.lower() == chosen_lower:
+                    target_agent = agent
+                    chosen = name
+                    break
+            # 3. Fuzzy substring (classifier output contains agent name)
+            if not target_agent:
+                for name, agent in self.agents.items():
+                    if name.lower() in chosen_lower or chosen_lower in name.lower():
+                        logger.warning("Router fuzzy match: '%s' → '%s'", chosen, name)
+                        target_agent = agent
+                        chosen = name
+                        break
 
         if not target_agent:
             # Fallback to first agent
@@ -180,7 +196,10 @@ class Loop(Pattern):
         steps: list[dict[str, Any]] = []
 
         for i in range(self.max_iterations):
-            logger.info("Loop iteration %d/%d: agent=%s", i + 1, self.max_iterations, self.agent.name)
+            logger.info(
+                "Loop iteration %d/%d: agent=%s",
+                i + 1, self.max_iterations, self.agent.name,
+            )
             await _prepare_agent(self.agent)
             response = await self.agent.run(current_input, context=ctx)
 
@@ -191,8 +210,8 @@ class Loop(Pattern):
                 "output": response.content,
             })
 
-            # Check condition
-            if not self.condition(response, i + 1):
+            # Check condition (0-indexed counter)
+            if not self.condition(response, i):
                 logger.info("Loop condition met after %d iterations", i + 1)
                 break
 
@@ -206,9 +225,17 @@ class Loop(Pattern):
         )
 
 
+_prepared_agents: set[str] = set()
+
+
 async def _prepare_agent(agent: Agent) -> None:
     if not getattr(agent, "workspace_id", None):
+        return
+    # Skip if already prepared in this session to avoid duplicate tool mounts
+    prep_key = f"{agent.id}:{agent.workspace_id}"
+    if prep_key in _prepared_agents:
         return
     from cognix.core.mounts import attach_workspace_runtime_tools
 
     await attach_workspace_runtime_tools(agent)
+    _prepared_agents.add(prep_key)

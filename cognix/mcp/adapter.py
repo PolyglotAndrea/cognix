@@ -88,7 +88,11 @@ def _spec_to_tool(
         handler=_handler,
         parameters=spec.input_schema or {"type": "object", "properties": {}},
         access_level=_mcp_access_level(server, spec),
-        metadata={"original_name": original_name},
+        metadata={
+            "type": "mcp",
+            "original_name": original_name,
+            "server_name": server.name,
+        },
     )
 
 

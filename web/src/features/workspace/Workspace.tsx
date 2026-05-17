@@ -1,4 +1,6 @@
+import * as React from 'react'
 import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import {
   DndContext,
   closestCenter,
@@ -20,7 +22,11 @@ import { TopBar } from './TopBar'
 import { LeftPanel } from './LeftPanel'
 import { CenterPanel } from './CenterPanel'
 import { RightPanel } from './RightPanel'
+import { OnboardingWizard } from './OnboardingWizard'
+import { SimpleMode } from './SimpleMode'
+import { api } from '@/shared/api/client'
 import { cn } from '@/shared/lib/cn'
+import type { DragHandleProps } from './types'
 
 interface SortablePanelProps {
   id: string
@@ -54,8 +60,8 @@ function SortablePanel({ id, children, className }: SortablePanelProps) {
     >
       {React.Children.map(children, child => {
         if (React.isValidElement(child)) {
-          return React.cloneElement(child as React.ReactElement<any>, { 
-            dragHandleProps: { ...attributes, ...listeners } 
+          return React.cloneElement(child as React.ReactElement<{ dragHandleProps?: DragHandleProps }>, {
+            dragHandleProps: { ...attributes, ...listeners }
           })
         }
         return child
@@ -64,11 +70,25 @@ function SortablePanel({ id, children, className }: SortablePanelProps) {
   )
 }
 
-import * as React from 'react'
-
 export function Workspace() {
   const [items, setItems] = useState(['left', 'center', 'right'])
-  
+
+  const { data: workspaces } = useQuery<Array<{ id: string }>>({
+    queryKey: ['workspaces'],
+    queryFn: () => api.get('/workspaces').then((r) => r.data),
+  })
+
+  const workspaceId = workspaces?.[0]?.id
+
+  const { data: settings, refetch: refetchSettings } = useQuery({
+    queryKey: ['workspace-settings', workspaceId],
+    queryFn: () => api.get(`/workspaces/${workspaceId}/settings`).then((r) => r.data),
+    enabled: !!workspaceId,
+  })
+
+  const onboardingCompleted = settings?.onboarding_completed ?? false
+  const uiMode = settings?.ui_mode ?? 'simple'
+
   const sensors = useSensors(
     useSensor(PointerSensor, {
       activationConstraint: {
@@ -92,10 +112,29 @@ export function Workspace() {
     }
   }
 
+  // Onboarding overlay
+  if (workspaceId && !onboardingCompleted) {
+    return (
+      <OnboardingWizard
+        onComplete={() => refetchSettings()}
+      />
+    )
+  }
+
+  // Simple mode
+  if (workspaceId && uiMode === 'simple') {
+    return (
+      <SimpleMode
+        workspaceId={workspaceId}
+        onSwitchToAdvanced={() => refetchSettings()}
+      />
+    )
+  }
+
   return (
     <div className="h-screen flex flex-col bg-background overflow-hidden selection:bg-primary/20">
       <TopBar />
-      
+
       <div className="flex-1 flex overflow-hidden relative z-0">
         <DndContext
           sensors={sensors}
@@ -107,9 +146,9 @@ export function Workspace() {
             strategy={horizontalListSortingStrategy}
           >
             {items.map((id) => (
-              <SortablePanel 
-                key={id} 
-                id={id} 
+              <SortablePanel
+                key={id}
+                id={id}
                 className={cn(
                   "transition-[width,flex] duration-300",
                   id === 'center' ? 'flex-1 min-w-0' : 'w-80 shrink-0'

@@ -12,7 +12,7 @@ from typing import Any, Literal
 from cognix.local.home import CognixHome
 
 ApprovalStatus = Literal["pending", "approved", "rejected", "completed"]
-ApprovalKind = Literal["tool_permission", "plan_confirmation", "question"]
+ApprovalKind = Literal["tool_permission", "plan_confirmation", "question", "memory_write"]
 
 
 @dataclass(frozen=True)

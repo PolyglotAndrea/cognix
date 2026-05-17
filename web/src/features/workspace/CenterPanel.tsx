@@ -7,20 +7,22 @@ import {
   FileText,
   History,
   Image,
+  MessageSquare,
   MessageSquarePlus,
   Paperclip,
   Save,
   Send,
   Settings,
+  Sparkles,
   User,
   X,
-  Zap,
 } from 'lucide-react'
 import { api } from '@/shared/api/client'
 import { useAuthStore } from '@/features/auth/store'
 import { useWorkspaceStore } from './store'
 import { TaskComposer } from './TaskComposer'
 import { Spinner, Badge, RichMessage, Panel, PanelHeader } from '@/shared/ui'
+import type { DragHandleProps } from './types'
 
 interface Agent {
   id: string
@@ -75,8 +77,8 @@ interface PendingAttachment {
   content: string
 }
 
-export function CenterPanel({ dragHandleProps }: { dragHandleProps?: any }) {
-  const { selectedAgentId, setSelectedAgent, addToolResult, addLog } = useWorkspaceStore()
+export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleProps }) {
+  const { selectedAgentId, setSelectedAgent, inputMode, setInputMode, addToolResult, addLog } = useWorkspaceStore()
   const queryClient = useQueryClient()
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
@@ -109,9 +111,9 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: any }) {
 
   const workspaceId = workspaces?.[0]?.id || null
   const availableModels = Array.from(
-    new Set([agent?.model || 'echo', 'echo', 'gpt-4o-mini', 'gpt-4o', 'claude-3.5-sonnet'])
+    new Set([agent?.model || 'gpt-4o', 'gpt-4o-mini', 'gpt-4o', 'claude-3.5-sonnet'])
   )
-  const activeModels = selectedModels.length > 0 ? selectedModels : [agent?.model || 'echo']
+  const activeModels = selectedModels.length > 0 ? selectedModels : [agent?.model || 'gpt-4o']
 
   const {
     data: chats,
@@ -191,7 +193,7 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: any }) {
   const activateChat = (chat: ChatSession) => {
     setChatId(chat.id)
     setSystemPrompt(chat.system_prompt || agent?.system_prompt || '')
-    setSelectedModels(chat.model_profiles.length > 0 ? chat.model_profiles : [agent?.model || 'echo'])
+    setSelectedModels(chat.model_profiles.length > 0 ? chat.model_profiles : [agent?.model || 'gpt-4o'])
     setAttachments([])
   }
 
@@ -499,20 +501,146 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: any }) {
     setAttachments((prev) => prev.filter((attachment) => attachment.id !== id))
   }
 
+  // Plan mode: show TaskComposer as primary view
+  const mode: string = inputMode
+  if (inputMode === 'plan' && workspaceId) {
+    return (
+      <Panel className="flex-1 flex flex-col min-w-0 bg-background relative h-full">
+        <PanelHeader dragHandleProps={dragHandleProps} className="bg-card/50 backdrop-blur-md">
+          <div className="flex items-center justify-between w-full">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 bg-primary/10 rounded-lg flex items-center justify-center border border-primary/20">
+                <Sparkles className="h-4 w-4 text-primary" />
+              </div>
+              <div>
+                <span className="text-sm font-bold text-foreground">Plan Mode</span>
+                <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest">
+                  Describe what you need — Cognix will build it
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setInputMode('plan')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all ${
+                  mode === 'plan'
+                    ? 'bg-primary/10 text-primary border border-primary/20'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-muted border border-transparent'
+                }`}
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                Plan
+              </button>
+              <button
+                onClick={() => { if (selectedAgentId) setInputMode('chat') }}
+                disabled={!selectedAgentId}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all ${
+                  mode === 'chat'
+                    ? 'bg-primary/10 text-primary border border-primary/20'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-muted border border-transparent disabled:opacity-30'
+                }`}
+              >
+                <MessageSquare className="h-3.5 w-3.5" />
+                Chat
+              </button>
+            </div>
+          </div>
+        </PanelHeader>
+        <div className="flex-1 overflow-auto flex items-start justify-center p-8">
+          <div className="w-full max-w-2xl pt-8">
+            <div className="text-center mb-8">
+              <h2 className="text-xl font-bold text-foreground mb-2">What do you want to do?</h2>
+              <p className="text-sm text-muted-foreground">
+                Describe your goal and Cognix will create agents, configure tools, and execute automatically.
+              </p>
+            </div>
+            <TaskComposer
+              workspaceId={workspaceId}
+              onPlanApplied={(result) => {
+                addLog({
+                  id: '',
+                  level: 'info',
+                  message: `Plan applied: ${result.status}. Created ${result.created.agents?.length || 0} agents, ${result.created.tasks?.length || 0} tasks.`,
+                  timestamp: Date.now(),
+                })
+              }}
+              onAgentCreated={(agentId) => {
+                setSelectedAgent(agentId)
+                setInputMode('chat')
+              }}
+            />
+          </div>
+        </div>
+      </Panel>
+    )
+  }
+
   if (!selectedAgentId) {
     return (
-      <div className="flex-1 flex items-center justify-center bg-background relative overflow-hidden">
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-primary/5 blur-[120px] rounded-full" />
-        <div className="relative text-center z-10">
-          <div className="w-20 h-20 bg-muted rounded-[2rem] flex items-center justify-center mx-auto mb-6 border border-border shadow-2xl">
-            <Zap className="h-10 w-10 text-primary fill-current" />
+      <Panel className="flex-1 flex flex-col min-w-0 bg-background relative h-full">
+        <PanelHeader dragHandleProps={dragHandleProps} className="bg-card/50 backdrop-blur-md">
+          <div className="flex items-center justify-between w-full">
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 bg-primary/10 rounded-lg flex items-center justify-center border border-primary/20">
+                <Sparkles className="h-4 w-4 text-primary" />
+              </div>
+              <div>
+                <span className="text-sm font-bold text-foreground">Plan Mode</span>
+                <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest">
+                  Describe what you need — Cognix will build it
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setInputMode('plan')}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all ${
+                  inputMode === 'plan'
+                    ? 'bg-primary/10 text-primary border border-primary/20'
+                    : 'text-muted-foreground hover:text-foreground hover:bg-muted border border-transparent'
+                }`}
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                Plan
+              </button>
+              <button
+                disabled
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold text-muted-foreground border border-transparent opacity-30"
+              >
+                <MessageSquare className="h-3.5 w-3.5" />
+                Chat
+              </button>
+            </div>
           </div>
-          <h2 className="text-2xl font-bold text-foreground mb-3">Cognix Runtime</h2>
-          <p className="text-muted-foreground max-w-xs mx-auto leading-relaxed">
-            Initialize an agent session from the sidebar to begin multi-agent orchestration and task execution.
-          </p>
+        </PanelHeader>
+        <div className="flex-1 overflow-auto flex items-start justify-center p-8">
+          <div className="w-full max-w-2xl pt-8">
+            <div className="text-center mb-8">
+              <h2 className="text-xl font-bold text-foreground mb-2">What do you want to do?</h2>
+              <p className="text-sm text-muted-foreground">
+                Describe your goal and Cognix will create agents, configure tools, and execute automatically.
+              </p>
+            </div>
+            {workspaceId && (
+              <TaskComposer
+                workspaceId={workspaceId}
+                onPlanApplied={(result) => {
+                  addLog({
+                    id: '',
+                    level: 'info',
+                    message: `Plan applied: ${result.status}. Created ${result.created.agents?.length || 0} agents, ${result.created.tasks?.length || 0} tasks.`,
+                    timestamp: Date.now(),
+                  })
+                }}
+                onAgentCreated={(agentId) => {
+                  setSelectedAgent(agentId)
+                  setInputMode('chat')
+                }}
+              />
+            )}
+          </div>
         </div>
-      </div>
+      </Panel>
     )
   }
 
@@ -533,7 +661,30 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: any }) {
               <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest">{agent?.model}</p>
             </div>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setInputMode('plan')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all ${
+                inputMode === 'plan'
+                  ? 'bg-primary/10 text-primary border border-primary/20'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-muted border border-transparent'
+              }`}
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              Plan
+            </button>
+            <button
+              onClick={() => setInputMode('chat')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all ${
+                inputMode === 'chat'
+                  ? 'bg-primary/10 text-primary border border-primary/20'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-muted border border-transparent'
+              }`}
+            >
+              <MessageSquare className="h-3.5 w-3.5" />
+              Chat
+            </button>
+            <div className="w-px h-5 bg-border" />
             <button
               onClick={() => createChat()}
               disabled={!agent || !workspaceId}
@@ -646,35 +797,6 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: any }) {
 
       {/* Messages */}
       <div className="flex-1 overflow-auto p-8 space-y-8 scrollbar-hide">
-        {messages.length === 0 && (
-          <div className="h-full flex flex-col items-center justify-center py-8 animate-in fade-in duration-700">
-            <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mb-4 border border-border relative">
-               <div className="absolute inset-0 bg-primary/10 blur-xl rounded-full animate-pulse" />
-               <Bot className="h-8 w-8 text-muted-foreground/40 relative z-10" />
-            </div>
-            <h3 className="text-lg font-bold text-foreground mb-1">What do you want to do?</h3>
-            <p className="text-xs text-muted-foreground mb-6 text-center">
-              Describe a task and Cognix will create an execution plan.
-            </p>
-            <div className="w-full max-w-xl">
-              {workspaceId && (
-                <TaskComposer
-                  workspaceId={workspaceId}
-                  onPlanApplied={(result) => {
-                    addLog({
-                      id: '',
-                      level: 'info',
-                      message: `Plan applied: ${result.status}. Created ${result.created.agents?.length || 0} agents, ${result.created.tasks?.length || 0} tasks.`,
-                      timestamp: Date.now(),
-                    })
-                  }}
-                  onAgentCreated={(agentId) => setSelectedAgent(agentId)}
-                />
-              )}
-            </div>
-          </div>
-        )}
-
         {messages.map((msg, i) => (
           <div
             key={msg.id || `${msg.role}-${i}`}

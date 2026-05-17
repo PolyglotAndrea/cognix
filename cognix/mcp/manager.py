@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from dataclasses import asdict, dataclass
 from typing import Any
 
 from cognix.local.workspace_config import MCPServerConfig
 from cognix.mcp.client import MCPClient, MCPError, MCPToolSpec
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -179,11 +182,17 @@ class MCPRuntimeManager:
         lock = self._persistent_locks.setdefault(server.id, asyncio.Lock())
         async with lock:
             client = self._persistent_clients.get(server.id)
-            if client is not None and client._process is not None and client._process.returncode is None:
+            if (client is not None
+                    and client._process is not None
+                    and client._process.returncode is None):
                 return client
             # Create new persistent connection
             client = self.client_factory(server)
-            await client.__aenter__()
+            try:
+                await client.__aenter__()
+            except Exception:
+                log.exception("Failed to initialize persistent MCP client for %s", server.id)
+                raise
             self._persistent_clients[server.id] = client
             return client
 
@@ -192,10 +201,16 @@ class MCPRuntimeManager:
         if server_id:
             client = self._persistent_clients.pop(server_id, None)
             if client:
-                await client.__aexit__(None, None, None)
+                try:
+                    await client.__aexit__(None, None, None)
+                except Exception:
+                    log.warning("Error closing persistent MCP client for %s", server_id, exc_info=True)
         else:
-            for client in self._persistent_clients.values():
-                await client.__aexit__(None, None, None)
+            for sid, client in self._persistent_clients.items():
+                try:
+                    await client.__aexit__(None, None, None)
+                except Exception:
+                    log.warning("Error closing persistent MCP client for %s", sid, exc_info=True)
             self._persistent_clients.clear()
         self._persistent_locks.pop(server_id, None) if server_id else self._persistent_locks.clear()
 

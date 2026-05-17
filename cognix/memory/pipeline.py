@@ -77,6 +77,7 @@ class ContextPack:
     deep_memory: str = ""
     token_budget: int = 8000
     sources: list[dict[str, Any]] = field(default_factory=list)
+    source_details: list[dict[str, Any]] = field(default_factory=list)
     token_usage: dict[str, int] = field(default_factory=dict)
 
     def render_system_context(self, *, model: str = "gpt-4o") -> str:
@@ -122,6 +123,10 @@ class ContextPack:
         if total_tokens > self.token_budget:
             result = truncate_to_budget(result, self.token_budget, model)
             self.token_usage["truncated"] = True
+
+        if self.source_details:
+            sources_text = ", ".join(s.get("source", "unknown") for s in self.source_details)
+            result += f"\n\n[Sources: {sources_text}]"
 
         return result
 
@@ -438,24 +443,37 @@ class ContextBuilder:
         skills: list[ProceduralMemory] = []
         deep = deep_memory
 
+        source_details: list[dict[str, Any]] = []
+
         if routing_strategy == "greedy":
             # Greedy: include everything, let render_system_context truncate
             if include_cold_memory:
                 cold = await self.cold_store.search(
                     user_message, workspace_id=workspace_id, limit=5,
                 )
+                for m in cold:
+                    source_details.append({
+                        "source": "cold_memory",
+                        "memory_id": m.id,
+                        "category": m.kind,
+                    })
             if include_skills:
                 skills = self.search_procedural_memory(
                     user_message, workspace_id=workspace_id, limit=3,
                 )
+                for s in skills:
+                    source_details.append({"source": "procedural", "memory_id": s.name})
             if include_deep_memory and not deep:
                 deep = self.load_deep_memory()
+                if deep.strip():
+                    source_details.append({"source": "deep_memory"})
         else:
             # Priority-based: add sources until budget is exhausted
             used = 0
             hot_text = hot.render()
             if hot_text:
                 used += count_tokens(hot_text, model)
+                source_details.append({"source": "hot_memory"})
 
             # Procedural memory (second priority)
             if include_skills and used < token_budget:
@@ -467,6 +485,7 @@ class ContextBuilder:
                     if used + s_tokens <= token_budget:
                         skills.append(s)
                         used += s_tokens
+                        source_details.append({"source": "procedural", "memory_id": s.name})
 
             # Cold memory (third priority)
             if include_cold_memory and used < token_budget:
@@ -478,6 +497,11 @@ class ContextBuilder:
                     if used + m_tokens <= token_budget:
                         cold.append(m)
                         used += m_tokens
+                        source_details.append({
+                            "source": "cold_memory",
+                            "memory_id": m.id,
+                            "category": m.kind,
+                        })
 
             # Deep memory (lowest priority)
             if include_deep_memory and not deep and used < token_budget:
@@ -486,6 +510,8 @@ class ContextBuilder:
                     deep_tokens = count_tokens(deep.strip(), model)
                     if used + deep_tokens > token_budget:
                         deep = ""  # skip if doesn't fit
+                    else:
+                        source_details.append({"source": "deep_memory"})
 
         return ContextPack(
             hot_memory=hot,
@@ -493,6 +519,7 @@ class ContextBuilder:
             procedural_memories=skills,
             deep_memory=deep,
             token_budget=token_budget,
+            source_details=source_details,
         )
 
     def load_hot_memory(self, *, workspace_id: str | None = None) -> HotMemory:

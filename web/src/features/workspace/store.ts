@@ -34,27 +34,32 @@ interface WorkspaceState {
   selectedAgentId: string | null
   rightPanelTab: RightPanelTab
   rightPanelOpen: boolean
+  inputMode: 'plan' | 'chat'
   toolResults: ToolResult[]
   executionLogs: LogEntry[]
   setSelectedAgent: (id: string | null) => void
   setRightPanelTab: (tab: RightPanelTab) => void
+  setRightPanelOpen: (open: boolean) => void
+  setInputMode: (mode: 'plan' | 'chat') => void
   addToolResult: (result: ToolResult) => void
   addLog: (log: LogEntry) => void
   clearResults: () => void
   toggleRightPanel: () => void
 }
 
-let _id = 0
-const uid = () => String(++_id)
+const uid = () => crypto.randomUUID()
 
 export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   selectedAgentId: null,
   rightPanelTab: 'tasks',
   rightPanelOpen: true,
+  inputMode: 'plan',
   toolResults: [],
   executionLogs: [],
   setSelectedAgent: (id) => set({ selectedAgentId: id }),
   setRightPanelTab: (tab) => set({ rightPanelTab: tab }),
+  setRightPanelOpen: (open) => set({ rightPanelOpen: open }),
+  setInputMode: (mode) => set({ inputMode: mode }),
   addToolResult: (result) =>
     set((s) => ({ toolResults: [...s.toolResults, { ...result, id: result.id || uid() }] })),
   addLog: (log) =>

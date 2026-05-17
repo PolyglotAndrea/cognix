@@ -5,10 +5,12 @@ import {
   ChevronDown,
   ChevronRight,
   Plus,
+  Zap,
 } from 'lucide-react'
 import { api } from '@/shared/api/client'
 import { useWorkspaceStore } from './store'
 import { Button, Input, Panel, PanelBody, Badge, PanelHeader } from '@/shared/ui'
+import type { DragHandleProps } from './types'
 
 interface Agent {
   id: string
@@ -20,9 +22,9 @@ interface Agent {
   max_iterations: number
 }
 
-const MODELS = ['gpt-4o', 'gpt-4o-mini', 'claude-3.5-sonnet', 'echo']
+const FALLBACK_MODELS = ['gpt-4o', 'gpt-4o-mini', 'claude-sonnet-4-20250514']
 
-export function LeftPanel({ dragHandleProps }: { dragHandleProps?: any }) {
+export function LeftPanel({ dragHandleProps }: { dragHandleProps?: DragHandleProps }) {
   const { selectedAgentId, setSelectedAgent } = useWorkspaceStore()
   const queryClient = useQueryClient()
 
@@ -32,6 +34,13 @@ export function LeftPanel({ dragHandleProps }: { dragHandleProps?: any }) {
   })
 
   const selected = agents.find((a) => a.id === selectedAgentId) || null
+
+  // Fetch available models, fallback to hardcoded list
+  const { data: availableModels = FALLBACK_MODELS } = useQuery<string[]>({
+    queryKey: ['models'],
+    queryFn: () => api.get('/providers/models').then((r) => r.data),
+    staleTime: 5 * 60 * 1000,
+  })
 
   // Create agent
   const [showCreate, setShowCreate] = useState(false)
@@ -54,12 +63,32 @@ export function LeftPanel({ dragHandleProps }: { dragHandleProps?: any }) {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['agents'] }),
   })
 
-  // Sections
+  // Workspace skills
+  const { data: workspaces = [] } = useQuery<Array<{ id: string }>>({
+    queryKey: ['workspaces'],
+    queryFn: () => api.get('/workspaces').then((r) => r.data),
+  })
+  const workspaceId = workspaces[0]?.id
+
+  interface SkillInfo { name: string; description?: string; enabled: boolean }
+  const { data: skills = [] } = useQuery<SkillInfo[]>({
+    queryKey: ['workspace-skills', workspaceId],
+    queryFn: () => api.get(`/workspaces/${workspaceId}/skills`).then((r) => r.data),
+    enabled: !!workspaceId,
+  })
+
+  const toggleSkillMutation = useMutation({
+    mutationFn: ({ name, enabled }: { name: string; enabled: boolean }) =>
+      api.put(`/workspaces/${workspaceId}/skills/${name}`, { enabled }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['workspace-skills', workspaceId] }),
+  })
+
+  // Sections — only agent list is open by default
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({
     agent: true,
-    prompt: true,
-    params: true,
-    tools: true,
+    prompt: false,
+    params: false,
+    tools: false,
   })
 
   const toggleSection = (key: string) =>
@@ -124,7 +153,7 @@ export function LeftPanel({ dragHandleProps }: { dragHandleProps?: any }) {
                     className="w-full px-4 py-2 bg-background border border-border rounded-xl text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 transition-all appearance-none"
                     style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2364748b'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 1rem center', backgroundSize: '1rem' }}
                   >
-                    {MODELS.map((m) => (
+                    {availableModels.map((m) => (
                       <option key={m} value={m}>
                         {m}
                       </option>
@@ -233,7 +262,7 @@ export function LeftPanel({ dragHandleProps }: { dragHandleProps?: any }) {
                       className="w-full px-4 py-2.5 bg-muted/50 border border-border rounded-xl text-xs text-foreground outline-none focus:ring-2 focus:ring-primary/20 transition-all appearance-none"
                       style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2364748b'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 1rem center', backgroundSize: '1rem' }}
                     >
-                      {MODELS.map((m) => (
+                      {availableModels.map((m) => (
                         <option key={m} value={m} className="bg-card text-foreground">
                           {m}
                         </option>
@@ -292,12 +321,44 @@ export function LeftPanel({ dragHandleProps }: { dragHandleProps?: any }) {
                 )}
               </button>
               {openSections.tools && (
-                <div className="px-6 pb-6">
-                  <div className="p-4 bg-muted/50 border border-border rounded-2xl">
-                    <p className="text-[11px] text-muted-foreground leading-relaxed">
-                      Configure available tools and marketplace skills in the <span className="text-primary font-bold">Skills Portal</span> or use the global search to add new capabilities to this agent.
-                    </p>
-                  </div>
+                <div className="px-6 pb-6 space-y-2">
+                  {skills.length === 0 ? (
+                    <div className="p-4 bg-muted/50 border border-border rounded-2xl">
+                      <p className="text-[11px] text-muted-foreground leading-relaxed">
+                        No skills installed yet. Use <span className="text-primary font-bold">cognix skill install</span> to add capabilities.
+                      </p>
+                    </div>
+                  ) : (
+                    skills.map((skill) => (
+                      <div
+                        key={skill.name}
+                        className="flex items-center justify-between p-3 rounded-xl bg-muted/30 border border-border hover:border-primary/20 transition-all"
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <Zap className={`h-3.5 w-3.5 shrink-0 ${skill.enabled ? 'text-primary' : 'text-muted-foreground/40'}`} />
+                          <div className="min-w-0">
+                            <div className="text-xs font-bold text-foreground truncate">{skill.name}</div>
+                            {skill.description && (
+                              <div className="text-[10px] text-muted-foreground truncate">{skill.description}</div>
+                            )}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => toggleSkillMutation.mutate({ name: skill.name, enabled: !skill.enabled })}
+                          disabled={toggleSkillMutation.isPending}
+                          className={`relative w-9 h-5 rounded-full transition-colors shrink-0 ml-2 ${
+                            skill.enabled ? 'bg-primary' : 'bg-muted-foreground/20'
+                          }`}
+                        >
+                          <div
+                            className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${
+                              skill.enabled ? 'translate-x-4' : 'translate-x-0.5'
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    ))
+                  )}
                 </div>
               )}
             </div>

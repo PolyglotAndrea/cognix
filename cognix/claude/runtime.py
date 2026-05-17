@@ -306,9 +306,6 @@ def _build_can_use_tool(
     sdk: Any,
     approval_sink: Callable[[ApprovalRequest], None] | None = None,
 ) -> Callable[..., Any] | None:
-    if normalize_permission_mode(request.permission_mode) not in {"ask", "plan"}:
-        return None
-
     async def can_use_tool(
         tool_name: str,
         tool_input: dict[str, Any] | None = None,
@@ -322,7 +319,19 @@ def _build_can_use_tool(
             access_level,
             f"Claude Agent SDK tool '{tool_name}'",
         )
-        if decision.allowed:
+        policy_decision = await _claude_policy_decision(
+            request,
+            tool_name,
+            arguments,
+            access_level,
+        )
+        if not policy_decision.allowed and not policy_decision.requires_approval:
+            return _permission_deny(
+                sdk,
+                policy_decision.reason or "Denied by Cognix workspace policy.",
+            )
+
+        if decision.allowed and policy_decision.allowed:
             return _permission_allow(sdk, arguments)
 
         approval = ApprovalStore().create(
@@ -331,7 +340,11 @@ def _build_can_use_tool(
             tool_name=tool_name,
             arguments=arguments,
             access_level=access_level,
-            reason=decision.reason or _claude_tool_reason(tool_name, arguments),
+            reason=(
+                policy_decision.reason
+                or decision.reason
+                or _claude_tool_reason(tool_name, arguments)
+            ),
             kind=_claude_approval_kind(tool_name, request.permission_mode),
             metadata={
                 "runtime": "claude-agent-sdk",
@@ -348,6 +361,56 @@ def _build_can_use_tool(
         )
 
     return can_use_tool
+
+
+async def _claude_policy_decision(
+    request: ClaudeAgentRunRequest,
+    tool_name: str,
+    arguments: dict[str, Any],
+    access_level: str,
+):
+    from cognix.core.policy import PolicyResult, WorkspacePolicyService
+
+    policy = WorkspacePolicyService(request.workspace_id)
+    normalized = tool_name.lower()
+    if normalized in {"bash", "shell"}:
+        command = str(arguments.get("command") or arguments.get("cmd") or "")
+        return await policy.check_command(
+            command,
+            permission_mode=request.permission_mode,
+            agent_id=request.agent_id,
+        )
+    if normalized in {"write", "edit", "multiedit"}:
+        path = str(arguments.get("file_path") or arguments.get("path") or "")
+        return await policy.check_file_access(
+            path,
+            "write",
+            permission_mode=request.permission_mode,
+            agent_id=request.agent_id,
+        )
+    if normalized in {"read", "glob", "grep"}:
+        path = str(arguments.get("file_path") or arguments.get("path") or arguments.get("pattern") or "")
+        return await policy.check_file_access(
+            path,
+            "read",
+            permission_mode=request.permission_mode,
+            agent_id=request.agent_id,
+        )
+    if normalized in {"webfetch", "websearch"}:
+        url = str(arguments.get("url") or arguments.get("query") or "")
+        return await policy.check_network_access(
+            url,
+            permission_mode=request.permission_mode,
+            agent_id=request.agent_id,
+        )
+    if tool_name.startswith("mcp__"):
+        return await policy.check_mcp_tool(
+            tool_name,
+            access_level,
+            permission_mode=request.permission_mode,
+            agent_id=request.agent_id,
+        )
+    return PolicyResult(allowed=True)
 
 
 def _normalize_tool_input(

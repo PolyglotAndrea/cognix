@@ -39,7 +39,9 @@ class WorkspacePlan:
     sandbox_permissions: list[str] = field(default_factory=list)
     expected_artifacts: list[str] = field(default_factory=list)
     estimated_cost: str = "unknown"
-    status: str = "proposed"  # proposed, confirmed, rejected, applied
+    status: str = "proposed"  # proposed, confirmed, rejected, executing, applied
+    # step_id -> pending|executing|completed|failed
+    step_statuses: dict[str, str] = field(default_factory=dict)
     created_at: str = ""
 
     def to_dict(self) -> dict:
@@ -54,5 +56,6 @@ class WorkspacePlan:
             "expected_artifacts": self.expected_artifacts,
             "estimated_cost": self.estimated_cost,
             "status": self.status,
+            "step_statuses": self.step_statuses,
             "created_at": self.created_at,
         }
