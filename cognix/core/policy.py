@@ -130,7 +130,9 @@ class WorkspacePolicyService:
         effective_mode = policy.get("mcp_tools", permission_mode)
 
         decision = decide_permission(
-            effective_mode, access_level, f"MCP tool: {tool_name}",
+            effective_mode,
+            access_level,
+            f"MCP tool: {tool_name}",
         )
         result = PolicyResult(
             allowed=decision.allowed,
@@ -213,8 +215,7 @@ class WorkspacePolicyService:
         if allowed:
             cmd_base = cmd_lower.split()[0] if cmd_lower.split() else cmd_lower
             is_allowed = any(
-                a and (a.lower() == cmd_base or a.lower() in cmd_lower)
-                for a in allowed
+                a and (a.lower() == cmd_base or a.lower() in cmd_lower) for a in allowed
             )
             if not is_allowed:
                 result = PolicyResult(

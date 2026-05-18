@@ -372,17 +372,17 @@ async def test_claude_runtime_fake_sdk_e2e_approval_then_resume(
     class E2ESDK(FakeSDK):
         @staticmethod
         async def query(prompt: str, options: FakeOptions):
-            calls.append({
-                "prompt": prompt,
-                "cwd": options.cwd,
-                "permission_mode": options.permission_mode,
-                "mcp_servers": options.mcp_servers,
-                "resume": options.resume,
-            })
+            calls.append(
+                {
+                    "prompt": prompt,
+                    "cwd": options.cwd,
+                    "permission_mode": options.permission_mode,
+                    "mcp_servers": options.mcp_servers,
+                    "resume": options.resume,
+                }
+            )
             if options.resume:
-                yield FakeContentMessage(
-                    content=[FakeContentBlock(text=f"resumed with {prompt}")]
-                )
+                yield FakeContentMessage(content=[FakeContentBlock(text=f"resumed with {prompt}")])
                 yield FakeResultMessage(result="final result")
                 return
 
@@ -421,9 +421,7 @@ async def test_claude_runtime_fake_sdk_e2e_approval_then_resume(
     assert approval.metadata["resume_token"] == "resume-123"
     assert approval.metadata["session_id"] == "session-123"
     assert calls[0]["permission_mode"] == "default"
-    assert calls[0]["mcp_servers"] == {
-        "notes": {"command": "python", "args": ["-m", "notes_mcp"]}
-    }
+    assert calls[0]["mcp_servers"] == {"notes": {"command": "python", "args": ["-m", "notes_mcp"]}}
 
     ApprovalStore(home).approve(approval_id)
     resumed = [

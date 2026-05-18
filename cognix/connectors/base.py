@@ -30,13 +30,19 @@ class ConnectorProvider(ABC):
 
     @abstractmethod
     def get_authorize_url(
-        self, redirect_uri: str, state: str, scopes: list[str] | None = None,
+        self,
+        redirect_uri: str,
+        state: str,
+        scopes: list[str] | None = None,
     ) -> str:
         """Build the OAuth authorization URL."""
 
     @abstractmethod
     async def exchange_code(
-        self, code: str, redirect_uri: str, state: str = "",
+        self,
+        code: str,
+        redirect_uri: str,
+        state: str = "",
     ) -> dict[str, Any]:
         """Exchange authorization code for tokens.
 
@@ -63,10 +69,12 @@ class ConnectorProvider(ABC):
 
     def _client_id(self) -> str | None:
         from cognix.config import get_settings
+
         key = self.client_id_env.replace("COGNIX_CONNECTORS__", "").lower()
         return getattr(get_settings().connectors, key, None)
 
     def _client_secret(self) -> str | None:
         from cognix.config import get_settings
+
         key = self.client_secret_env.replace("COGNIX_CONNECTORS__", "").lower()
         return getattr(get_settings().connectors, key, None)

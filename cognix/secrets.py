@@ -39,11 +39,7 @@ def _get_fernet() -> Fernet:
     encryption_key = getattr(raw, "encryption_key", None) if raw else None
     if not encryption_key:
         encryption_key = settings.auth.secret_key
-    key = (
-        encryption_key.encode()
-        if len(encryption_key) == 44
-        else _derive_key(encryption_key)
-    )
+    key = encryption_key.encode() if len(encryption_key) == 44 else _derive_key(encryption_key)
     _fernet = Fernet(key)
     return _fernet
 

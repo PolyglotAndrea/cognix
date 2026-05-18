@@ -228,9 +228,7 @@ class WorkspaceConfigStore:
             )
             remaining = [s for s in servers if s.id != server_id]
             remaining.append(updated)
-            self._write_json(
-                self.mcp_servers_path, [asdict(item) for item in remaining]
-            )
+            self._write_json(self.mcp_servers_path, [asdict(item) for item in remaining])
             return updated
         return None
 

@@ -176,9 +176,7 @@ def agent_chat(
         await init_db()
         async with get_session() as session:
             result = await session.execute(
-                select(AgentModel).where(
-                    or_(AgentModel.name == name, AgentModel.id == name)
-                )
+                select(AgentModel).where(or_(AgentModel.name == name, AgentModel.id == name))
             )
             db_agent = result.scalar_one_or_none()
 
@@ -222,9 +220,7 @@ def agent_repl(
         await init_db()
         async with get_session() as session:
             result = await session.execute(
-                select(AgentModel).where(
-                    or_(AgentModel.name == name, AgentModel.id == name)
-                )
+                select(AgentModel).where(or_(AgentModel.name == name, AgentModel.id == name))
             )
             db_agent = result.scalar_one_or_none()
 
@@ -286,9 +282,7 @@ def agent_delete(
         await init_db()
         async with get_session() as session:
             result = await session.execute(
-                select(AgentModel).where(
-                    or_(AgentModel.name == name, AgentModel.id == name)
-                )
+                select(AgentModel).where(or_(AgentModel.name == name, AgentModel.id == name))
             )
             db_agent = result.scalar_one_or_none()
 
@@ -307,6 +301,7 @@ def agent_delete(
 
 
 # ── Task commands ───────────────────────────────────────────────────
+
 
 @task_app.command("add")
 def task_add(
@@ -549,6 +544,7 @@ def task_logs(
 
 # ── Skill commands ──────────────────────────────────────────────────
 
+
 @skill_app.command("list")
 def skill_list(
     directory: str = typer.Option(None, help="Skills directory"),
@@ -596,7 +592,8 @@ def skill_search(
     skills = manager.list_installed()
 
     results = [
-        s for s in skills
+        s
+        for s in skills
         if query.lower() in s["name"].lower()
         or query.lower() in s["description"].lower()
         or any(query.lower() in t for t in s["tags"])
@@ -695,6 +692,7 @@ def skill_create(
 
 
 # ── Workflow commands ───────────────────────────────────────────────
+
 
 @workflow_app.command("run")
 def workflow_run(
@@ -815,6 +813,7 @@ def workflow_validate(file: str = typer.Argument(..., help="Workflow YAML file")
 
 # ── RPC commands ────────────────────────────────────────────────────
 
+
 @rpc_app.command("call")
 def rpc_call(
     method: str = typer.Argument(..., help="RPC method name"),
@@ -851,6 +850,7 @@ def rpc_serve(
 
 # ── Server commands ─────────────────────────────────────────────────
 
+
 @server_app.command("start")
 def server_start(
     port: int = typer.Option(8000, help="Port"),
@@ -880,7 +880,9 @@ def server_config() -> None:
     console.print(f"Database:    {settings.database.url}")
     console.print(f"Default LLM: {settings.default_model}")
     console.print(f"Server:      {settings.server.host}:{settings.server.port}")
-    console.print(f"RPC:         {settings.rpc.transport}://{settings.rpc.host}:{settings.rpc.port}")
+    console.print(
+        f"RPC:         {settings.rpc.transport}://{settings.rpc.host}:{settings.rpc.port}"
+    )
     console.print(f"Skills Dir:  {settings.skills.local_dir}")
     console.print(f"Registry:    {settings.skills.registry_url}")
 

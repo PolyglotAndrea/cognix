@@ -145,9 +145,7 @@ class SkillsManager:
                 }
             ],
         }
-        (skill_dir / "skill.yaml").write_text(
-            yaml.safe_dump(manifest, sort_keys=False)
-        )
+        (skill_dir / "skill.yaml").write_text(yaml.safe_dump(manifest, sort_keys=False))
         (skill_dir / "handler.py").write_text(
             '"""Skill handler."""\n'
             "\n"

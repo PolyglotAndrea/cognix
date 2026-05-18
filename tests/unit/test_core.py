@@ -1,15 +1,12 @@
 """Unit tests for core modules."""
 
-import asyncio
-
 import pytest
 
 from cognix.core.agent import Agent, AgentState
-from cognix.core.context import Context
-from cognix.core.events import EventBus, Events
+from cognix.core.events import EventBus
 from cognix.core.memory import InMemoryBackend
 from cognix.core.registry import AgentRegistry
-from cognix.core.tool import Tool, tool
+from cognix.core.tool import tool
 
 
 class TestAgent:

@@ -63,7 +63,10 @@ class InstagramConnectorProvider(ConnectorProvider):
         return f"{_FB_AUTH_URL}?{urlencode(params)}"
 
     async def exchange_code(
-        self, code: str, redirect_uri: str, state: str = "",
+        self,
+        code: str,
+        redirect_uri: str,
+        state: str = "",
     ) -> dict[str, Any]:
         client_id = self._client_id() or ""
         client_secret = self._client_secret() or ""
@@ -160,10 +163,7 @@ class InstagramConnectorProvider(ConnectorProvider):
                     "properties": {
                         "image_url": {
                             "type": "string",
-                            "description": (
-                                "Publicly accessible URL"
-                                " of the image/video"
-                            ),
+                            "description": ("Publicly accessible URL of the image/video"),
                         },
                         "caption": {"type": "string", "description": "Caption for the post"},
                         "media_type": {
@@ -185,10 +185,7 @@ class InstagramConnectorProvider(ConnectorProvider):
                     "properties": {
                         "limit": {
                             "type": "integer",
-                            "description": (
-                                "Number of posts to return"
-                                " (max 100)"
-                            ),
+                            "description": ("Number of posts to return (max 100)"),
                             "default": 20,
                         },
                     },
@@ -216,9 +213,7 @@ class InstagramConnectorProvider(ConnectorProvider):
                     "properties": {
                         "comment_id": {
                             "type": "string",
-                            "description": (
-                                "ID of the comment to reply to"
-                            ),
+                            "description": ("ID of the comment to reply to"),
                         },
                         "message": {"type": "string", "description": "Reply text"},
                     },

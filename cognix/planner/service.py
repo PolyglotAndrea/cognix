@@ -140,7 +140,7 @@ class PlannerService:
 
         steps = [
             PlanStep(
-                id=s.get("id", f"step_{i+1}"),
+                id=s.get("id", f"step_{i + 1}"),
                 action=s.get("action", "unknown"),
                 description=s.get("description", ""),
                 params=s.get("params", {}),
@@ -211,7 +211,10 @@ class PlannerService:
                         agent_name_to_id[agent_name] = agent_id
                 elif step.action == "create_task":
                     task_id = await self._apply_create_task(
-                        workspace_id, step.params, agent_name_to_id, user_id,
+                        workspace_id,
+                        step.params,
+                        agent_name_to_id,
+                        user_id,
                     )
                     created["tasks"].append(task_id)
                     task_steps.append((task_id, step.params, step.id))
@@ -256,7 +259,10 @@ class PlannerService:
                     plan.step_statuses[step_id] = "completed"
                 # TaskExecutor creates success artifacts; fall back to plan-level artifact creation.
                 artifact_id = exec_result.get("artifact_id") or await self._store_task_artifact(
-                    workspace_id, task_id, params, exec_result,
+                    workspace_id,
+                    task_id,
+                    params,
+                    exec_result,
                 )
                 if artifact_id:
                     artifacts.append(artifact_id)
@@ -352,10 +358,7 @@ class PlannerService:
 
         connectors = []
         try:
-            connectors = [
-                {"id": c.id, "platform": c.platform}
-                for c in ws_config.list_connectors()
-            ]
+            connectors = [{"id": c.id, "platform": c.platform} for c in ws_config.list_connectors()]
         except Exception:
             pass
 
@@ -596,15 +599,17 @@ class PlannerService:
         if agent_id:
             params["_resolved_agent_id"] = agent_id
 
-        payload = json.dumps({
-            "agent_id": agent_id,
-            "agent_name": agent_name,
-            "name": params.get("name", "plan-task"),
-            "artifact_title": params.get("artifact_title") or params.get("name", "plan-task"),
-            "message": params.get("input", ""),
-            "workspace_id": workspace_id,
-            "user_id": user_id or "",
-        })
+        payload = json.dumps(
+            {
+                "agent_id": agent_id,
+                "agent_name": agent_name,
+                "name": params.get("name", "plan-task"),
+                "artifact_title": params.get("artifact_title") or params.get("name", "plan-task"),
+                "message": params.get("input", ""),
+                "workspace_id": workspace_id,
+                "user_id": user_id or "",
+            }
+        )
         task = ScheduledTaskModel(
             id=task_id,
             name=params.get("name", "plan-task"),

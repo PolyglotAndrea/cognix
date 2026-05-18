@@ -134,7 +134,8 @@ class TaskExecutor:
         workspace_id = payload.get("workspace_id")
         if user_id and EntitlementService is not None:
             entitlement = await EntitlementService.check_model_execution(
-                user_id, workspace_id,
+                user_id,
+                workspace_id,
             )
             if not entitlement.allowed:
                 raise PermissionError(entitlement.reason)
@@ -334,7 +335,9 @@ class TaskExecutor:
 
     @staticmethod
     async def _flag_playbook_candidate(
-        workspace_id: str, task_id: str, result_text: str,
+        workspace_id: str,
+        task_id: str,
+        result_text: str,
     ) -> None:
         """Flag substantial task outputs as playbook candidates."""
         try:

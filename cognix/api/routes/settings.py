@@ -172,10 +172,7 @@ async def list_models(
                     data = resp.json()
                     items = data.get("data", data) if isinstance(data, dict) else data
                     if isinstance(items, list):
-                        models = [
-                            m.get("id", m) if isinstance(m, dict) else str(m)
-                            for m in items
-                        ]
+                        models = [m.get("id", m) if isinstance(m, dict) else str(m) for m in items]
         except Exception:
             pass
 

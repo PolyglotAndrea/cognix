@@ -389,7 +389,9 @@ async def _claude_policy_decision(
             agent_id=request.agent_id,
         )
     if normalized in {"read", "glob", "grep"}:
-        path = str(arguments.get("file_path") or arguments.get("path") or arguments.get("pattern") or "")
+        path = str(
+            arguments.get("file_path") or arguments.get("path") or arguments.get("pattern") or ""
+        )
         return await policy.check_file_access(
             path,
             "read",

@@ -423,9 +423,7 @@ async def _attach_runtime_mcp_tools(agent) -> None:
     await attach_workspace_runtime_tools(agent, agent.workspace_id)
 
 
-def _error_response(
-    req_id: Any, code: int, message: str, data: Any = None
-) -> dict[str, Any]:
+def _error_response(req_id: Any, code: int, message: str, data: Any = None) -> dict[str, Any]:
     error: dict[str, Any] = {"code": code, "message": message}
     if data is not None:
         error["data"] = data

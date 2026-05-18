@@ -106,9 +106,7 @@ class ConnectorManager:
         """Encrypt and store a connector credential. Updates existing if found."""
         access_token_enc = encrypt_token(token_data["access_token"])
         refresh_token_enc = (
-            encrypt_token(token_data["refresh_token"])
-            if token_data.get("refresh_token")
-            else None
+            encrypt_token(token_data["refresh_token"]) if token_data.get("refresh_token") else None
         )
         expires_at = None
         if token_data.get("expires_in"):
@@ -155,9 +153,7 @@ class ConnectorManager:
             session.add(cred)
             return cred
 
-    async def get_credential(
-        self, credential_id: str
-    ) -> ConnectorCredentialModel | None:
+    async def get_credential(self, credential_id: str) -> ConnectorCredentialModel | None:
         async with get_session() as session:
             stmt = select(ConnectorCredentialModel).where(
                 ConnectorCredentialModel.id == credential_id
@@ -229,9 +225,7 @@ class ConnectorManager:
             result = await session.execute(stmt)
             return result.scalar_one_or_none()
 
-    async def delete_credential(
-        self, credential_id: str
-    ) -> bool:
+    async def delete_credential(self, credential_id: str) -> bool:
         async with get_session() as session:
             stmt = select(ConnectorCredentialModel).where(
                 ConnectorCredentialModel.id == credential_id
@@ -278,9 +272,7 @@ class ConnectorManager:
                 credential.refresh_token_enc = encrypt_token(token_data["refresh_token"])
             if token_data.get("expires_in"):
                 expires_in = int(token_data["expires_in"])
-                credential.token_expires_at = (
-                    datetime.now(UTC) + timedelta(seconds=expires_in)
-                )
+                credential.token_expires_at = datetime.now(UTC) + timedelta(seconds=expires_in)
             credential.updated_at = datetime.now(UTC)
 
             async with get_session() as session:

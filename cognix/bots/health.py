@@ -66,7 +66,7 @@ class BotHealthMonitor:
         h.last_success_at = time.monotonic()
         h.latencies.append(latency_ms)
         if len(h.latencies) > self._max_latencies:
-            h.latencies = h.latencies[-self._max_latencies:]
+            h.latencies = h.latencies[-self._max_latencies :]
 
     def record_error(self, bot_id: str, error: str) -> None:
         h = self._health[bot_id]

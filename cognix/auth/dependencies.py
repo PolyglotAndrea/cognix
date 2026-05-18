@@ -46,11 +46,16 @@ PERMISSIONS = {
 ROLE_PERMISSIONS: dict[str, list[str]] = {
     "admin": ["*"],
     "user": [
-        "agents:read", "agents:write",
-        "tasks:read", "tasks:write",
-        "skills:read", "skills:write",
-        "connectors:read", "connectors:write",
-        "settings:read", "settings:write",
+        "agents:read",
+        "agents:write",
+        "tasks:read",
+        "tasks:write",
+        "skills:read",
+        "skills:write",
+        "connectors:read",
+        "connectors:write",
+        "settings:read",
+        "settings:write",
     ],
     "viewer": [
         "agents:read",
@@ -92,9 +97,7 @@ async def get_current_user(
                 from sqlalchemy import select
 
                 async with get_session() as session:
-                    result = await session.execute(
-                        select(UserModel).where(UserModel.id == user_id)
-                    )
+                    result = await session.execute(select(UserModel).where(UserModel.id == user_id))
                     user = result.scalar_one_or_none()
 
                 if user and user.is_active:

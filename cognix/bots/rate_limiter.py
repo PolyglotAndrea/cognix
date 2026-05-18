@@ -52,7 +52,9 @@ class TokenBucketRateLimiter:
         recent = sum(1 for t in window if t > minute_cutoff)
         if recent >= limits["per_minute"]:
             logger.warning(
-                "Bot %s per-minute rate limit exceeded (%d)", bot_id, limits["per_minute"],
+                "Bot %s per-minute rate limit exceeded (%d)",
+                bot_id,
+                limits["per_minute"],
             )
             return False
 

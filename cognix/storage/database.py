@@ -165,10 +165,7 @@ async def _ensure_connector_credentials_table(conn) -> None:
     }
     for column, ddl_type in additions.items():
         if column not in columns:
-            sql = (
-                f"ALTER TABLE connector_credentials"
-                f" ADD COLUMN {column} {ddl_type}"
-            )
+            sql = f"ALTER TABLE connector_credentials ADD COLUMN {column} {ddl_type}"
             await conn.execute(text(sql))
 
 
@@ -189,6 +186,4 @@ async def _ensure_artifact_columns(conn) -> None:
     }
     for column, ddl_type in additions.items():
         if column not in columns:
-            await conn.execute(
-                text(f"ALTER TABLE artifacts ADD COLUMN {column} {ddl_type}")
-            )
+            await conn.execute(text(f"ALTER TABLE artifacts ADD COLUMN {column} {ddl_type}"))

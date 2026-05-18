@@ -141,7 +141,11 @@ class BotBridgeService:
                     delay = _RETRY_BASE_DELAY * (2 ** (attempt - 1))
                     logger.warning(
                         "Bot dispatch attempt %s/%s failed for %s: %s; retrying in %.1fs",
-                        attempt, max_attempts, bot.id, exc, delay,
+                        attempt,
+                        max_attempts,
+                        bot.id,
+                        exc,
+                        delay,
                     )
                     await asyncio.sleep(delay)
 
@@ -219,7 +223,10 @@ class BotBridgeService:
             try:
                 async with httpx.AsyncClient(timeout=timeout) as client:
                     resp = await client.request(
-                        method, response_url, headers=clean_headers, json=payload,
+                        method,
+                        response_url,
+                        headers=clean_headers,
+                        json=payload,
                     )
                     resp.raise_for_status()
                 self._append_callback_event(bot, message, ok=True)
@@ -230,13 +237,19 @@ class BotBridgeService:
                     delay = _RETRY_BASE_DELAY * (2 ** (attempt - 1))
                     logger.warning(
                         "Bot callback attempt %s/%s failed for %s: %s; retrying in %.1fs",
-                        attempt, max_attempts, bot.id, exc, delay,
+                        attempt,
+                        max_attempts,
+                        bot.id,
+                        exc,
+                        delay,
                     )
                     await asyncio.sleep(delay)
 
         logger.warning(
             "Bot response callback failed after %s attempts for %s: %s",
-            max_attempts, bot.id, last_exc,
+            max_attempts,
+            bot.id,
+            last_exc,
         )
         self._append_callback_event(bot, message, ok=False, error=str(last_exc))
 

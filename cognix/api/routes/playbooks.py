@@ -35,7 +35,8 @@ async def extract_playbook(
     service = PlaybookService(workspace_id)
     try:
         return await service.extract_from_artifact(
-            body.artifact_id, user_id=user.id,
+            body.artifact_id,
+            user_id=user.id,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc

@@ -316,7 +316,8 @@ class PlaybookService:
             "tags": template.get("tags", []),
         }
         (skill_dir / "skill.yaml").write_text(
-            json.dumps(skill_yaml, indent=2) + "\n", encoding="utf-8",
+            json.dumps(skill_yaml, indent=2) + "\n",
+            encoding="utf-8",
         )
 
         # Write handler.py stub
@@ -330,7 +331,8 @@ async def run(**kwargs):
 
         # Write template.json
         (skill_dir / "template.json").write_text(
-            json.dumps(template, indent=2) + "\n", encoding="utf-8",
+            json.dumps(template, indent=2) + "\n",
+            encoding="utf-8",
         )
 
         return skill_dir

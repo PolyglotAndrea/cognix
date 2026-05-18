@@ -249,6 +249,7 @@ async def agent_chat_ws(websocket: WebSocket, agent_id: str) -> None:
         user = await authenticate_websocket(websocket)
         # Check write permission — chat triggers agent execution
         from cognix.api.security import ensure_permission as _ensure_perm
+
         _ensure_perm(user, "agents:write")
     except HTTPException as exc:
         await websocket.accept()
@@ -270,11 +271,13 @@ async def agent_chat_ws(websocket: WebSocket, agent_id: str) -> None:
         user.id, getattr(agent, "workspace_id", None)
     )
     if not entitlement.allowed:
-        await websocket.send_json({
-            "type": "error",
-            "message": entitlement.reason,
-            "code": "entitlement_required",
-        })
+        await websocket.send_json(
+            {
+                "type": "error",
+                "message": entitlement.reason,
+                "code": "entitlement_required",
+            }
+        )
         await websocket.close()
         return
 

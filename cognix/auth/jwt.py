@@ -21,9 +21,7 @@ def create_token(
     if expires_delta:
         expire = datetime.now(UTC) + expires_delta
     else:
-        expire = datetime.now(UTC) + timedelta(
-            hours=settings.auth.token_expire_hours
-        )
+        expire = datetime.now(UTC) + timedelta(hours=settings.auth.token_expire_hours)
 
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, settings.auth.secret_key, algorithm="HS256")

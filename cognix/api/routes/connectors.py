@@ -60,23 +60,25 @@ async def list_platforms(
     result = []
     for platform, provider in providers.items():
         platform_creds = [c for c in all_creds if c.platform == platform]
-        result.append({
-            "platform": platform,
-            "display_name": provider.display_name,
-            "connected": len(platform_creds) > 0,
-            "credentials": [
-                {
-                    "id": c.id,
-                    "platform_username": c.platform_username,
-                    "platform_user_id": c.platform_user_id,
-                    "scopes": c.scopes,
-                    "workspace_id": c.workspace_id,
-                    "created_at": c.created_at.isoformat() if c.created_at else None,
-                    **_credential_status(c),
-                }
-                for c in platform_creds
-            ],
-        })
+        result.append(
+            {
+                "platform": platform,
+                "display_name": provider.display_name,
+                "connected": len(platform_creds) > 0,
+                "credentials": [
+                    {
+                        "id": c.id,
+                        "platform_username": c.platform_username,
+                        "platform_user_id": c.platform_user_id,
+                        "scopes": c.scopes,
+                        "workspace_id": c.workspace_id,
+                        "created_at": c.created_at.isoformat() if c.created_at else None,
+                        **_credential_status(c),
+                    }
+                    for c in platform_creds
+                ],
+            }
+        )
     return result
 
 
@@ -175,8 +177,7 @@ async def callback(
     if missing_scopes:
         result["missing_scopes"] = missing_scopes
         result["warning"] = (
-            f"Some features may be limited. Missing scopes: "
-            f"{', '.join(missing_scopes)}"
+            f"Some features may be limited. Missing scopes: {', '.join(missing_scopes)}"
         )
     return result
 
@@ -277,17 +278,19 @@ async def list_connector_tools(
 
         for spec in provider.list_tools():
             tool_name = f"conn_{cred.platform}_{spec.name}"
-            result.append({
-                "name": tool_name,
-                "original_name": spec.name,
-                "platform": cred.platform,
-                "display_name": provider.display_name,
-                "description": spec.description,
-                "parameters": spec.parameters,
-                "access_level": connector_access_level(spec, metadata),
-                "enabled": spec.name not in disabled,
-                "connector_id": config.get("connector_id"),
-            })
+            result.append(
+                {
+                    "name": tool_name,
+                    "original_name": spec.name,
+                    "platform": cred.platform,
+                    "display_name": provider.display_name,
+                    "description": spec.description,
+                    "parameters": spec.parameters,
+                    "access_level": connector_access_level(spec, metadata),
+                    "enabled": spec.name not in disabled,
+                    "connector_id": config.get("connector_id"),
+                }
+            )
 
     return result
 

@@ -307,8 +307,8 @@ async def call_workspace_mcp_tool(
     body: InvokeMCPToolRequest,
     user: CurrentUser = Depends(require_skills_write),
 ) -> dict:
-    from cognix.core.policy import WorkspacePolicyService
     from cognix.core.permissions import PermissionDeniedError, ensure_permission
+    from cognix.core.policy import WorkspacePolicyService
     from cognix.mcp.adapter import mcp_server_to_core_tools
     from cognix.mcp.manager import default_mcp_runtime
 
@@ -379,9 +379,7 @@ async def toggle_workspace_mcp_tool(
     from cognix.mcp.manager import default_mcp_runtime
 
     config_store = _workspace_config(workspace_id)
-    server = next(
-        (s for s in config_store.list_mcp_servers() if s.id == server_id), None
-    )
+    server = next((s for s in config_store.list_mcp_servers() if s.id == server_id), None)
     if not server:
         raise HTTPException(404, "MCP server not found")
 

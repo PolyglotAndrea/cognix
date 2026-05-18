@@ -198,16 +198,12 @@ async def update_artifact(
         if changes:
             changes["updated_at"] = datetime.now(UTC)
             await session.execute(
-                update(ArtifactModel)
-                .where(ArtifactModel.id == artifact_id)
-                .values(**changes)
+                update(ArtifactModel).where(ArtifactModel.id == artifact_id).values(**changes)
             )
 
     # Re-fetch to return updated state
     async with get_session() as session:
-        result = await session.execute(
-            select(ArtifactModel).where(ArtifactModel.id == artifact_id)
-        )
+        result = await session.execute(select(ArtifactModel).where(ArtifactModel.id == artifact_id))
         row = result.scalar_one()
     return _artifact_to_dict(row)
 
@@ -268,9 +264,7 @@ async def publish_artifact(
         )
 
     async with get_session() as session:
-        result = await session.execute(
-            select(ArtifactModel).where(ArtifactModel.id == artifact_id)
-        )
+        result = await session.execute(select(ArtifactModel).where(ArtifactModel.id == artifact_id))
         row = result.scalar_one()
     return _artifact_to_dict(row)
 
@@ -302,9 +296,7 @@ async def archive_artifact(
         )
 
     async with get_session() as session:
-        result = await session.execute(
-            select(ArtifactModel).where(ArtifactModel.id == artifact_id)
-        )
+        result = await session.execute(select(ArtifactModel).where(ArtifactModel.id == artifact_id))
         row = result.scalar_one()
     return _artifact_to_dict(row)
 

@@ -76,9 +76,7 @@ async def register(body: RegisterRequest) -> dict:
 
     async with get_session() as session:
         # Check if email already exists
-        result = await session.execute(
-            select(UserModel).where(UserModel.email == body.email)
-        )
+        result = await session.execute(select(UserModel).where(UserModel.email == body.email))
         if result.scalar_one_or_none():
             raise HTTPException(409, "Email already registered")
 
@@ -112,9 +110,7 @@ async def register(body: RegisterRequest) -> dict:
 async def login(body: LoginRequest) -> dict:
     """Login with email and password."""
     async with get_session() as session:
-        result = await session.execute(
-            select(UserModel).where(UserModel.email == body.email)
-        )
+        result = await session.execute(select(UserModel).where(UserModel.email == body.email))
         user = result.scalar_one_or_none()
 
         if not user or not user.password_hash:
@@ -285,9 +281,7 @@ async def list_api_keys(
 ) -> list[dict]:
     """List API keys for the current user."""
     async with get_session() as session:
-        result = await session.execute(
-            select(APIKeyModel).where(APIKeyModel.user_id == user.id)
-        )
+        result = await session.execute(select(APIKeyModel).where(APIKeyModel.user_id == user.id))
         keys = result.scalars().all()
 
     return [

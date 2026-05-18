@@ -138,27 +138,41 @@ class ContextPack:
         if self.hot_memory.user.strip():
             sources.append({"type": "hot", "name": "USER.md", "chars": len(self.hot_memory.user)})
         if self.hot_memory.global_memory.strip():
-            sources.append({
-                "type": "hot", "name": "MEMORY.md",
-                "chars": len(self.hot_memory.global_memory),
-            })
+            sources.append(
+                {
+                    "type": "hot",
+                    "name": "MEMORY.md",
+                    "chars": len(self.hot_memory.global_memory),
+                }
+            )
         if self.hot_memory.workspace_memory.strip():
-            sources.append({
-                "type": "hot", "name": "workspace/MEMORY.md",
-                "chars": len(self.hot_memory.workspace_memory),
-            })
+            sources.append(
+                {
+                    "type": "hot",
+                    "name": "workspace/MEMORY.md",
+                    "chars": len(self.hot_memory.workspace_memory),
+                }
+            )
         for m in self.cold_memories:
-            sources.append({
-                "type": "cold", "id": m.id, "kind": m.kind,
-                "chars": len(m.content), "created_at": m.created_at,
-            })
+            sources.append(
+                {
+                    "type": "cold",
+                    "id": m.id,
+                    "kind": m.kind,
+                    "chars": len(m.content),
+                    "created_at": m.created_at,
+                }
+            )
         for s in self.procedural_memories:
             sources.append({"type": "procedural", "name": s.name, "chars": len(s.content)})
         if self.deep_memory.strip():
-            sources.append({
-                "type": "deep", "name": "DEEP_MEMORY.md",
-                "chars": len(self.deep_memory),
-            })
+            sources.append(
+                {
+                    "type": "deep",
+                    "name": "DEEP_MEMORY.md",
+                    "chars": len(self.deep_memory),
+                }
+            )
         return sources
 
 
@@ -449,17 +463,23 @@ class ContextBuilder:
             # Greedy: include everything, let render_system_context truncate
             if include_cold_memory:
                 cold = await self.cold_store.search(
-                    user_message, workspace_id=workspace_id, limit=5,
+                    user_message,
+                    workspace_id=workspace_id,
+                    limit=5,
                 )
                 for m in cold:
-                    source_details.append({
-                        "source": "cold_memory",
-                        "memory_id": m.id,
-                        "category": m.kind,
-                    })
+                    source_details.append(
+                        {
+                            "source": "cold_memory",
+                            "memory_id": m.id,
+                            "category": m.kind,
+                        }
+                    )
             if include_skills:
                 skills = self.search_procedural_memory(
-                    user_message, workspace_id=workspace_id, limit=3,
+                    user_message,
+                    workspace_id=workspace_id,
+                    limit=3,
                 )
                 for s in skills:
                     source_details.append({"source": "procedural", "memory_id": s.name})
@@ -478,7 +498,9 @@ class ContextBuilder:
             # Procedural memory (second priority)
             if include_skills and used < token_budget:
                 all_skills = self.search_procedural_memory(
-                    user_message, workspace_id=workspace_id, limit=3,
+                    user_message,
+                    workspace_id=workspace_id,
+                    limit=3,
                 )
                 for s in all_skills:
                     s_tokens = count_tokens(s.compact(), model)
@@ -490,18 +512,22 @@ class ContextBuilder:
             # Cold memory (third priority)
             if include_cold_memory and used < token_budget:
                 all_cold = await self.cold_store.search(
-                    user_message, workspace_id=workspace_id, limit=5,
+                    user_message,
+                    workspace_id=workspace_id,
+                    limit=5,
                 )
                 for m in all_cold:
                     m_tokens = count_tokens(m.compact(), model)
                     if used + m_tokens <= token_budget:
                         cold.append(m)
                         used += m_tokens
-                        source_details.append({
-                            "source": "cold_memory",
-                            "memory_id": m.id,
-                            "category": m.kind,
-                        })
+                        source_details.append(
+                            {
+                                "source": "cold_memory",
+                                "memory_id": m.id,
+                                "category": m.kind,
+                            }
+                        )
 
             # Deep memory (lowest priority)
             if include_deep_memory and not deep and used < token_budget:

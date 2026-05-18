@@ -62,7 +62,9 @@ class XConnectorProvider(ConnectorProvider):
     ) -> str:
         code_verifier = secrets.token_urlsafe(43)
         code_challenge = (
-            base64.urlsafe_b64encode(hashlib.sha256(code_verifier.encode()).digest()).rstrip(b"=").decode()
+            base64.urlsafe_b64encode(hashlib.sha256(code_verifier.encode()).digest())
+            .rstrip(b"=")
+            .decode()
         )
         # Store code_verifier in state so callback can retrieve it
         state_payload = json.dumps({"s": state, "cv": code_verifier})
@@ -78,7 +80,10 @@ class XConnectorProvider(ConnectorProvider):
         return f"{_X_AUTH_URL}?{urlencode(params)}"
 
     async def exchange_code(
-        self, code: str, redirect_uri: str, state: str = "",
+        self,
+        code: str,
+        redirect_uri: str,
+        state: str = "",
     ) -> dict[str, Any]:
         client_id = self._client_id() or ""
         client_secret = self._client_secret() or ""
@@ -252,7 +257,8 @@ class XConnectorProvider(ConnectorProvider):
             elif name == "delete_tweet":
                 tid = arguments["tweet_id"]
                 resp = await client.delete(
-                    f"{_X_API_BASE}/tweets/{tid}", headers=headers,
+                    f"{_X_API_BASE}/tweets/{tid}",
+                    headers=headers,
                 )
                 if resp.status_code >= 400:
                     _handle_x_error(resp, name)
@@ -266,7 +272,8 @@ class XConnectorProvider(ConnectorProvider):
                 }
                 resp = await client.get(
                     f"{_X_API_BASE}/tweets/search/recent",
-                    params=params, headers=headers,
+                    params=params,
+                    headers=headers,
                 )
                 if resp.status_code >= 400:
                     _handle_x_error(resp, name)

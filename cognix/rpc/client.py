@@ -47,9 +47,7 @@ class RPCClient:
         async with httpx.AsyncClient() as client:
             await client.post(self.endpoint, json=payload, timeout=self.timeout)
 
-    async def batch(
-        self, requests: list[tuple[str, dict[str, Any] | None]]
-    ) -> list[Any]:
+    async def batch(self, requests: list[tuple[str, dict[str, Any] | None]]) -> list[Any]:
         """Make a batch JSON-RPC call."""
         batch_payload = []
         for method, params in requests:

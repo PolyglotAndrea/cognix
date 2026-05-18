@@ -145,7 +145,8 @@ class DistributedTaskDispatcher:
             # Heartbeat every cycle
             try:
                 await self.worker_registry.heartbeat(
-                    self.node_id, current_load=len(self._active_task_ids),
+                    self.node_id,
+                    current_load=len(self._active_task_ids),
                 )
             except Exception:
                 logger.debug("Worker heartbeat failed", exc_info=True)
@@ -208,10 +209,13 @@ class DistributedTaskDispatcher:
                 )
                 timeout = getattr(task, "max_execution_seconds", 300) or 300
                 try:
-                    run = await asyncio.wait_for(
-                        self.executor.execute(task.id, payload),
-                        timeout=timeout,
-                    ) or {}
+                    run = (
+                        await asyncio.wait_for(
+                            self.executor.execute(task.id, payload),
+                            timeout=timeout,
+                        )
+                        or {}
+                    )
                 except TimeoutError:
                     logger.error(
                         "Task %s timed out after %ds",
@@ -280,7 +284,9 @@ class DistributedTaskDispatcher:
         attempts = max(task.run_count, 1)
         if attempts <= task.max_retries:
             retry_at = compute_retry_at(
-                attempts, self.retry_base_seconds, self.retry_max_seconds,
+                attempts,
+                self.retry_base_seconds,
+                self.retry_max_seconds,
             )
             await self.store.complete_lease(
                 task.id,

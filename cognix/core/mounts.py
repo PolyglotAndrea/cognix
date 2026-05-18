@@ -14,9 +14,13 @@ def attach_workspace_skills(agent: Agent, workspace_id: str) -> list[str]:
 
     attached: list[str] = []
     try:
-        enabled_skills = WorkspaceConfigStore(workspace_id).get_settings().get(
-            "enabled_skills",
-            [],
+        enabled_skills = (
+            WorkspaceConfigStore(workspace_id)
+            .get_settings()
+            .get(
+                "enabled_skills",
+                [],
+            )
         )
     except FileNotFoundError:
         return attached

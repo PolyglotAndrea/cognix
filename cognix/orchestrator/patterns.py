@@ -48,12 +48,14 @@ class Sequential(Pattern):
             await _prepare_agent(agent)
             response = await agent.run(current_input, context=ctx)
 
-            steps.append({
-                "step": i,
-                "agent": agent.name,
-                "input": current_input,
-                "output": response.content,
-            })
+            steps.append(
+                {
+                    "step": i,
+                    "agent": agent.name,
+                    "input": current_input,
+                    "output": response.content,
+                }
+            )
 
             current_input = response.content
 
@@ -87,9 +89,7 @@ class Parallel(Pattern):
         results = await asyncio.gather(*[_run_agent(a) for a in self.agents])
 
         # Combine all outputs
-        combined = "\n\n".join(
-            f"**{r['agent']}**: {r['output']}" for r in results
-        )
+        combined = "\n\n".join(f"**{r['agent']}**: {r['output']}" for r in results)
 
         return OrchestrationResult(
             content=combined,
@@ -198,17 +198,21 @@ class Loop(Pattern):
         for i in range(self.max_iterations):
             logger.info(
                 "Loop iteration %d/%d: agent=%s",
-                i + 1, self.max_iterations, self.agent.name,
+                i + 1,
+                self.max_iterations,
+                self.agent.name,
             )
             await _prepare_agent(self.agent)
             response = await self.agent.run(current_input, context=ctx)
 
-            steps.append({
-                "iteration": i,
-                "agent": self.agent.name,
-                "input": current_input,
-                "output": response.content,
-            })
+            steps.append(
+                {
+                    "iteration": i,
+                    "agent": self.agent.name,
+                    "input": current_input,
+                    "output": response.content,
+                }
+            )
 
             # Check condition (0-indexed counter)
             if not self.condition(response, i):

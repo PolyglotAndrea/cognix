@@ -63,7 +63,7 @@ def test_bot_bridge_extracts_provider_messages():
         {
             "event": {
                 "sender": {"sender_id": {"open_id": "ou_1"}},
-                "message": {"chat_id": "oc_1", "content": "{\"text\":\"hello\"}"},
+                "message": {"chat_id": "oc_1", "content": '{"text":"hello"}'},
             }
         },
     )
@@ -135,7 +135,7 @@ def test_bot_bridge_builds_callback_payload():
         {
             "event": {
                 "sender": {"sender_id": {"open_id": "ou_1"}},
-                "message": {"chat_id": "oc_1", "content": "{\"text\":\"hello\"}"},
+                "message": {"chat_id": "oc_1", "content": '{"text":"hello"}'},
             }
         },
     )
@@ -175,6 +175,10 @@ async def test_bot_bridge_posts_response_callback(tmp_path, monkeypatch):
                     "timeout": self.timeout,
                 }
             )
+            return self
+
+        def raise_for_status(self):
+            return None
 
     class FakeWorkspaceManager:
         def append_event(self, workspace_id, event):

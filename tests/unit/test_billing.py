@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
-
-from cognix.billing.plans import get_all_plans, get_plan_by_id, DEFAULT_PLANS
+from cognix.billing.plans import get_all_plans, get_plan_by_id
 from cognix.billing.webhooks import WEBHOOK_HANDLERS
 
 

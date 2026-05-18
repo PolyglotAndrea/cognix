@@ -215,12 +215,14 @@ async def get_entitlement(
     if workspace_id:
         try:
             from cognix.local.workspace_config import WorkspaceConfigStore
+
             ws_settings = WorkspaceConfigStore(workspace_id).get_settings()
             byok_configured = bool(ws_settings.get("llm", {}).get("api_key"))
         except FileNotFoundError:
             pass
     if not byok_configured:
         from cognix.local.config import ConfigStore
+
         global_cfg = ConfigStore().get_llm()
         byok_configured = bool(global_cfg.api_key)
 

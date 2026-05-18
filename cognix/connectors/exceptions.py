@@ -40,7 +40,5 @@ class ConnectorTokenExpiredError(Exception):
     def __init__(self, platform: str, credential_id: str, message: str = ""):
         self.platform = platform
         self.credential_id = credential_id
-        self.message = message or (
-            f"{platform} token expired. Re-authorize to continue."
-        )
+        self.message = message or (f"{platform} token expired. Re-authorize to continue.")
         super().__init__(self.message)

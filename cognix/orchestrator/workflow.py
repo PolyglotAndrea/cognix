@@ -153,12 +153,14 @@ async def execute_workflow(
             logger.error(error_msg)
             if step.on_error:
                 variables[step.on_error] = error_msg
-                steps_results.append({
-                    "step": step.id,
-                    "agent": step.agent,
-                    "status": "skipped",
-                    "reason": error_msg,
-                })
+                steps_results.append(
+                    {
+                        "step": step.id,
+                        "agent": step.agent,
+                        "status": "skipped",
+                        "reason": error_msg,
+                    }
+                )
                 continue
             raise ValueError(error_msg)
 
@@ -271,14 +273,17 @@ def _emit_step_event(
 
         home = CognixHome.default().ensure()
         wm = WorkspaceManager(home)
-        wm.append_event(workspace_id, {
-            "type": "workflow.step.completed",
-            "workflow": workflow_name,
-            "step": step_result.get("step"),
-            "agent": step_result.get("agent"),
-            "status": step_result.get("status"),
-            "duration_ms": step_result.get("duration_ms"),
-            "error": step_result.get("error"),
-        })
+        wm.append_event(
+            workspace_id,
+            {
+                "type": "workflow.step.completed",
+                "workflow": workflow_name,
+                "step": step_result.get("step"),
+                "agent": step_result.get("agent"),
+                "status": step_result.get("status"),
+                "duration_ms": step_result.get("duration_ms"),
+                "error": step_result.get("error"),
+            },
+        )
     except Exception:
         logger.debug("Failed to emit workflow step event", exc_info=True)

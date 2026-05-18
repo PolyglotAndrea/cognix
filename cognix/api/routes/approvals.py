@@ -189,23 +189,21 @@ async def resume_and_continue_stream(
                     approval_id,
                     response=body.response if body else "",
                 ):
-                    yield encode_sse_event(
-                        event, extra={"runtime": "claude-agent-sdk"}
-                    )
+                    yield encode_sse_event(event, extra={"runtime": "claude-agent-sdk"})
             else:
                 agent = await get_agent_runtime(approval.agent_id)
                 if not agent:
-                    yield encode_sse_event(AgentEvent(
-                        "error",
-                        {"message": "Agent not found", "error": "Agent not found"},
-                    ))
+                    yield encode_sse_event(
+                        AgentEvent(
+                            "error",
+                            {"message": "Agent not found", "error": "Agent not found"},
+                        )
+                    )
                     return
                 async for event in agent.resume_and_continue(approval_id):
                     yield encode_sse_event(event)
         except ValueError as exc:
-            yield encode_sse_event(
-                AgentEvent("error", {"message": str(exc), "error": str(exc)})
-            )
+            yield encode_sse_event(AgentEvent("error", {"message": str(exc), "error": str(exc)}))
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

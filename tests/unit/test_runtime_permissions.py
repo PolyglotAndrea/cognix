@@ -189,9 +189,7 @@ async def test_agent_persists_and_restores_complex_hitl_snapshot(
             has_tool_result = any(message.role == "tool" for message in ctx.messages)
             if has_tool_result:
                 image_blocks = [
-                    message.content
-                    for message in ctx.messages
-                    if isinstance(message.content, list)
+                    message.content for message in ctx.messages if isinstance(message.content, list)
                 ]
                 return AgentResponse(
                     content=f"done after {len(image_blocks)} rich message(s)",
@@ -255,9 +253,7 @@ async def test_agent_persists_and_restores_complex_hitl_snapshot(
     )
     events = [event async for event in first_agent.stream_events("write", rich_context)]
     approval_id = next(
-        event.data["approval_id"]
-        for event in events
-        if event.type == "approval_request"
+        event.data["approval_id"] for event in events if event.type == "approval_request"
     )
 
     from cognix.local.approvals import ApprovalStore

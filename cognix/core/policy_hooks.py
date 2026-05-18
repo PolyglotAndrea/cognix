@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 # Data types
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class PolicyResult:
     """Outcome of a single policy check.
@@ -41,6 +42,7 @@ class PolicyResult:
 # ---------------------------------------------------------------------------
 # Hook protocol
 # ---------------------------------------------------------------------------
+
 
 @runtime_checkable
 class PolicyHook(Protocol):
@@ -63,6 +65,7 @@ class PolicyHook(Protocol):
 # ---------------------------------------------------------------------------
 # Built-in hooks
 # ---------------------------------------------------------------------------
+
 
 class FilePolicyHook:
     """Checks file paths against workspace policy rules.
@@ -90,8 +93,7 @@ class FilePolicyHook:
         self.allowed_roots = [os.path.realpath(r) for r in (allowed_roots or [])]
         self.blocked_paths = blocked_paths or []
         self.blocked_extensions = [
-            ext if ext.startswith(".") else f".{ext}"
-            for ext in (blocked_extensions or [])
+            ext if ext.startswith(".") else f".{ext}" for ext in (blocked_extensions or [])
         ]
 
     async def check(self, operation: str, context: dict[str, Any]) -> PolicyResult:
@@ -249,9 +251,7 @@ class CommandPolicyHook:
     ) -> None:
         self.blocked_commands = [c.lower() for c in (blocked_commands or [])]
         self.allowed_commands = [c.lower() for c in (allowed_commands or [])]
-        self.blocked_patterns = [
-            re.compile(p) for p in (blocked_patterns or [])
-        ]
+        self.blocked_patterns = [re.compile(p) for p in (blocked_patterns or [])]
 
     async def check(self, operation: str, context: dict[str, Any]) -> PolicyResult:
         command: str | None = context.get("command")
@@ -303,6 +303,7 @@ class CommandPolicyHook:
 # Registry
 # ---------------------------------------------------------------------------
 
+
 class PolicyHookRegistry:
     """Manages a named collection of `PolicyHook` instances.
 
@@ -350,9 +351,7 @@ class PolicyHookRegistry:
 
     # -- evaluation ---------------------------------------------------------
 
-    async def check_all(
-        self, operation: str, context: dict[str, Any]
-    ) -> PolicyResult:
+    async def check_all(self, operation: str, context: dict[str, Any]) -> PolicyResult:
         """Run every registered hook and return the composite decision.
 
         Hooks are evaluated in insertion order.  The first hook that returns

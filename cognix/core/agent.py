@@ -132,8 +132,7 @@ class Agent:
                     )
                     if approval_event:
                         remaining = [
-                            t for t in response.tool_calls
-                            if t.get("id", "") != tc.get("id", "")
+                            t for t in response.tool_calls if t.get("id", "") != tc.get("id", "")
                         ]
                         self._waiting_snapshot = {
                             "context": ctx,
@@ -297,8 +296,7 @@ class Agent:
                     if approval_event:
                         # Save snapshot for resume_and_continue
                         remaining = [
-                            t for t in response.tool_calls
-                            if t.get("id", "") != tc.get("id", "")
+                            t for t in response.tool_calls if t.get("id", "") != tc.get("id", "")
                         ]
                         self._waiting_snapshot = {
                             "context": ctx,
@@ -346,11 +344,13 @@ class Agent:
         memory_options = self._workspace_memory_options()
         history_window = memory_options.get("max_history_messages", 20)
         token_budget = memory_options.get("token_budget")
-        messages.extend(ctx.get_history(
-            limit=history_window,
-            max_tokens=token_budget,
-            model=self.model,
-        ))
+        messages.extend(
+            ctx.get_history(
+                limit=history_window,
+                max_tokens=token_budget,
+                model=self.model,
+            )
+        )
 
         tools_schema = [t.to_openai_schema() for t in self.tools] if self.tools else None
 
@@ -360,6 +360,7 @@ class Agent:
         model = self.model
         if not api_base or not api_key:
             from cognix.providers.resolver import resolve_provider
+
             provider = resolve_provider(self.workspace_id)
             api_base = api_base or provider.base_url
             api_key = api_key or provider.api_key
@@ -435,11 +436,13 @@ class Agent:
         memory_options = self._workspace_memory_options()
         history_window = memory_options.get("max_history_messages", 20)
         token_budget = memory_options.get("token_budget")
-        messages.extend(ctx.get_history(
-            limit=history_window,
-            max_tokens=token_budget,
-            model=self.model,
-        ))
+        messages.extend(
+            ctx.get_history(
+                limit=history_window,
+                max_tokens=token_budget,
+                model=self.model,
+            )
+        )
 
         tools_schema = [t.to_openai_schema() for t in self.tools] if self.tools else None
 
@@ -449,6 +452,7 @@ class Agent:
         model = self.model
         if not api_base or not api_key:
             from cognix.providers.resolver import resolve_provider
+
             provider = resolve_provider(self.workspace_id)
             api_base = api_base or provider.base_url
             api_key = api_key or provider.api_key
@@ -783,8 +787,7 @@ class Agent:
             if tc_approval:
                 # Another approval needed — save snapshot and pause again
                 later_remaining = [
-                    t for t in remaining_tool_calls
-                    if t.get("id", "") != tc.get("id", "")
+                    t for t in remaining_tool_calls if t.get("id", "") != tc.get("id", "")
                 ]
                 self._waiting_snapshot = {
                     "context": ctx,
@@ -855,8 +858,7 @@ class Agent:
                     )
                     if approval_event:
                         later_remaining = [
-                            t for t in response.tool_calls
-                            if t.get("id", "") != tc.get("id", "")
+                            t for t in response.tool_calls if t.get("id", "") != tc.get("id", "")
                         ]
                         self._waiting_snapshot = {
                             "context": ctx,

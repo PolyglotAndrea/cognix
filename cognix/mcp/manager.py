@@ -182,9 +182,11 @@ class MCPRuntimeManager:
         lock = self._persistent_locks.setdefault(server.id, asyncio.Lock())
         async with lock:
             client = self._persistent_clients.get(server.id)
-            if (client is not None
-                    and client._process is not None
-                    and client._process.returncode is None):
+            if (
+                client is not None
+                and client._process is not None
+                and client._process.returncode is None
+            ):
                 return client
             # Create new persistent connection
             client = self.client_factory(server)
@@ -204,7 +206,9 @@ class MCPRuntimeManager:
                 try:
                     await client.__aexit__(None, None, None)
                 except Exception:
-                    log.warning("Error closing persistent MCP client for %s", server_id, exc_info=True)
+                    log.warning(
+                        "Error closing persistent MCP client for %s", server_id, exc_info=True
+                    )
         else:
             for sid, client in self._persistent_clients.items():
                 try:

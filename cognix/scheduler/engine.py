@@ -174,13 +174,15 @@ class SchedulerEngine:
         """List all scheduled jobs."""
         jobs = []
         for job in self._scheduler.get_jobs():
-            jobs.append({
-                "id": job.id,
-                "name": job.name,
-                "next_run": job.next_run_time,
-                "trigger": str(job.trigger),
-                "pending": job.pending,
-            })
+            jobs.append(
+                {
+                    "id": job.id,
+                    "name": job.name,
+                    "next_run": job.next_run_time,
+                    "trigger": str(job.trigger),
+                    "pending": job.pending,
+                }
+            )
         return jobs
 
     async def _execute_task(self, task_id: str, payload: dict[str, Any]) -> None:
@@ -223,10 +225,13 @@ class SchedulerEngine:
 
         try:
             timeout = getattr(task, "max_execution_seconds", 300) if task else 300
-            run = await asyncio.wait_for(
-                self._executor.execute(task_id, payload),
-                timeout=timeout or 300,
-            ) or {}
+            run = (
+                await asyncio.wait_for(
+                    self._executor.execute(task_id, payload),
+                    timeout=timeout or 300,
+                )
+                or {}
+            )
         except TimeoutError:
             logger.exception("Task %s timed out", task_id)
             run = {
@@ -246,7 +251,9 @@ class SchedulerEngine:
             attempts = max(task.run_count, 1)
             if attempts <= task.max_retries:
                 retry_at = compute_retry_at(
-                    attempts, self.retry_base_seconds, self.retry_max_seconds,
+                    attempts,
+                    self.retry_base_seconds,
+                    self.retry_max_seconds,
                 )
                 await store.complete_lease(task_id, owner=self.node_id, next_run=retry_at)
                 logger.warning(

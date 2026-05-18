@@ -109,7 +109,9 @@ class ScheduledTaskModel(Base):
     lease_owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     idempotency_key: Mapped[str | None] = mapped_column(
-        String(64), nullable=True, index=True,
+        String(64),
+        nullable=True,
+        index=True,
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow, onupdate=_utcnow)

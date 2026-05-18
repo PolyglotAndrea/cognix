@@ -122,9 +122,7 @@ class ApprovalStore:
     def complete(self, approval_id: str, result: str) -> ApprovalRequest | None:
         return self._set_status(approval_id, "completed", result=result)
 
-    def update_metadata(
-        self, approval_id: str, patch: dict[str, Any]
-    ) -> ApprovalRequest | None:
+    def update_metadata(self, approval_id: str, patch: dict[str, Any]) -> ApprovalRequest | None:
         """Merge *patch* into the approval's metadata dict."""
         approvals = self.list_all(include_resolved=True)
         updated: ApprovalRequest | None = None

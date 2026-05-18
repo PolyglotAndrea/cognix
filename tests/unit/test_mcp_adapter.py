@@ -119,7 +119,7 @@ async def test_mcp_runtime_manager_tracks_errors_and_stop_restart() -> None:
     assert status.error == "boom"
     assert status.stderr == "server failed to start"
 
-    stopped = manager.stop(server)
+    stopped = await manager.stop(server)
     assert stopped.status == "stopped"
     assert manager.status(server).status == "stopped"
 

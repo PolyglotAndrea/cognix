@@ -23,9 +23,7 @@ class PolicyAdapter(ABC):
     """Abstract interface for policy adapters that gate and record execution."""
 
     @abstractmethod
-    async def check_before_execute(
-        self, operation: str, context: dict[str, Any]
-    ) -> PolicyResult:
+    async def check_before_execute(self, operation: str, context: dict[str, Any]) -> PolicyResult:
         """Check whether an operation is allowed before execution.
 
         Args:
@@ -77,9 +75,7 @@ class CodexPolicyAdapter(PolicyAdapter):
         """
         self._policy_service = policy_service
 
-    async def check_before_execute(
-        self, operation: str, context: dict[str, Any]
-    ) -> PolicyResult:
+    async def check_before_execute(self, operation: str, context: dict[str, Any]) -> PolicyResult:
         """Delegate to the policy service method matching *operation*.
 
         Supported operation types and their mapping:

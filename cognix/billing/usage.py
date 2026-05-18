@@ -62,10 +62,14 @@ async def get_user_plan(user_id: str) -> str:
         result = await session.execute(
             select(SubscriptionModel)
             .where(SubscriptionModel.user_id == user_id)
-            .where(SubscriptionModel.status.in_([
-                SubscriptionStatus.ACTIVE,
-                SubscriptionStatus.TRIALING,
-            ]))
+            .where(
+                SubscriptionModel.status.in_(
+                    [
+                        SubscriptionStatus.ACTIVE,
+                        SubscriptionStatus.TRIALING,
+                    ]
+                )
+            )
         )
         sub = result.scalar_one_or_none()
         return sub.plan_id if sub else "free"
@@ -106,7 +110,10 @@ async def enforce_quota(user_id: str, metric: str, quantity: int = 1) -> bool:
     if not allowed:
         logger.warning(
             "Quota exceeded for user %s: %s usage %d/%d",
-            user_id, metric, current, limit,
+            user_id,
+            metric,
+            current,
+            limit,
         )
         return False
 
@@ -148,6 +155,5 @@ async def get_usage_breakdown(
         rows = result.all()
 
     return [
-        {"date": str(row.date), "metric": row.metric, "quantity": row.total or 0}
-        for row in rows
+        {"date": str(row.date), "metric": row.metric, "quantity": row.total or 0} for row in rows
     ]
