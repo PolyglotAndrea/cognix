@@ -76,6 +76,7 @@ class ApprovalStore:
         approvals = self.list_all(include_resolved=True)
         approvals.append(request)
         self._write(approvals)
+        self._emit_approval_event(request, "approval.requested")
         return request
 
     def get(self, approval_id: str) -> ApprovalRequest | None:
@@ -143,6 +144,36 @@ class ApprovalStore:
         self._write(next_rows)
         return updated
 
+    @staticmethod
+    def _emit_approval_event(approval: ApprovalRequest, event_type: str) -> None:
+        if not approval.workspace_id:
+            return
+        try:
+            from cognix.orchestrator.protocol import OrchestrationEvent, emit_orchestration_event
+
+            run_id = str(
+                approval.metadata.get("plan_id") or approval.metadata.get("run_id") or approval.id
+            )
+            emit_orchestration_event(
+                OrchestrationEvent(
+                    workspace_id=approval.workspace_id,
+                    type=event_type,
+                    stage="approval",
+                    status=approval.status,
+                    run_id=run_id,
+                    plan_id=str(approval.metadata.get("plan_id") or ""),
+                    approval_id=approval.id,
+                    agent_id=approval.agent_id,
+                    data={
+                        "tool_name": approval.tool_name,
+                        "kind": approval.kind,
+                        "reason": approval.reason,
+                    },
+                )
+            )
+        except Exception:
+            pass
+
     def _set_status(
         self,
         approval_id: str,
@@ -169,6 +200,8 @@ class ApprovalStore:
             else:
                 next_rows.append(approval)
         self._write(next_rows)
+        if updated:
+            self._emit_approval_event(updated, f"approval.{status}")
         return updated
 
     def _write(self, approvals: list[ApprovalRequest]) -> None:

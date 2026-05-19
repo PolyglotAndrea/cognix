@@ -66,6 +66,7 @@ Already implemented or mostly present:
 - API router split, `/api/v1/skills`, `/rpc`, websocket auth, and RBAC.
 - SSE event protocol: `delta`, `tool_call`, `tool_result`, `approval_request`, `error`, `done`.
 - Human-in-loop approvals with approve, reject, respond, resume, and streaming resume APIs.
+- Unified orchestration events and run snapshots for intent, plan, execution, artifact, memory, and playbook stages.
 - Claude Agent SDK bridge with workspace cwd, permission mapping, MCP config mapping, and approval callback.
 - MCP lifecycle and tool discovery/call path.
 - Connector framework for X and Instagram with OAuth, encrypted credentials, debug calls, and permission gating.

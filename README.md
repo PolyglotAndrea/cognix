@@ -174,6 +174,8 @@ cognix/
 | `GET /api/v1/workspaces/{id}/mcp/servers/{server_id}/status` | Check or refresh MCP server discovery status, including stderr tail on errors |
 | `POST /api/v1/workspaces/{id}/mcp/servers/{server_id}/restart` | Clear MCP cache and probe a server again |
 | `POST /api/v1/workspaces/{id}/mcp/servers/{server_id}/stop` | Stop local MCP runtime cache for a server |
+| `GET /api/v1/workspaces/{id}/orchestration/snapshots` | List unified orchestration run snapshots |
+| `GET /api/v1/workspaces/{id}/orchestration/snapshots/{run_id}` | Inspect the latest snapshot for an intent/plan/task run |
 | `POST /api/v1/workspaces/{id}/claude/stream` | Stream Claude Agent SDK execution events |
 | `POST /rpc` | JSON-RPC endpoint |
 | `WS /rpc/ws` | Authenticated JSON-RPC WebSocket endpoint |
@@ -218,6 +220,12 @@ Remote bot bridges now use this path while preserving existing bot callback and 
 Cold memory is stored in SQLite for retrieval and also projected into an Obsidian-compatible Markdown tree for human review. Workspace records are written under `~/.cognix/workspaces/{workspace_id}/memory/tree/{scope}/{kind}.md`; global records use `~/.cognix/memory/tree/{scope}/{kind}.md`. Each Markdown block includes the memory id, timestamps, scope, kind, source, metadata, and raw content.
 
 `ContextBuilder` supports priority, greedy, routed, and balanced assembly. Routed/balanced modes use `MemoryRouter` to decide which memory stores to query, while balanced mode uses `ContextBudgetManager` to allocate token budget across hot, cold, procedural, and deep memory sources.
+
+### Orchestration Protocol
+
+Cognix emits a unified lifecycle across `Intent -> Plan -> Approval -> Execution -> Events -> Artifact -> Memory/Playbook`. Workspace events still live in `events.jsonl`, but each orchestration-aware event now includes normalized `orchestration` metadata with `event_id`, `stage`, `status`, and `run_id`. The latest state for each run is also persisted as a snapshot under `~/.cognix/workspaces/{workspace_id}/orchestration/snapshots/{run_id}.json`.
+
+Planner, TaskExecutor, approval requests, artifact changes, and playbook extraction/promotion all publish through the same protocol. This gives the UI and remote channels one stable state model instead of stitching together unrelated logs.
 
 ### Provider Secrets
 

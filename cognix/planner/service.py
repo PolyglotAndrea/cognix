@@ -12,6 +12,7 @@ from typing import Any
 
 from cognix.local.home import CognixHome
 from cognix.local.workspace_config import WorkspaceConfigStore
+from cognix.orchestrator.protocol import OrchestrationEvent, emit_orchestration_event
 from cognix.planner.schema import PlanStep, WorkspacePlan
 
 logger = logging.getLogger(__name__)
@@ -137,6 +138,17 @@ class PlannerService:
         # Parse and validate
         plan_id = uuid.uuid4().hex[:12]
         now = datetime.now(UTC).isoformat()
+        emit_orchestration_event(
+            OrchestrationEvent(
+                workspace_id=workspace_id,
+                type="intent.received",
+                stage="intent",
+                status="received",
+                run_id=plan_id,
+                plan_id=plan_id,
+                data={"intent": user_intent, "user_id": user_id},
+            )
+        )
 
         steps = [
             PlanStep(
@@ -164,6 +176,17 @@ class PlannerService:
         )
 
         self._save_plan(plan)
+        emit_orchestration_event(
+            OrchestrationEvent(
+                workspace_id=workspace_id,
+                type="plan.proposed",
+                stage="plan",
+                status="proposed",
+                run_id=plan_id,
+                plan_id=plan_id,
+                data={"summary": plan.summary, "steps": [step.to_dict() for step in steps]},
+            )
+        )
         return plan
 
     async def apply_plan(
@@ -198,18 +221,56 @@ class PlannerService:
         plan.step_statuses = {s.id: "pending" for s in sorted_steps}
         plan.status = "executing"
         self._save_plan(plan)
+        emit_orchestration_event(
+            OrchestrationEvent(
+                workspace_id=workspace_id,
+                type="execution.started",
+                stage="execution",
+                status="running",
+                run_id=plan_id,
+                plan_id=plan_id,
+                data={"user_id": user_id, "step_count": len(sorted_steps)},
+            )
+        )
 
         for step in sorted_steps:
             plan.step_statuses[step.id] = "executing"
             self._save_plan(plan)
+            emit_orchestration_event(
+                OrchestrationEvent(
+                    workspace_id=workspace_id,
+                    type="plan.step.started",
+                    stage="plan",
+                    status="running",
+                    run_id=plan_id,
+                    plan_id=plan_id,
+                    step_id=step.id,
+                    data={"action": step.action, "description": step.description},
+                )
+            )
             try:
                 if step.action == "create_agent":
                     agent_id = await self._apply_create_agent(workspace_id, step.params)
                     created["agents"].append(agent_id)
+                    emit_orchestration_event(
+                        OrchestrationEvent(
+                            workspace_id=workspace_id,
+                            type="agent.created",
+                            stage="execution",
+                            status="created",
+                            run_id=plan_id,
+                            plan_id=plan_id,
+                            step_id=step.id,
+                            agent_id=agent_id,
+                            data={"name": step.params.get("name", "")},
+                        )
+                    )
                     agent_name = step.params.get("name", "")
                     if agent_name:
                         agent_name_to_id[agent_name] = agent_id
                 elif step.action == "create_task":
+                    step.params["_plan_id"] = plan_id
+                    step.params["_step_id"] = step.id
                     task_id = await self._apply_create_task(
                         workspace_id,
                         step.params,
@@ -218,6 +279,20 @@ class PlannerService:
                     )
                     created["tasks"].append(task_id)
                     task_steps.append((task_id, step.params, step.id))
+                    emit_orchestration_event(
+                        OrchestrationEvent(
+                            workspace_id=workspace_id,
+                            type="task.created",
+                            stage="execution",
+                            status="created",
+                            run_id=plan_id,
+                            plan_id=plan_id,
+                            step_id=step.id,
+                            task_id=task_id,
+                            agent_id=step.params.get("_resolved_agent_id", ""),
+                            data={"name": step.params.get("name", "")},
+                        )
+                    )
                 elif step.action == "install_skill":
                     skill_name = step.params.get("name", step.params.get("skill_name", ""))
                     if skill_name:
@@ -234,10 +309,34 @@ class PlannerService:
                 else:
                     raise ValueError(f"Unknown plan step action: {step.action}")
                 plan.step_statuses[step.id] = "completed"
+                emit_orchestration_event(
+                    OrchestrationEvent(
+                        workspace_id=workspace_id,
+                        type="plan.step.completed",
+                        stage="plan",
+                        status="completed",
+                        run_id=plan_id,
+                        plan_id=plan_id,
+                        step_id=step.id,
+                        data={"action": step.action},
+                    )
+                )
             except Exception as exc:
                 logger.warning("Plan step %s failed: %s", step.id, exc)
                 plan.step_statuses[step.id] = "failed"
                 failed_steps.append(step.id)
+                emit_orchestration_event(
+                    OrchestrationEvent(
+                        workspace_id=workspace_id,
+                        type="plan.step.failed",
+                        stage="plan",
+                        status="failed",
+                        run_id=plan_id,
+                        plan_id=plan_id,
+                        step_id=step.id,
+                        data={"action": step.action, "error": str(exc)},
+                    )
+                )
             self._save_plan(plan)
 
         # Trigger immediate execution for "once" tasks
@@ -270,6 +369,17 @@ class PlannerService:
 
         plan.status = "failed" if failed_steps else "applied"
         self._save_plan(plan)
+        emit_orchestration_event(
+            OrchestrationEvent(
+                workspace_id=workspace_id,
+                type="execution.failed" if failed_steps else "execution.completed",
+                stage="execution",
+                status="failed" if failed_steps else "completed",
+                run_id=plan_id,
+                plan_id=plan_id,
+                data={"created": created, "failed_steps": failed_steps, "artifacts": artifacts},
+            )
+        )
 
         return {
             "plan_id": plan_id,
@@ -286,6 +396,16 @@ class PlannerService:
             raise FileNotFoundError(f"Plan not found: {plan_id}")
         plan.status = "rejected"
         self._save_plan(plan)
+        emit_orchestration_event(
+            OrchestrationEvent(
+                workspace_id=workspace_id,
+                type="plan.rejected",
+                stage="plan",
+                status="rejected",
+                run_id=plan_id,
+                plan_id=plan_id,
+            )
+        )
         return {"plan_id": plan_id, "status": "rejected"}
 
     def confirm_plan(self, workspace_id: str, plan_id: str) -> dict:
@@ -294,6 +414,16 @@ class PlannerService:
             raise FileNotFoundError(f"Plan not found: {plan_id}")
         plan.status = "confirmed"
         self._save_plan(plan)
+        emit_orchestration_event(
+            OrchestrationEvent(
+                workspace_id=workspace_id,
+                type="plan.confirmed",
+                stage="plan",
+                status="confirmed",
+                run_id=plan_id,
+                plan_id=plan_id,
+            )
+        )
         return {"plan_id": plan_id, "status": "confirmed"}
 
     async def _trigger_task(self, task_id: str, workspace_id: str) -> dict:
@@ -557,6 +687,21 @@ class PlannerService:
         )
         async with get_session() as session:
             session.add(artifact)
+        emit_orchestration_event(
+            OrchestrationEvent(
+                workspace_id=workspace_id,
+                type="artifact.created",
+                stage="artifact",
+                status="created",
+                run_id=str(params.get("_plan_id") or task_id),
+                plan_id=str(params.get("_plan_id") or ""),
+                step_id=str(params.get("_step_id") or ""),
+                task_id=task_id,
+                agent_id=params.get("_resolved_agent_id") or params.get("agent_id") or "",
+                artifact_id=artifact_id,
+                data={"title": artifact.title, "source": artifact.source},
+            )
+        )
         return artifact_id
 
     @staticmethod
@@ -608,6 +753,8 @@ class PlannerService:
                 "message": params.get("input", ""),
                 "workspace_id": workspace_id,
                 "user_id": user_id or "",
+                "plan_id": params.get("_plan_id", ""),
+                "step_id": params.get("_step_id", ""),
             }
         )
         task = ScheduledTaskModel(

@@ -8,6 +8,13 @@ from cognix.orchestrator.patterns import (
     Router,
     Sequential,
 )
+from cognix.orchestrator.protocol import (
+    OrchestrationEvent,
+    OrchestrationSnapshot,
+    OrchestrationSnapshotStore,
+    emit_orchestration_event,
+    emit_workspace_event,
+)
 from cognix.orchestrator.workflow import (
     Workflow,
     WorkflowStep,
@@ -18,7 +25,10 @@ from cognix.orchestrator.workflow import (
 
 __all__ = [
     "Loop",
+    "OrchestrationEvent",
     "OrchestrationResult",
+    "OrchestrationSnapshot",
+    "OrchestrationSnapshotStore",
     "Parallel",
     "Pattern",
     "Router",
@@ -26,6 +36,8 @@ __all__ = [
     "Workflow",
     "WorkflowStep",
     "execute_workflow",
+    "emit_orchestration_event",
+    "emit_workspace_event",
     "parse_workflow",
     "validate_workflow",
 ]

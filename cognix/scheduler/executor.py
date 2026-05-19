@@ -43,7 +43,11 @@ class TaskExecutor:
             workspace_id,
             {
                 "type": "task.started",
+                "run_id": payload.get("plan_id") or task_id,
+                "plan_id": payload.get("plan_id", ""),
+                "step_id": payload.get("step_id", ""),
                 "task_id": task_id,
+                "agent_id": payload.get("agent_id", ""),
                 "task_type": task_type,
                 "payload": self._safe_payload(payload),
             },
@@ -109,7 +113,11 @@ class TaskExecutor:
             workspace_id,
             {
                 "type": f"task.{run['status']}",
+                "run_id": payload.get("plan_id") or task_id,
+                "plan_id": payload.get("plan_id", ""),
+                "step_id": payload.get("step_id", ""),
                 "task_id": task_id,
+                "agent_id": payload.get("agent_id", ""),
                 "task_type": task_type,
                 "duration_ms": run["duration_ms"],
                 "result": run.get("result", "")[:1000],
@@ -315,9 +323,9 @@ class TaskExecutor:
         if not workspace_id:
             return
         try:
-            from cognix.local.workspace import WorkspaceManager
+            from cognix.orchestrator.protocol import emit_workspace_event
 
-            WorkspaceManager().append_event(workspace_id, event)
+            emit_workspace_event(workspace_id, event)
         except Exception:
             logger.exception("Failed to append workspace task event")
 
@@ -428,6 +436,20 @@ class TaskExecutor:
             )
             async with get_session() as session:
                 session.add(artifact)
+            TaskExecutor._append_workspace_event(
+                str(workspace_id),
+                {
+                    "type": "artifact.created",
+                    "run_id": payload.get("plan_id") or task_id,
+                    "plan_id": payload.get("plan_id", ""),
+                    "step_id": payload.get("step_id", ""),
+                    "task_id": task_id,
+                    "agent_id": agent_id or "",
+                    "artifact_id": artifact.id,
+                    "title": artifact.title,
+                    "source": artifact.source,
+                },
+            )
             return artifact.id
         except Exception:
             logger.debug("Failed to create task artifact", exc_info=True)

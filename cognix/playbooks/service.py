@@ -81,6 +81,16 @@ class PlaybookService:
         async with get_session() as session:
             session.add(playbook)
 
+        self._emit_playbook_event(
+            "playbook.created",
+            playbook_id,
+            {
+                "source_artifact_id": artifact_id,
+                "source_task_id": artifact.task_id or "",
+                "name": playbook.name,
+                "status": "draft",
+            },
+        )
         return {
             "id": playbook_id,
             "name": playbook.name,
@@ -175,6 +185,7 @@ class PlaybookService:
                 .values(status="validated")
             )
 
+        self._emit_playbook_event("playbook.validated", playbook_id, {"status": "validated"})
         return {"id": playbook_id, "status": "validated"}
 
     async def promote_to_skill(self, playbook_id: str) -> dict:
@@ -213,11 +224,38 @@ class PlaybookService:
                 .values(status="promoted")
             )
 
+        self._emit_playbook_event(
+            "playbook.promoted",
+            playbook_id,
+            {"status": "promoted", "skill_dir": str(skill_dir)},
+        )
         return {
             "playbook_id": playbook_id,
             "skill_dir": str(skill_dir),
             "status": "promoted",
         }
+
+    def _emit_playbook_event(
+        self,
+        event_type: str,
+        playbook_id: str,
+        data: dict[str, Any] | None = None,
+    ) -> None:
+        try:
+            from cognix.orchestrator.protocol import emit_workspace_event
+
+            payload = data or {}
+            emit_workspace_event(
+                self.workspace_id,
+                {
+                    "type": event_type,
+                    "run_id": payload.get("source_task_id") or playbook_id,
+                    "playbook_id": playbook_id,
+                    **payload,
+                },
+            )
+        except Exception:
+            logger.debug("Failed to emit playbook event", exc_info=True)
 
     async def _extract_template(
         self,

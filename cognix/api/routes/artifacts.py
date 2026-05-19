@@ -56,6 +56,30 @@ def _artifact_to_dict(row: ArtifactModel) -> dict:
     }
 
 
+def _emit_artifact_event(workspace_id: str, event_type: str, artifact: ArtifactModel) -> None:
+    try:
+        from cognix.orchestrator.protocol import emit_workspace_event
+
+        emit_workspace_event(
+            workspace_id,
+            {
+                "type": event_type,
+                "run_id": (artifact.metadata_json or {}).get("plan_id")
+                or artifact.task_id
+                or artifact.id,
+                "plan_id": (artifact.metadata_json or {}).get("plan_id", ""),
+                "task_id": artifact.task_id or "",
+                "agent_id": artifact.agent_id or "",
+                "artifact_id": artifact.id,
+                "title": artifact.title,
+                "source": artifact.source,
+                "status": artifact.status,
+            },
+        )
+    except Exception:
+        pass
+
+
 @router.get("/{workspace_id}/artifacts")
 async def list_artifacts(
     workspace_id: str,
@@ -135,6 +159,7 @@ async def create_artifact(
     )
     async with get_session() as session:
         session.add(artifact)
+    _emit_artifact_event(workspace_id, "artifact.created", artifact)
     return _artifact_to_dict(artifact)
 
 
@@ -205,6 +230,7 @@ async def update_artifact(
     async with get_session() as session:
         result = await session.execute(select(ArtifactModel).where(ArtifactModel.id == artifact_id))
         row = result.scalar_one()
+    _emit_artifact_event(workspace_id, "artifact.updated", row)
     return _artifact_to_dict(row)
 
 
@@ -229,6 +255,12 @@ async def delete_artifact(
         deleted = result.scalar_one_or_none()
     if not deleted:
         raise HTTPException(404, "Artifact not found")
+    from cognix.orchestrator.protocol import emit_workspace_event
+
+    emit_workspace_event(
+        workspace_id,
+        {"type": "artifact.deleted", "run_id": artifact_id, "artifact_id": artifact_id},
+    )
     return {"deleted": artifact_id}
 
 
@@ -266,6 +298,7 @@ async def publish_artifact(
     async with get_session() as session:
         result = await session.execute(select(ArtifactModel).where(ArtifactModel.id == artifact_id))
         row = result.scalar_one()
+    _emit_artifact_event(workspace_id, "artifact.published", row)
     return _artifact_to_dict(row)
 
 
@@ -298,6 +331,7 @@ async def archive_artifact(
     async with get_session() as session:
         result = await session.execute(select(ArtifactModel).where(ArtifactModel.id == artifact_id))
         row = result.scalar_one()
+    _emit_artifact_event(workspace_id, "artifact.archived", row)
     return _artifact_to_dict(row)
 
 

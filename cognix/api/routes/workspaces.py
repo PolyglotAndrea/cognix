@@ -163,6 +163,44 @@ async def list_workspace_events(
     return manager.list_events(workspace_id, limit=limit)
 
 
+@router.get("/{workspace_id}/orchestration/snapshots")
+async def list_orchestration_snapshots(
+    workspace_id: str,
+    limit: int = 50,
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    manager = WorkspaceManager()
+    if not manager.get(workspace_id):
+        raise HTTPException(404, "Workspace not found")
+    from dataclasses import asdict
+
+    from cognix.orchestrator.protocol import OrchestrationSnapshotStore
+
+    return [
+        asdict(snapshot)
+        for snapshot in OrchestrationSnapshotStore().list(workspace_id, limit=limit)
+    ]
+
+
+@router.get("/{workspace_id}/orchestration/snapshots/{run_id}")
+async def get_orchestration_snapshot(
+    workspace_id: str,
+    run_id: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    manager = WorkspaceManager()
+    if not manager.get(workspace_id):
+        raise HTTPException(404, "Workspace not found")
+    from dataclasses import asdict
+
+    from cognix.orchestrator.protocol import OrchestrationSnapshotStore
+
+    snapshot = OrchestrationSnapshotStore().get(workspace_id, run_id)
+    if not snapshot:
+        raise HTTPException(404, "Orchestration snapshot not found")
+    return asdict(snapshot)
+
+
 @router.get("/{workspace_id}/settings")
 async def get_workspace_settings(
     workspace_id: str,
