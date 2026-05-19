@@ -8,8 +8,10 @@ const STEPS = ['purpose', 'ready'] as const
 type Step = (typeof STEPS)[number]
 
 export function OnboardingWizard({
+  workspaceId,
   onComplete,
 }: {
+  workspaceId: string
   onComplete: () => void
 }) {
   const [step, setStep] = useState<Step>('purpose')
@@ -17,10 +19,10 @@ export function OnboardingWizard({
 
   const completeMutation = useMutation({
     mutationFn: async () => {
-      await api.post('/workspaces', { name: 'My Workspace', purpose: purpose || undefined })
-      await api.patch('/workspace/settings', {
+      await api.patch(`/workspaces/${workspaceId}/settings`, {
         onboarding_completed: true,
         ui_mode: 'simple',
+        context: purpose ? { purpose } : undefined,
       })
     },
     onSuccess: onComplete,

@@ -56,6 +56,7 @@ class UpdateWorkspaceSettingsRequest(BaseModel):
     enabled_skills: list[str] | None = None
     context: dict | None = None
     ui_mode: str | None = None
+    onboarding_completed: bool | None = None
 
 
 class SetWorkspaceSkillRequest(BaseModel):

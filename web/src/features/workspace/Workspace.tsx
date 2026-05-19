@@ -116,6 +116,7 @@ export function Workspace() {
   if (workspaceId && !onboardingCompleted) {
     return (
       <OnboardingWizard
+        workspaceId={workspaceId}
         onComplete={() => refetchSettings()}
       />
     )
