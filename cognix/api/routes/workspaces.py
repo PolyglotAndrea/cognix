@@ -27,6 +27,7 @@ from cognix.local.files import WorkspaceFileStore
 from cognix.local.workflows import WorkspaceWorkflowStore
 from cognix.local.workspace import WorkspaceManager
 from cognix.local.workspace_config import WorkspaceConfigStore
+from cognix.providers.resolver import normalize_openai_base_url
 
 router = APIRouter(prefix="/api/v1/workspaces", tags=["workspaces"])
 
@@ -229,6 +230,8 @@ async def update_workspace_settings(
         api_key = llm.get("api_key", "")
         if isinstance(api_key, str) and api_key.endswith("***"):
             llm.pop("api_key", None)
+        if "base_url" in llm:
+            llm["base_url"] = normalize_openai_base_url(llm.get("base_url"))
     settings = _workspace_config(workspace_id).update_settings(updates)
     llm = settings.get("llm", {})
     if llm.get("api_key"):

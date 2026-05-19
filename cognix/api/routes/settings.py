@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from cognix.api.routes.auth import CurrentUser
 from cognix.auth.dependencies import require_permission
 from cognix.local.config import ConfigStore
+from cognix.providers.resolver import normalize_openai_base_url
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/settings", tags=["settings"])
@@ -93,7 +94,7 @@ async def update_llm_config(
     store = ConfigStore()
     kwargs: dict = {}
     if body.base_url is not None:
-        kwargs["base_url"] = body.base_url if body.base_url.strip() else None
+        kwargs["base_url"] = normalize_openai_base_url(body.base_url)
     if body.api_key is not None:
         if _is_masked_key(body.api_key):
             pass  # don't overwrite real key with masked value
@@ -119,7 +120,7 @@ async def test_llm_connection(
     cfg = store.get_llm()
     model = body.model or cfg.default_model
     api_key = _usable_request_key(body.api_key) or cfg.api_key
-    base_url = body.base_url or cfg.base_url
+    base_url = normalize_openai_base_url(body.base_url or cfg.base_url)
 
     if not api_key:
         return {"ok": False, "error": "No API key configured. Set one in Model Providers settings."}
@@ -162,7 +163,7 @@ async def discover_llm_models(
     store = ConfigStore()
     cfg = store.get_llm()
     resolved_api_key = _usable_request_key(api_key) or cfg.api_key
-    resolved_base_url = base_url or cfg.base_url
+    resolved_base_url = normalize_openai_base_url(base_url or cfg.base_url)
 
     models: list[str] = []
 
