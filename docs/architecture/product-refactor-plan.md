@@ -71,6 +71,7 @@ Already implemented or mostly present:
 - Connector framework for X and Instagram with OAuth, encrypted credentials, debug calls, and permission gating.
 - Provider-neutral channel gateway foundation with `ChannelEvent` and `MessageRouter`.
 - Four memory pipeline concept: hot, cold, procedural, deep.
+- Obsidian-compatible memory vault projection for cold memory review.
 - Local-first workspace storage under `~/.cognix`.
 
 Main gap: these capabilities are still exposed as expert controls. The product needs a higher-level command flow that composes them automatically.
@@ -454,6 +455,7 @@ Deliverables:
 - ContextBudgetManager.
 - MemoryRouter.
 - Retrieval attribution.
+- Obsidian-compatible Markdown vault projection.
 - Memory write policy and review UI.
 - Token budget telemetry.
 

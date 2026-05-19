@@ -254,6 +254,14 @@ class ColdMemoryStore:
             metadata=metadata or {},
         )
         await self.add(record)
+        try:
+            from cognix.memory.vault import MemoryVault
+
+            MemoryVault(CognixHome(self.db_path.parent)).append_record(record)
+        except Exception:
+            # The SQLite index is authoritative; vault projection should never
+            # block memory persistence.
+            pass
         return record
 
     async def search(
@@ -458,6 +466,36 @@ class ContextBuilder:
         deep = deep_memory
 
         source_details: list[dict[str, Any]] = []
+        if routing_strategy in {"routed", "balanced"}:
+            from cognix.memory.router import MemoryRouter
+
+            router = MemoryRouter()
+            category = router.classify(user_message)
+            routes = set(router.route(user_message))
+            source_details.append(
+                {
+                    "source": "memory_router",
+                    "category": category.value,
+                    "routes": sorted(routes),
+                }
+            )
+            include_cold_memory = include_cold_memory and "cold" in routes
+            include_skills = include_skills and "procedural" in routes
+            include_deep_memory = include_deep_memory and "deep" in routes
+
+        if routing_strategy == "balanced":
+            return await self._build_balanced(
+                user_message,
+                workspace_id=workspace_id,
+                hot=hot,
+                include_cold_memory=include_cold_memory,
+                include_skills=include_skills,
+                include_deep_memory=include_deep_memory,
+                token_budget=token_budget,
+                deep_memory=deep,
+                model=model,
+                source_details=source_details,
+            )
 
         if routing_strategy == "greedy":
             # Greedy: include everything, let render_system_context truncate
@@ -547,6 +585,103 @@ class ContextBuilder:
             token_budget=token_budget,
             source_details=source_details,
         )
+
+    async def _build_balanced(
+        self,
+        user_message: str,
+        *,
+        workspace_id: str | None,
+        hot: HotMemory,
+        include_cold_memory: bool,
+        include_skills: bool,
+        include_deep_memory: bool,
+        token_budget: int,
+        deep_memory: str,
+        model: str,
+        source_details: list[dict[str, Any]],
+    ) -> ContextPack:
+        from cognix.memory.budget import ContextBudgetManager
+        from cognix.memory.token_counter import count_tokens
+
+        skill_candidates = (
+            self.search_procedural_memory(user_message, workspace_id=workspace_id, limit=5)
+            if include_skills
+            else []
+        )
+        cold_candidates = (
+            await self.cold_store.search(user_message, workspace_id=workspace_id, limit=8)
+            if include_cold_memory
+            else []
+        )
+        deep = deep_memory or (self.load_deep_memory() if include_deep_memory else "")
+
+        available = {
+            "hot": count_tokens(hot.render(), model),
+            "procedural": sum(count_tokens(s.compact(), model) for s in skill_candidates),
+            "cold": sum(count_tokens(m.compact(), model) for m in cold_candidates),
+            "deep": count_tokens(deep.strip(), model),
+        }
+        allocations = {
+            allocation.source_name: allocation.token_budget
+            for allocation in ContextBudgetManager(token_budget).allocate(available)
+        }
+        source_details.append({"source": "context_budget", "allocations": allocations})
+
+        skills = self._select_by_budget(
+            skill_candidates,
+            allocations.get("procedural", 0),
+            model=model,
+            compact=lambda item: item.compact(),
+        )
+        cold = self._select_by_budget(
+            cold_candidates,
+            allocations.get("cold", 0),
+            model=model,
+            compact=lambda item: item.compact(),
+        )
+        if skills:
+            source_details.extend(
+                {"source": "procedural", "memory_id": skill.name} for skill in skills
+            )
+        if cold:
+            source_details.extend(
+                {
+                    "source": "cold_memory",
+                    "memory_id": memory.id,
+                    "category": memory.kind,
+                }
+                for memory in cold
+            )
+        if deep.strip() and allocations.get("deep", 0) <= 0:
+            deep = ""
+        elif deep.strip():
+            source_details.append({"source": "deep_memory"})
+        if hot.render():
+            source_details.append({"source": "hot_memory"})
+
+        return ContextPack(
+            hot_memory=hot,
+            cold_memories=cold,
+            procedural_memories=skills,
+            deep_memory=deep,
+            token_budget=token_budget,
+            source_details=source_details,
+        )
+
+    @staticmethod
+    def _select_by_budget(items: list[Any], budget: int, *, model: str, compact) -> list[Any]:
+        if budget <= 0:
+            return []
+        from cognix.memory.token_counter import count_tokens
+
+        selected = []
+        used = 0
+        for item in items:
+            tokens = count_tokens(compact(item), model)
+            if used + tokens <= budget:
+                selected.append(item)
+                used += tokens
+        return selected
 
     def load_hot_memory(self, *, workspace_id: str | None = None) -> HotMemory:
         workspace_memory = ""

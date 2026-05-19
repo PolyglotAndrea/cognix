@@ -8,6 +8,7 @@ from cognix.core.agent import Agent
 from cognix.local.home import CognixHome
 from cognix.local.workspace import WorkspaceManager
 from cognix.memory.pipeline import ColdMemoryStore, ContextBuilder
+from cognix.memory.vault import MemoryVault
 
 
 def test_cognix_home_ensure_creates_layout(tmp_path):
@@ -75,6 +76,58 @@ async def test_context_builder_loads_hot_cold_and_procedural_memory(tmp_path):
     assert "Python testing strategy" in cold_rendered
     assert "Alice" not in cold_rendered
     assert "Use pytest" not in cold_rendered
+
+
+@pytest.mark.asyncio
+async def test_memory_vault_projects_cold_memory_to_markdown(tmp_path):
+    home = CognixHome(tmp_path / ".cognix").ensure()
+    workspace = WorkspaceManager(home).create("Vault")
+    store = ColdMemoryStore(home.state_db)
+
+    record = await store.remember(
+        "We decided to keep provider keys encrypted and never save masked values.",
+        workspace_id=workspace.id,
+        scope="workspace",
+        kind="decision",
+        summary="Provider key safety decision",
+        metadata={"source": "test", "artifact_id": "artifact-1"},
+    )
+
+    path = MemoryVault(home).record_path(record)
+    assert path.exists()
+    content = path.read_text(encoding="utf-8")
+    assert "Provider key safety decision" in content
+    assert f"id: {record.id}" in content
+    assert "artifact-1" in content
+
+
+@pytest.mark.asyncio
+async def test_context_builder_balanced_strategy_uses_router_and_budget(tmp_path):
+    home = CognixHome(tmp_path / ".cognix").ensure()
+    (home.skills_dir / "testing.md").write_text(
+        "Use pytest and keep tests focused.",
+        encoding="utf-8",
+    )
+    workspace = WorkspaceManager(home).create("Code")
+    store = ColdMemoryStore(home.state_db)
+    await store.remember(
+        "Yesterday we discussed deployment logs.",
+        workspace_id=workspace.id,
+        summary="Deployment logs discussion",
+    )
+
+    pack = await ContextBuilder(home).build(
+        "how to run testing workflow steps",
+        workspace_id=workspace.id,
+        routing_strategy="balanced",
+        token_budget=400,
+    )
+    rendered = pack.render_system_context()
+
+    assert "Use pytest" in rendered
+    assert "Deployment logs discussion" not in rendered
+    assert any(source["source"] == "memory_router" for source in pack.source_details)
+    assert any(source["source"] == "context_budget" for source in pack.source_details)
 
 
 @pytest.mark.asyncio

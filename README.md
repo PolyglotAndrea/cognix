@@ -6,6 +6,7 @@ A Hermes Agent-based multi-agent collaboration platform built in Python. Cognix 
 
 - **Agent Runtime** — Stateful agents with tool calling, memory, and event system
 - **Four-Pipeline Memory** — Hot `USER.md`/`MEMORY.md`, cold SQLite recall, procedural skill snippets, and optional deep user model injection
+- **Inspectable Memory Vault** — Cold memories are indexed in SQLite and projected into Obsidian-compatible Markdown trees with source metadata
 - **Human-in-the-loop Approvals** — `ask` and `plan` permission modes, approval requests, approve/reject/resume API, and SSE approval events
 - **Multi-Agent Orchestration** — Sequential, Parallel, Router, and Loop patterns via YAML workflow DSL
 - **Scheduled Tasks** — Cron, interval, and one-shot scheduling with APScheduler plus runtime leases, due-task claiming, DB-backed worker dispatch, and retry backoff
@@ -122,6 +123,7 @@ cognix/
 ├── mcp/            # MCP stdio client and Tool adapter
 ├── claude/         # Claude Agent SDK runtime bridge
 ├── channels/       # Unified external channel event and message routing layer
+├── memory/         # Context routing, token budgets, cold memory, and vault projection
 ├── local/          # Local-first ~/.cognix workspace storage
 ├── api/            # FastAPI REST + WebSocket API
 ├── cli/            # Typer CLI
@@ -210,6 +212,12 @@ Workspace policy is enforced on execution paths, not only displayed in the UI. F
 External channels are normalized before they enter orchestration. Provider-specific adapters convert WeChat, Lark/Feishu, DingTalk, Telegram-style, web, or API payloads into a provider-neutral `ChannelEvent` with `channel`, `workspace_id`, `thread_id`, `sender_id`, `text`, attachments, raw payload, and metadata. `MessageRouter` then routes the event either directly to an Agent or into a one-shot scheduled Task.
 
 Remote bot bridges now use this path while preserving existing bot callback and workspace event compatibility. This keeps OpenClaw-style channel integration separate from Hermes/Cognix orchestration and makes future providers a thin adapter instead of a new execution path.
+
+### Memory Vault
+
+Cold memory is stored in SQLite for retrieval and also projected into an Obsidian-compatible Markdown tree for human review. Workspace records are written under `~/.cognix/workspaces/{workspace_id}/memory/tree/{scope}/{kind}.md`; global records use `~/.cognix/memory/tree/{scope}/{kind}.md`. Each Markdown block includes the memory id, timestamps, scope, kind, source, metadata, and raw content.
+
+`ContextBuilder` supports priority, greedy, routed, and balanced assembly. Routed/balanced modes use `MemoryRouter` to decide which memory stores to query, while balanced mode uses `ContextBudgetManager` to allocate token budget across hot, cold, procedural, and deep memory sources.
 
 ### Provider Secrets
 

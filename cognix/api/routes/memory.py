@@ -44,6 +44,7 @@ class ContextPreviewRequest(BaseModel):
     include_skills: bool = True
     include_deep_memory: bool = False
     token_budget: int = 8000
+    routing_strategy: str = "priority"
 
 
 @router.get("/hot")
@@ -122,7 +123,9 @@ async def remember(
         summary=body.summary,
         metadata=body.metadata,
     )
-    return record.__dict__
+    from cognix.memory.vault import MemoryVault
+
+    return {**record.__dict__, "vault_path": str(MemoryVault(home).record_path(record))}
 
 
 @router.post("/search")
@@ -150,12 +153,15 @@ async def context_preview(
         include_skills=body.include_skills,
         include_deep_memory=body.include_deep_memory,
         token_budget=body.token_budget,
+        routing_strategy=body.routing_strategy,
     )
+    rendered = pack.render_system_context()
     return {
-        "rendered": pack.render_system_context(),
+        "rendered": rendered,
         "cold_memories": [record.__dict__ for record in pack.cold_memories],
         "procedural_memories": [memory.__dict__ for memory in pack.procedural_memories],
         "token_budget": pack.token_budget,
+        "token_usage": pack.token_usage,
         "sources": pack.source_summary(),
     }
 

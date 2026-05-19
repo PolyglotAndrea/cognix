@@ -9,6 +9,7 @@ from cognix.memory.pipeline import (
     ProceduralMemory,
 )
 from cognix.memory.router import MemoryRouter, MessageCategory
+from cognix.memory.vault import MemoryVault
 
 __all__ = [
     "ColdMemoryRecord",
@@ -17,6 +18,7 @@ __all__ = [
     "ContextPack",
     "HotMemory",
     "MemoryRouter",
+    "MemoryVault",
     "MessageCategory",
     "ProceduralMemory",
 ]
