@@ -72,9 +72,11 @@ const SETTINGS_SECTIONS = [
 ] as const
 
 type SectionId = typeof SETTINGS_SECTIONS[number]['id']
+type SettingsScope = 'global' | 'workspace'
 
-export default function SettingsPage() {
+export default function SettingsPage({ scope = 'global' }: { scope?: SettingsScope }) {
   const queryClient = useQueryClient()
+  const isWorkspaceScope = scope === 'workspace'
   const [activeSection, setActiveSection] = useState<SectionId>('memory')
   
   // State for Memory
@@ -463,12 +465,19 @@ export default function SettingsPage() {
           <div className="space-y-8 animate-in fade-in slide-in-from-right-4 duration-300">
             <div>
               <h3 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">
-                Model Providers
-                <Badge variant="info" className="text-[9px] uppercase tracking-widest">Global</Badge>
+                {isWorkspaceScope ? 'Workspace Model Provider' : 'Model Providers'}
+                <Badge variant={isWorkspaceScope ? 'warning' : 'info'} className="text-[9px] uppercase tracking-widest">
+                  {isWorkspaceScope ? 'Workspace' : 'Global'}
+                </Badge>
               </h3>
-              <p className="text-sm text-muted-foreground mt-1">Configure default LLM provider, API credentials, and model selection.</p>
+              <p className="text-sm text-muted-foreground mt-1">
+                {isWorkspaceScope
+                  ? 'Configure the model provider used by the current workspace. Empty fields inherit global defaults.'
+                  : 'Configure the default LLM provider used when a workspace does not override it.'}
+              </p>
             </div>
 
+            {!isWorkspaceScope && (
             <div className="rounded-2xl border border-border bg-card p-6 shadow-sm space-y-6">
               <div>
                 <h4 className="text-sm font-bold text-foreground mb-4">Provider Settings</h4>
@@ -520,7 +529,9 @@ export default function SettingsPage() {
                 </div>
               </div>
             </div>
+            )}
 
+            {!isWorkspaceScope && (
             <div className="rounded-2xl border border-border bg-card p-6 shadow-sm space-y-4">
               <h4 className="text-sm font-bold text-foreground">Test Connection</h4>
               <p className="text-xs text-muted-foreground">Verify your API key works by sending a minimal request.</p>
@@ -559,7 +570,9 @@ export default function SettingsPage() {
                 </div>
               )}
             </div>
+            )}
 
+            {!isWorkspaceScope && (
             <div className="rounded-2xl border border-border bg-card p-6 shadow-sm space-y-4">
               <div className="flex items-center justify-between">
                 <h4 className="text-sm font-bold text-foreground">Available Models</h4>
@@ -592,17 +605,18 @@ export default function SettingsPage() {
                 <p className="text-xs text-muted-foreground/60">Click "Discover Models" to list available models from your provider.</p>
               )}
             </div>
+            )}
 
             {/* Workspace-scoped provider override */}
-            {workspace && (
-              <div className="space-y-6 pt-4 border-t border-border">
+            {isWorkspaceScope && workspace && (
+              <div className="space-y-6">
                 <div>
                   <h3 className="text-lg font-bold tracking-tight text-foreground flex items-center gap-2">
-                    Workspace Provider
+                    Current Workspace
                     <Badge variant="warning" className="text-[9px] uppercase tracking-widest">Override</Badge>
                   </h3>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Override the global provider for this workspace. Leave empty to use global defaults.
+                    Override global provider defaults only for {workspace.name}. Leave fields empty to inherit global settings.
                   </p>
                 </div>
 

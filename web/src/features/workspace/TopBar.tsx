@@ -265,8 +265,8 @@ export function TopBar() {
                         <Settings className="h-4 w-4" />
                       </div>
                       <div className="flex-1 text-left">
-                        <div className="font-bold">Account Settings</div>
-                        <div className="text-[10px] font-medium opacity-60">Profile & Security</div>
+                        <div className="font-bold">Workspace Settings</div>
+                        <div className="text-[10px] font-medium opacity-60">Models & Memory</div>
                       </div>
                     </button>
                   </div>
@@ -332,11 +332,11 @@ export function TopBar() {
       <Modal 
         isOpen={activeModal === 'settings'} 
         onClose={() => setActiveModal(null)} 
-        title="Workspace Configuration"
+        title="Workspace Settings"
         size="xl"
       >
         <Suspense fallback={<div className="py-20 flex flex-col items-center gap-4 text-muted-foreground"><Spinner /><p className="text-sm animate-pulse">Accessing runtime settings...</p></div>}>
-          <SettingsPage />
+          <SettingsPage scope="workspace" />
         </Suspense>
       </Modal>
     </>
