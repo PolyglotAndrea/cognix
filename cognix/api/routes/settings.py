@@ -151,23 +151,31 @@ async def list_models(
     body: ListModelsRequest,
     user: CurrentUser = Depends(require_settings_read),
 ) -> dict:
+    return {"models": await discover_llm_models(base_url=body.base_url, api_key=body.api_key)}
+
+
+async def discover_llm_models(
+    base_url: str | None = None,
+    api_key: str | None = None,
+) -> list[str]:
+    """Discover configured LLM provider models with conservative fallbacks."""
     store = ConfigStore()
     cfg = store.get_llm()
-    api_key = _usable_request_key(body.api_key) or cfg.api_key
-    base_url = body.base_url or cfg.base_url
+    resolved_api_key = _usable_request_key(api_key) or cfg.api_key
+    resolved_base_url = base_url or cfg.base_url
 
     models: list[str] = []
 
     # Try fetching from the provider's /models endpoint directly
-    if base_url:
+    if resolved_base_url:
         try:
             import httpx
 
             headers: dict[str, str] = {}
-            if api_key:
-                headers["Authorization"] = f"Bearer {api_key}"
+            if resolved_api_key:
+                headers["Authorization"] = f"Bearer {resolved_api_key}"
             async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.get(f"{base_url.rstrip('/')}/models", headers=headers)
+                resp = await client.get(f"{resolved_base_url.rstrip('/')}/models", headers=headers)
                 if resp.status_code == 200:
                     data = resp.json()
                     items = data.get("data", data) if isinstance(data, dict) else data
@@ -189,4 +197,4 @@ async def list_models(
     if not models:
         models = COMMON_MODELS
 
-    return {"models": sorted(models)}
+    return sorted(models)
