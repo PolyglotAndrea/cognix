@@ -295,7 +295,7 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: DragHandlePr
   }
 
   return (
-    <Panel className="w-80 shrink-0 border-l border-border bg-card/50 backdrop-blur-xl h-full flex flex-col shadow-2xl">
+    <Panel className="w-full min-w-0 shrink-0 border-l border-r-0 border-border bg-card/50 backdrop-blur-xl h-full flex flex-col shadow-2xl">
       <PanelHeader dragHandleProps={dragHandleProps} className="justify-between px-4 h-14 border-b border-border/50 shrink-0">
         <span className="text-xs font-black uppercase tracking-widest text-foreground">Panel</span>
         <button onClick={toggleRightPanel} className="p-2 rounded-xl hover:bg-muted text-muted-foreground hover:text-foreground transition-all shrink-0">
@@ -303,7 +303,7 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: DragHandlePr
         </button>
       </PanelHeader>
 
-      <div className="border-b border-border/50 shrink-0 overflow-y-auto max-h-48 scrollbar-hide">
+      <div className="border-b border-border/50 shrink-0 bg-card/80">
         {TAB_GROUPS.map((group) => (
           <div key={group.key}>
             <button
@@ -321,21 +321,21 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: DragHandlePr
               )}
             </button>
             {openGroups[group.key] && (
-              <div className="pb-1">
+              <div className="grid grid-cols-2 gap-1 px-3 pb-2">
                 {group.tabs.map((tab) => (
                   <button
                     key={tab.key}
                     onClick={() => setRightPanelTab(tab.key)}
-                    className={`flex items-center gap-2.5 w-full px-4 py-1.5 text-[11px] font-semibold transition-all ${
+                    className={`min-w-0 flex items-center gap-2 rounded-lg px-2.5 py-2 text-[11px] font-semibold transition-all ${
                       rightPanelTab === tab.key
-                        ? 'bg-primary/10 text-foreground border-r-2 border-primary'
+                        ? 'bg-primary/10 text-foreground ring-1 ring-primary/20'
                         : 'text-muted-foreground hover:text-foreground hover:bg-muted/30'
                     }`}
                   >
-                    <tab.icon className={`h-3.5 w-3.5 ${rightPanelTab === tab.key ? tab.color : ''}`} />
-                    {tab.label}
+                    <tab.icon className={`h-3.5 w-3.5 shrink-0 ${rightPanelTab === tab.key ? tab.color : ''}`} />
+                    <span className="min-w-0 truncate">{tab.label}</span>
                     {tab.key === 'approvals' && pendingCount > 0 && (
-                      <span className="ml-auto min-w-4 h-4 px-1 rounded-full bg-amber-500 text-white text-[8px] font-bold flex items-center justify-center">
+                      <span className="ml-auto min-w-4 h-4 px-1 rounded-full bg-amber-500 text-white text-[8px] font-bold flex items-center justify-center shrink-0">
                         {pendingCount}
                       </span>
                     )}
