@@ -51,5 +51,8 @@ htmlcov/
 # OpenClaude
 .openclaude/
 
+# Local Cognix development state
+.cognix-dev/
+
 # Ruff cache
 .ruff_cache/
