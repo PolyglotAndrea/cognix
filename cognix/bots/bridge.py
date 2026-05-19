@@ -5,15 +5,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-import uuid
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
 
-from cognix.api.state import get_agent_runtime
-from cognix.core.context import Context
+from cognix.channels import ChannelEvent, ChannelRouteTarget, MessageRouter
 from cognix.local.bots import BotConfig, BotConfigStore
 from cognix.local.workspace import WorkspaceManager
 
@@ -71,57 +68,12 @@ class BotBridgeService:
 
     async def enqueue_task(self, bot: BotConfig, message: BotMessage) -> str:
         """Queue a remote bot message as a one-shot scheduled Agent task."""
-        from cognix.api.state import get_scheduler_engine, schedule_task_in_engine
-        from cognix.scheduler.store import TaskStore
-        from cognix.storage.models import TaskType
-
-        run_at = datetime.now(UTC) + timedelta(seconds=1)
-        task_id = f"bot-{uuid.uuid4().hex[:12]}"
-        payload = {
-            "task_type": "agent_call",
-            "agent_id": bot.agent_id,
-            "workspace_id": bot.workspace_id,
-            "message": message.text,
-            "remote_bot": {
-                "provider": bot.provider,
-                "bot_id": bot.id,
-                "sender": message.sender,
-                "chat_id": message.chat_id,
-                "session_key": self.session_key(bot, message),
-            },
-        }
-        schedule = run_at.isoformat()
-        await TaskStore().create(
-            task_id=task_id,
-            name=f"{bot.provider}:{bot.name}",
-            task_type=TaskType.AGENT_CALL,
-            schedule=schedule,
-            payload=payload,
-            max_retries=int(bot.metadata.get("task_max_retries", 1)),
+        result = await MessageRouter().route(
+            self.channel_event(bot, message),
+            self.route_target(bot),
+            dispatch_mode="task",
         )
-        engine = get_scheduler_engine()
-        if engine:
-            task_name = f"{bot.provider}:{bot.name}"
-            schedule_task_in_engine(engine, task_id, schedule, payload, name=task_name)
-
-        try:
-            WorkspaceManager().append_event(
-                bot.workspace_id,
-                {
-                    "type": "bot.task_queued",
-                    "provider": bot.provider,
-                    "bot_id": bot.id,
-                    "agent_id": bot.agent_id,
-                    "task_id": task_id,
-                    "sender": message.sender,
-                    "chat_id": message.chat_id,
-                    "session_key": self.session_key(bot, message),
-                    "message": message.text,
-                },
-            )
-        except Exception:
-            logger.exception("Failed to append bot task queue event")
-        return task_id
+        return result.task_id
 
     async def dispatch(self, bot: BotConfig, message: BotMessage) -> str:
         from cognix.bots.health import get_health_monitor
@@ -156,47 +108,13 @@ class BotBridgeService:
         raise last_exc  # type: ignore[misc]
 
     async def _dispatch_once(self, bot: BotConfig, message: BotMessage) -> str:
-        agent = await get_agent_runtime(bot.agent_id)
-        if not agent:
-            raise ValueError(f"Agent '{bot.agent_id}' not found")
-        agent.workspace_id = bot.workspace_id
-        await self.attach_workspace_runtime_tools(agent)
-        session_key = self.session_key(bot, message)
-        context = Context(
-            conversation_id=session_key,
-            metadata={
-                "remote_bot": {
-                    "provider": bot.provider,
-                    "bot_id": bot.id,
-                    "sender": message.sender,
-                    "chat_id": message.chat_id,
-                    "session_key": session_key,
-                },
-                "next_user_content": self.remote_user_content(bot, message),
-            },
+        result = await MessageRouter().route(
+            self.channel_event(bot, message),
+            self.route_target(bot),
+            dispatch_mode="direct",
         )
-        response = await agent.run(message.text, context=context)
-        await self.post_response_callback(bot, message, response.content)
-
-        try:
-            WorkspaceManager().append_event(
-                bot.workspace_id,
-                {
-                    "type": "bot.message",
-                    "provider": bot.provider,
-                    "bot_id": bot.id,
-                    "agent_id": bot.agent_id,
-                    "sender": message.sender,
-                    "chat_id": message.chat_id,
-                    "session_key": session_key,
-                    "message": message.text,
-                    "response": response.content,
-                },
-            )
-        except Exception:
-            pass
-
-        return response.content
+        await self.post_response_callback(bot, message, result.response)
+        return result.response
 
     async def post_response_callback(
         self,
@@ -293,8 +211,43 @@ class BotBridgeService:
 
     @staticmethod
     def session_key(bot: BotConfig, message: BotMessage) -> str:
-        remote_id = message.chat_id or message.sender or "direct"
-        return f"{bot.provider}:{bot.id}:{remote_id}"
+        return BotBridgeService.channel_event(bot, message).session_key
+
+    @staticmethod
+    def channel_event(bot: BotConfig, message: BotMessage) -> ChannelEvent:
+        session_key = f"{bot.provider}:{bot.id}:{message.chat_id or message.sender or 'direct'}"
+        return ChannelEvent(
+            channel=bot.provider,
+            workspace_id=bot.workspace_id,
+            text=message.text,
+            sender_id=message.sender,
+            thread_id=message.chat_id,
+            raw=message.raw,
+            metadata={
+                "source": "bot",
+                "source_id": bot.id,
+                "bot_id": bot.id,
+                "bot_name": bot.name,
+                "remote_bot": {
+                    "provider": bot.provider,
+                    "bot_id": bot.id,
+                    "sender": message.sender,
+                    "chat_id": message.chat_id,
+                    "session_key": session_key,
+                },
+            },
+        )
+
+    @staticmethod
+    def route_target(bot: BotConfig) -> ChannelRouteTarget:
+        return ChannelRouteTarget(
+            workspace_id=bot.workspace_id,
+            agent_id=bot.agent_id,
+            target_id=bot.id,
+            name=bot.name,
+            event_prefix="bot",
+            metadata=bot.metadata,
+        )
 
     @staticmethod
     def format_response(provider: str, text: str) -> dict[str, Any]:

@@ -36,7 +36,8 @@ The current Hermes runtime remains the control plane. Claude Agent SDK, Codex-st
 
 ```mermaid
 flowchart TD
-    U["User intent"] --> WC["Workspace command center"]
+    CH["Channel gateway<br/>Web / API / WeChat / Telegram / Lark"] --> U["User intent"]
+    U --> WC["Workspace command center"]
     WC --> GATE["Entitlement + BYOK gate"]
     GATE --> PLAN["Intent planner"]
     PLAN --> CONFIRM["Plan confirmation"]
@@ -68,6 +69,7 @@ Already implemented or mostly present:
 - Claude Agent SDK bridge with workspace cwd, permission mapping, MCP config mapping, and approval callback.
 - MCP lifecycle and tool discovery/call path.
 - Connector framework for X and Instagram with OAuth, encrypted credentials, debug calls, and permission gating.
+- Provider-neutral channel gateway foundation with `ChannelEvent` and `MessageRouter`.
 - Four memory pipeline concept: hot, cold, procedural, deep.
 - Local-first workspace storage under `~/.cognix`.
 
@@ -502,6 +504,8 @@ Priority: P2
 
 Deliverables:
 
+- Provider-neutral channel event model.
+- MessageRouter for direct Agent dispatch and async Task dispatch.
 - Complete signature verification per platform.
 - Group chat context binding.
 - Async task trigger from bot messages.

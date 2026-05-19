@@ -13,6 +13,7 @@ A Hermes Agent-based multi-agent collaboration platform built in Python. Cognix 
 - **Skills + MCP Tools** — Local skills, workspace MCP server config, stdio MCP tool discovery/status caching, and Agent tool mounting
 - **Claude Agent SDK Bridge** — Workspace-scoped Claude Agent SDK execution with permission mode, MCP config mapping, and approval callbacks
 - **Remote Bot Bridge** — Lark/Feishu, DingTalk, and WeChat entry points with signature-aware webhook handling, async dispatch, chat context binding, and response callbacks
+- **Channel Gateway** — Provider-neutral `ChannelEvent` and `MessageRouter` normalize remote messages before Agent or Task execution
 - **CLI + API** — Typer CLI and FastAPI REST/WebSocket API
 - **OAuth2 Authentication** — Google and GitHub providers with JWT tokens and API keys
 - **RBAC Permissions** — Admin, user, and viewer roles
@@ -120,6 +121,7 @@ cognix/
 ├── skills/         # Skills system (local + marketplace)
 ├── mcp/            # MCP stdio client and Tool adapter
 ├── claude/         # Claude Agent SDK runtime bridge
+├── channels/       # Unified external channel event and message routing layer
 ├── local/          # Local-first ~/.cognix workspace storage
 ├── api/            # FastAPI REST + WebSocket API
 ├── cli/            # Typer CLI
@@ -202,6 +204,12 @@ Cognix normalizes Agent permission modes at runtime:
 Approval requests are stored locally and can be typed as `tool_permission`, `plan_confirmation`, or `question`. Hermes Agent waiting snapshots are persisted into approval metadata so approved core tool calls can continue through `/api/v1/approvals/{id}/resume-and-continue/stream` after a runtime reload when the serialized context is still valid. Claude SDK approvals can resume as SSE through `/api/v1/approvals/{id}/resume/stream` or the shared resume-and-continue API.
 
 Workspace policy is enforced on execution paths, not only displayed in the UI. File preview/write/delete APIs, MCP debug calls, connector debug calls, scheduled webhooks/skill execution, mounted MCP/connector Agent tools, and Claude SDK file/command/network/MCP tools all pass through `WorkspacePolicyService` before side effects run.
+
+### Channel Gateway
+
+External channels are normalized before they enter orchestration. Provider-specific adapters convert WeChat, Lark/Feishu, DingTalk, Telegram-style, web, or API payloads into a provider-neutral `ChannelEvent` with `channel`, `workspace_id`, `thread_id`, `sender_id`, `text`, attachments, raw payload, and metadata. `MessageRouter` then routes the event either directly to an Agent or into a one-shot scheduled Task.
+
+Remote bot bridges now use this path while preserving existing bot callback and workspace event compatibility. This keeps OpenClaw-style channel integration separate from Hermes/Cognix orchestration and makes future providers a thin adapter instead of a new execution path.
 
 ### Provider Secrets
 
