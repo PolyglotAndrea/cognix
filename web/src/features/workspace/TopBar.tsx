@@ -6,6 +6,7 @@ import { api } from '@/shared/api/client'
 import { useAuthStore } from '@/features/auth/store'
 import { useThemeStore } from '@/shared/store/theme'
 import { Modal, Spinner } from '@/shared/ui'
+import { useCurrentWorkspace } from './useCurrentWorkspace'
 
 // Direct imports to avoid potential lazy loading issues in dev
 import TaskList from '@/features/tasks/TaskList'
@@ -35,6 +36,7 @@ export function TopBar() {
   const user = useAuthStore((s) => s.user)
   const { logout } = useAuthStore()
   const { theme, setTheme } = useThemeStore()
+  const { workspaces, workspace, setSelectedWorkspace } = useCurrentWorkspace()
   const navigate = useNavigate()
 
   const handleLogout = () => {
@@ -89,6 +91,28 @@ export function TopBar() {
           </div>
           <span className="font-bold text-foreground text-base tracking-tight">Cognix</span>
         </Link>
+
+        <div className="hidden lg:flex min-w-0 max-w-xs flex-col gap-1 shrink-0">
+          <label className="text-[9px] font-black uppercase tracking-[0.18em] text-muted-foreground/50 px-1">
+            Workspace
+          </label>
+          <select
+            value={workspace?.id || ''}
+            onChange={(event) => setSelectedWorkspace(event.target.value || null)}
+            className="h-8 max-w-xs rounded-lg border border-border bg-muted/50 px-2.5 text-xs font-semibold text-foreground outline-none transition-all hover:bg-muted focus:border-primary/40 focus:ring-2 focus:ring-primary/20"
+            title={workspace?.path || 'No workspace selected'}
+          >
+            {workspaces.length === 0 ? (
+              <option value="">No workspace</option>
+            ) : (
+              workspaces.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))
+            )}
+          </select>
+        </div>
 
         {/* Skills Search */}
         <div className="flex-1 flex justify-center" ref={dropdownRef}>

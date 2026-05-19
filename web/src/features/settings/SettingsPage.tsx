@@ -19,11 +19,7 @@ import {
 } from 'lucide-react'
 import { api, authApi } from '@/shared/api/client'
 import { Badge, Button, Input } from '@/shared/ui'
-
-interface WorkspaceInfo {
-  id: string
-  name: string
-}
+import { useCurrentWorkspace } from '@/features/workspace/useCurrentWorkspace'
 
 interface AgentInfo {
   id: string
@@ -110,11 +106,7 @@ export default function SettingsPage({ scope = 'global' }: { scope?: SettingsSco
     queryFn: () => authApi.get('/api-keys').then((r) => r.data),
   })
 
-  const { data: workspaces = [] } = useQuery<WorkspaceInfo[]>({
-    queryKey: ['workspaces'],
-    queryFn: () => api.get('/workspaces').then((r) => r.data),
-  })
-  const workspace = workspaces[0]
+  const { workspace } = useCurrentWorkspace()
 
   const { data: agents = [] } = useQuery<AgentInfo[]>({
     queryKey: ['agents'],

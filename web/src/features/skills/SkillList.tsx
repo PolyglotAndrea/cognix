@@ -15,7 +15,8 @@ import {
 import { api } from '@/shared/api/client'
 import { Badge, Button, Input, Spinner } from '@/shared/ui'
 import { MCPToolPanel } from './MCPToolPanel'
-import type { MCPServer, MCPServerStatus, WorkspaceInfo, WorkspaceSkill } from './types'
+import { useCurrentWorkspace } from '@/features/workspace/useCurrentWorkspace'
+import type { MCPServer, MCPServerStatus, WorkspaceSkill } from './types'
 
 export default function SkillList() {
   const queryClient = useQueryClient()
@@ -23,11 +24,7 @@ export default function SkillList() {
   const [serverCommand, setServerCommand] = useState('')
   const [serverArgs, setServerArgs] = useState('')
 
-  const { data: workspaces = [], isLoading: workspacesLoading } = useQuery<WorkspaceInfo[]>({
-    queryKey: ['workspaces'],
-    queryFn: () => api.get('/workspaces').then((r) => r.data),
-  })
-  const workspace = workspaces[0]
+  const { workspace, isLoading: workspacesLoading } = useCurrentWorkspace()
 
   const { data: skills = [], isLoading: skillsLoading } = useQuery<WorkspaceSkill[]>({
     queryKey: ['workspace-skills', workspace?.id],

@@ -23,17 +23,13 @@ import { useWorkspaceStore } from './store'
 import { TaskComposer } from './TaskComposer'
 import { Spinner, Badge, RichMessage, Panel, PanelHeader } from '@/shared/ui'
 import type { DragHandleProps } from './types'
+import { useCurrentWorkspace } from './useCurrentWorkspace'
 
 interface Agent {
   id: string
   name: string
   model: string
   system_prompt?: string
-}
-
-interface WorkspaceInfo {
-  id: string
-  name: string
 }
 
 interface ChatSession {
@@ -101,15 +97,11 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleP
   })
 
   const {
-    data: workspaces,
+    workspaces,
     isLoading: workspacesLoading,
     refetch: refetchWorkspaces,
-  } = useQuery<WorkspaceInfo[]>({
-    queryKey: ['workspaces'],
-    queryFn: () => api.get('/workspaces').then((r) => r.data),
-  })
-
-  const workspaceId = workspaces?.[0]?.id || null
+    workspaceId,
+  } = useCurrentWorkspace()
   const availableModels = Array.from(
     new Set([agent?.model || 'gpt-4o', 'gpt-4o-mini', 'gpt-4o', 'claude-3.5-sonnet'])
   )

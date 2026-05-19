@@ -3,11 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Clock, FileCode2, Pause, Play, Plus, RotateCw, Trash2, XCircle, type LucideIcon } from 'lucide-react'
 import { api } from '@/shared/api/client'
 import { Badge, Button, Input, Spinner } from '@/shared/ui'
-
-interface WorkspaceInfo {
-  id: string
-  name: string
-}
+import { useCurrentWorkspace } from '@/features/workspace/useCurrentWorkspace'
 
 interface ScheduledTask {
   id: string
@@ -50,11 +46,7 @@ export default function TaskList() {
   const [runOutput, setRunOutput] = useState<Record<string, string>>({})
   const [taskRunOutput, setTaskRunOutput] = useState<Record<string, string>>({})
 
-  const { data: workspaces = [] } = useQuery<WorkspaceInfo[]>({
-    queryKey: ['workspaces'],
-    queryFn: () => api.get('/workspaces').then((r) => r.data),
-  })
-  const workspace = workspaces[0]
+  const { workspace } = useCurrentWorkspace()
 
   const { data: tasks = [], isLoading: tasksLoading } = useQuery<ScheduledTask[]>({
     queryKey: ['tasks'],

@@ -27,6 +27,7 @@ import { SimpleMode } from './SimpleMode'
 import { api } from '@/shared/api/client'
 import { cn } from '@/shared/lib/cn'
 import type { DragHandleProps } from './types'
+import { useCurrentWorkspace } from './useCurrentWorkspace'
 
 interface SortablePanelProps {
   id: string
@@ -73,12 +74,7 @@ function SortablePanel({ id, children, className }: SortablePanelProps) {
 export function Workspace() {
   const [items, setItems] = useState(['left', 'center', 'right'])
 
-  const { data: workspaces } = useQuery<Array<{ id: string }>>({
-    queryKey: ['workspaces'],
-    queryFn: () => api.get('/workspaces').then((r) => r.data),
-  })
-
-  const workspaceId = workspaces?.[0]?.id
+  const { workspaceId } = useCurrentWorkspace()
 
   const { data: settings, refetch: refetchSettings } = useQuery({
     queryKey: ['workspace-settings', workspaceId],

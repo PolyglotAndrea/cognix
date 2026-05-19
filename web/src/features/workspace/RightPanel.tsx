@@ -35,6 +35,7 @@ import { PlaybookPanel } from './PlaybookPanel'
 import { BotHealthPanel } from './BotHealthPanel'
 import { RuntimePanel } from './RuntimePanel'
 import type { DragHandleProps } from './types'
+import { useCurrentWorkspace } from './useCurrentWorkspace'
 
 type TabKey = 'approvals' | 'tasks' | 'files' | 'events' | 'results' | 'artifacts' | 'playbooks' | 'policy' | 'audit' | 'bots' | 'runtime' | 'logs' | 'json'
 
@@ -109,11 +110,6 @@ interface TaskRun {
   started_at?: string | null
 }
 
-interface WorkspaceInfo {
-  id: string
-  name: string
-}
-
 interface WorkspaceFile {
   path: string
   name: string
@@ -170,12 +166,7 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: DragHandlePr
     Object.fromEntries(TAB_GROUPS.map((g) => [g.key, g.defaultOpen]))
   )
   
-  const { data: workspaces = [] } = useQuery<WorkspaceInfo[]>({
-    queryKey: ['workspaces'],
-    queryFn: () => api.get('/workspaces').then((r) => r.data),
-  })
-  
-  const workspaceId = workspaces[0]?.id
+  const { workspaceId } = useCurrentWorkspace()
   
   const { data: tasks = [], isLoading: tasksLoading } = useQuery<TaskSummary[]>({
     queryKey: ['workspace-task-status'],
@@ -590,12 +581,12 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: DragHandlePr
 
         {/* Bots Tab */}
         {rightPanelTab === 'bots' && (
-          <BotHealthPanel workspaceId={workspaceId} />
+          <BotHealthPanel workspaceId={workspaceId || undefined} />
         )}
 
         {/* Runtime Tab */}
         {rightPanelTab === 'runtime' && (
-          <RuntimePanel workspaceId={workspaceId} />
+          <RuntimePanel workspaceId={workspaceId || undefined} />
         )}
 
         {/* JSON Tab */}

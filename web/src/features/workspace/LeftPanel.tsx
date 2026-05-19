@@ -11,6 +11,7 @@ import { api } from '@/shared/api/client'
 import { useWorkspaceStore } from './store'
 import { Button, Input, Panel, PanelBody, Badge, PanelHeader } from '@/shared/ui'
 import type { DragHandleProps } from './types'
+import { useCurrentWorkspace } from './useCurrentWorkspace'
 
 interface Agent {
   id: string
@@ -64,11 +65,7 @@ export function LeftPanel({ dragHandleProps }: { dragHandleProps?: DragHandlePro
   })
 
   // Workspace skills
-  const { data: workspaces = [] } = useQuery<Array<{ id: string }>>({
-    queryKey: ['workspaces'],
-    queryFn: () => api.get('/workspaces').then((r) => r.data),
-  })
-  const workspaceId = workspaces[0]?.id
+  const { workspaceId } = useCurrentWorkspace()
 
   interface SkillInfo { name: string; description?: string; enabled: boolean }
   const { data: skills = [] } = useQuery<SkillInfo[]>({
