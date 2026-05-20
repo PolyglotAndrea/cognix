@@ -654,8 +654,11 @@ async def list_code_projects(
 ) -> list[dict]:
     from cognix.local.code_sandbox import CodeSandboxStore
 
-    store = CodeSandboxStore(workspace_id)
-    return [store.to_dict(project) for project in store.list_all()]
+    try:
+        store = CodeSandboxStore(workspace_id)
+        return [store.to_dict(project) for project in store.list_all()]
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from None
 
 
 @router.post("/{workspace_id}/code-projects", status_code=201)
@@ -674,6 +677,8 @@ async def create_code_project(
             start_command=body.start_command,
             metadata=body.metadata,
         )
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from None
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from None
     return CodeSandboxStore.to_dict(project)
@@ -1457,7 +1462,7 @@ async def get_workspace_policy(
     user: CurrentUser = Depends(get_current_user),
 ) -> dict:
     """Get workspace sandbox policy settings."""
-    store = WorkspaceConfigStore(workspace_id)
+    store = _workspace_config(workspace_id)
     settings = store.get_settings()
     return settings.get("policy", {})
 
@@ -1479,7 +1484,7 @@ async def update_workspace_policy(
     user: CurrentUser = Depends(require_skills_write),
 ) -> dict:
     """Update workspace sandbox policy settings."""
-    store = WorkspaceConfigStore(workspace_id)
+    store = _workspace_config(workspace_id)
     updates = {"policy": body.model_dump(exclude_unset=True)}
     store.update_settings(updates)
     return store.get_settings().get("policy", {})

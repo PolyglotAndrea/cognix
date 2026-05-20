@@ -38,3 +38,14 @@ def test_code_sandbox_rejects_path_escape(tmp_path) -> None:
         assert "escapes" in str(exc)
     else:
         raise AssertionError("Expected ValueError for path escape")
+
+
+def test_code_sandbox_requires_existing_workspace(tmp_path) -> None:
+    home = CognixHome(tmp_path / ".cognix").ensure()
+    try:
+        CodeSandboxStore("non-existent-id", home=home)
+    except FileNotFoundError as exc:
+        assert "Workspace not found" in str(exc)
+    else:
+        raise AssertionError("Expected FileNotFoundError")
+

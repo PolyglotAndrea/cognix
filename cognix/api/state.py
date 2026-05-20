@@ -128,6 +128,20 @@ async def restore_active_tasks(engine: SchedulerEngine) -> None:
     tasks = await store.list_all(state=TaskState.ACTIVE)
     for task in tasks:
         try:
+            if task.schedule.strip() == "once":
+                if task.last_run:
+                    await store.update_state(task.id, TaskState.COMPLETED)
+                    logger.info(
+                        "Marked completed immediate one-shot task %s during restore",
+                        task.id,
+                    )
+                else:
+                    logger.warning(
+                        "Skipping active immediate one-shot task %s during restore; "
+                        "no run timestamp",
+                        task.id,
+                    )
+                continue
             payload = json.loads(task.payload) if isinstance(task.payload, str) else task.payload
             if task.task_type and "task_type" not in payload:
                 payload["task_type"] = task.task_type.value

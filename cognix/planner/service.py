@@ -477,6 +477,8 @@ class PlannerService:
         # Trigger immediate execution for "once" tasks
         execution_results = []
         artifacts: list[str] = []
+        approval_ids: list[str] = []
+        needs_input_steps: list[str] = []
         for task_id, params, step_id in task_steps:
             if step_id in failed_steps:
                 continue
@@ -486,6 +488,10 @@ class PlannerService:
                 self._save_plan(plan)
                 exec_result = await self._trigger_task(task_id, workspace_id)
                 execution_results.append({"task_id": task_id, **exec_result})
+                task_failed = bool(
+                    exec_result.get("status") == "failure" or exec_result.get("error")
+                )
+                await self._finalize_once_task(task_id, failed=task_failed)
                 if exec_result.get("status") == "failure" or exec_result.get("error"):
                     plan.step_statuses[step_id] = "failed"
                     failed_steps.append(step_id)
@@ -500,19 +506,37 @@ class PlannerService:
                 )
                 if artifact_id:
                     artifacts.append(artifact_id)
+                if self._result_needs_input(exec_result):
+                    approval_id = self._create_question_approval(
+                        workspace_id=workspace_id,
+                        plan_id=plan_id,
+                        task_id=task_id,
+                        params=params,
+                        exec_result=exec_result,
+                        artifact_id=artifact_id,
+                    )
+                    if approval_id:
+                        approval_ids.append(approval_id)
+                        needs_input_steps.append(step_id)
                 self._save_plan(plan)
 
-        plan.status = "failed" if failed_steps else "applied"
+        plan.status = "failed" if failed_steps else "needs_input" if approval_ids else "applied"
         self._save_plan(plan)
         emit_orchestration_event(
             OrchestrationEvent(
                 workspace_id=workspace_id,
                 type="execution.failed" if failed_steps else "execution.completed",
-                stage="execution",
-                status="failed" if failed_steps else "completed",
+                stage="approval" if approval_ids else "execution",
+                status="failed" if failed_steps else "needs_input" if approval_ids else "completed",
                 run_id=plan_id,
                 plan_id=plan_id,
-                data={"created": created, "failed_steps": failed_steps, "artifacts": artifacts},
+                data={
+                    "created": created,
+                    "failed_steps": failed_steps,
+                    "artifacts": artifacts,
+                    "approval_ids": approval_ids,
+                    "needs_input_steps": needs_input_steps,
+                },
             )
         )
 
@@ -522,6 +546,7 @@ class PlannerService:
             "created": created,
             "execution_results": execution_results,
             "artifacts": artifacts,
+            "approval_ids": approval_ids,
             "plan": plan.to_dict(),
         }
 
@@ -1178,6 +1203,88 @@ class PlannerService:
             )
         )
         return artifact_id
+
+    @staticmethod
+    async def _finalize_once_task(task_id: str, *, failed: bool) -> None:
+        """Immediate planner tasks should not be restored as recurring scheduler work."""
+        try:
+            from cognix.scheduler.store import TaskStore
+            from cognix.storage.models import TaskState
+
+            state = TaskState.FAILED if failed else TaskState.COMPLETED
+            await TaskStore().update_state(task_id, state)
+            await TaskStore().set_next_run(task_id, None)
+        except Exception:
+            logger.warning("Failed to finalize immediate task %s", task_id, exc_info=True)
+
+    @staticmethod
+    def _result_needs_input(exec_result: dict) -> bool:
+        """Detect model output that is asking the user for missing information."""
+        if exec_result.get("status") == "failure" or exec_result.get("error"):
+            return False
+        text = str(exec_result.get("result") or "")
+        if not text:
+            return False
+        signals = (
+            "请提供",
+            "还缺",
+            "缺少",
+            "需要你",
+            "需要您",
+            "等待批准",
+            "等待确认",
+            "人工登录",
+            "二次验证",
+            "目标入口",
+            "授权确认",
+            "provide",
+            "need you to",
+            "missing",
+            "waiting for approval",
+        )
+        lowered = text.lower()
+        return any(signal.lower() in lowered for signal in signals)
+
+    @staticmethod
+    def _create_question_approval(
+        *,
+        workspace_id: str,
+        plan_id: str,
+        task_id: str,
+        params: dict,
+        exec_result: dict,
+        artifact_id: str | None,
+    ) -> str | None:
+        """Create a human-input request when an executed task asks follow-up questions."""
+        try:
+            from cognix.local.approvals import ApprovalStore
+
+            output = str(exec_result.get("result") or "")[:4000]
+            request = ApprovalStore().create(
+                agent_id=params.get("_resolved_agent_id") or params.get("agent_id") or "",
+                workspace_id=workspace_id,
+                tool_name="user_input",
+                arguments={
+                    "task_id": task_id,
+                    "artifact_id": artifact_id or "",
+                    "question": output,
+                },
+                access_level="user_input",
+                reason=output,
+                kind="question",
+                metadata={
+                    "source": "plan_apply",
+                    "plan_id": plan_id,
+                    "task_id": task_id,
+                    "artifact_id": artifact_id or "",
+                    "agent_name": params.get("agent_name", ""),
+                    "resume_hint": "Provide the missing details, then rerun or continue the plan.",
+                },
+            )
+            return request.id
+        except Exception:
+            logger.exception("Failed to create follow-up approval for task %s", task_id)
+            return None
 
     async def _apply_create_code_project(self, workspace_id: str, params: dict) -> dict[str, Any]:
         """Create a runnable code project in the workspace sandbox."""
