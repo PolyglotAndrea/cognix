@@ -134,3 +134,17 @@ Search by tag:
 ```bash
 cognix skill search --tags search
 ```
+
+## Built-in Browser Automation Skill
+
+`browser_automation` is an internal planning skill for authorized browser work. It
+does not bypass platform restrictions or drive a browser directly. Instead it gives
+the planner a reusable contract for choosing API/export/browser routes, requesting
+approval before risky browser actions, normalizing extracted observations, and
+creating artifact-ready results with source attribution.
+
+Install it into the local skill hub when needed:
+
+```bash
+cognix skill install skills/browser_automation
+```

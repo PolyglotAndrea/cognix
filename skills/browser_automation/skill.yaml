@@ -1,0 +1,89 @@
+name: browser_automation
+version: 0.1.0
+description: Plan compliant browser automation jobs, browser MCP usage, Playwright execution, extraction normalization, and artifact outputs.
+author: cognix-team
+tags:
+  - browser
+  - automation
+  - playwright
+  - browser-use
+  - mcp
+  - crawler
+  - scrape
+  - extraction
+  - artifact
+  - compliance
+
+runtime:
+  python: ">=3.11"
+  entrypoint: handler.py
+
+tools:
+  - name: plan_browser_task
+    description: Build a compliant browser automation plan with approval gates, capability routing, and expected artifacts.
+    access_level: read
+    parameters:
+      type: object
+      properties:
+        objective:
+          type: string
+          description: User-facing task objective.
+        source_url:
+          type: string
+          description: Optional target page, domain, or system URL.
+        data_needed:
+          type: array
+          description: Fields or content the user expects to collect.
+          items:
+            type: string
+        authorization_confirmed:
+          type: boolean
+          description: Whether the user confirmed legal authorization to access and collect the target data.
+          default: false
+        preferred_route:
+          type: string
+          description: Preferred acquisition route.
+          enum: [api, export_file, browser, unknown]
+          default: unknown
+        constraints:
+          type: array
+          description: Known constraints such as rate limits, login requirements, or allowed domains.
+          items:
+            type: string
+      required: [objective]
+  - name: browser_result_template
+    description: Create an artifact schema for browser automation results.
+    access_level: read
+    parameters:
+      type: object
+      properties:
+        objective:
+          type: string
+        artifact_type:
+          type: string
+          enum: [dataset, report, checklist]
+          default: dataset
+        fields:
+          type: array
+          items:
+            type: string
+        sources:
+          type: array
+          items:
+            type: string
+      required: [objective]
+  - name: normalize_browser_observations
+    description: Normalize browser observations or extracted rows into an artifact-ready structure.
+    access_level: read
+    parameters:
+      type: object
+      properties:
+        observations:
+          description: Browser observations, extracted records, or raw text.
+        fields:
+          type: array
+          items:
+            type: string
+        source_url:
+          type: string
+      required: [observations]

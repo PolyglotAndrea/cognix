@@ -898,11 +898,41 @@ class PlannerService:
 
     @staticmethod
     def _recommend_skills(user_intent: str, context: dict) -> list[dict[str, Any]]:
+        text = user_intent.lower()
         terms = {
             part
-            for part in user_intent.lower().replace("/", " ").replace("-", " ").split()
+            for part in text.replace("/", " ").replace("-", " ").split()
             if len(part) > 2
         }
+        if any(
+            signal in text
+            for signal in (
+                "browser",
+                "playwright",
+                "browser-use",
+                "crawl",
+                "crawler",
+                "scrape",
+                "extract",
+                "网页",
+                "浏览器",
+                "采集",
+                "爬取",
+                "抓取",
+                "券码",
+            )
+        ):
+            terms.update(
+                {
+                    "browser",
+                    "automation",
+                    "playwright",
+                    "browser-use",
+                    "crawler",
+                    "scrape",
+                    "extraction",
+                }
+            )
         recommendations: list[dict[str, Any]] = []
         for skill in context.get("installed_skills", []):
             haystack = " ".join(
