@@ -28,7 +28,6 @@ type RightPanelTab =
   | 'policy'
   | 'audit'
   | 'bots'
-  | 'runtime'
   | 'logs'
   | 'json'
 

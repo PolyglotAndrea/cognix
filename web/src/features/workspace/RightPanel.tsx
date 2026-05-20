@@ -30,12 +30,11 @@ import { PolicyPanel } from './PolicyPanel'
 import { AuditLog } from './AuditLog'
 import { PlaybookPanel } from './PlaybookPanel'
 import { BotHealthPanel } from './BotHealthPanel'
-import { RuntimePanel } from './RuntimePanel'
 import { CodeProjectsPanel } from './CodeProjectsPanel'
 import type { DragHandleProps } from './types'
 import { useCurrentWorkspace } from './useCurrentWorkspace'
 
-type TabKey = 'approvals' | 'tasks' | 'apps' | 'files' | 'events' | 'results' | 'artifacts' | 'playbooks' | 'policy' | 'audit' | 'bots' | 'runtime' | 'logs' | 'json'
+type TabKey = 'approvals' | 'tasks' | 'apps' | 'files' | 'events' | 'results' | 'artifacts' | 'playbooks' | 'policy' | 'audit' | 'bots' | 'logs' | 'json'
 
 interface TabDef {
   key: TabKey
@@ -77,7 +76,6 @@ const TAB_GROUPS: TabGroup[] = [
       { key: 'policy', label: 'Policy', icon: ShieldCheck, color: 'text-slate-500' },
       { key: 'audit', label: 'Audit', icon: ShieldQuestion, color: 'text-slate-500' },
       { key: 'bots', label: 'Bots', icon: Server, color: 'text-slate-500' },
-      { key: 'runtime', label: 'Runtime', icon: Server, color: 'text-slate-500' },
     ],
   },
 ]
@@ -640,11 +638,6 @@ export function RightPanel({ dragHandleProps: _dragHandleProps }: { dragHandlePr
         {/* Bots Tab */}
         {rightPanelTab === 'bots' && (
           <BotHealthPanel workspaceId={workspaceId || undefined} />
-        )}
-
-        {/* Runtime Tab */}
-        {rightPanelTab === 'runtime' && (
-          <RuntimePanel workspaceId={workspaceId || undefined} />
         )}
 
         {/* JSON Tab */}
