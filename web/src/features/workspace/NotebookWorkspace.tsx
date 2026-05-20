@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { PanelRightOpen, Settings2 } from 'lucide-react'
+import { SlidersHorizontal } from 'lucide-react'
 import { TopBar } from './TopBar'
 import { SourcesPanel } from './SourcesPanel'
 import { SimpleMode } from './SimpleMode'
@@ -49,18 +49,10 @@ export function NotebookWorkspace({
               <button
                 type="button"
                 onClick={() => setDeveloperOpen(true)}
-                className="inline-flex h-9 items-center gap-2 rounded-full border border-border bg-background px-3 text-xs font-semibold text-muted-foreground hover:text-foreground"
-              >
-                <PanelRightOpen className="h-3.5 w-3.5" />
-                Developer Details
-              </button>
-              <button
-                type="button"
-                onClick={onSwitchToAdvanced}
                 className="flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background text-muted-foreground hover:text-foreground"
-                title="Advanced console"
+                title="Developer details"
               >
-                <Settings2 className="h-4 w-4" />
+                <SlidersHorizontal className="h-4 w-4" />
               </button>
             </div>
           </div>
