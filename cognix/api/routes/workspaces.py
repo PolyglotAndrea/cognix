@@ -79,6 +79,29 @@ class InvokeMCPToolRequest(BaseModel):
     permission_mode: str = "workspace-write"
 
 
+class BrowserMCPPresetRequest(BaseModel):
+    enabled: bool = True
+    profile: str = "default"
+
+
+class BrowserAutomationRunRequest(BaseModel):
+    objective: str
+    url: str
+    engine: str = "playwright"
+    profile: str = "default"
+    selectors: dict[str, str] = Field(default_factory=dict)
+    extract_text: bool = True
+    extract_links: bool = True
+    extract_tables: bool = True
+    screenshot: bool = False
+    wait_for_selector: str = ""
+    permission_mode: str = "workspace-write"
+    approval_id: str = ""
+    task_id: str = ""
+    agent_id: str = ""
+    plan_id: str = ""
+
+
 class ToggleMCPToolRequest(BaseModel):
     tool_name: str
     enabled: bool = True
@@ -335,6 +358,70 @@ async def upsert_workspace_mcp_server(
     )
     await default_mcp_runtime.invalidate(server.id)
     return server.__dict__
+
+
+@router.post("/{workspace_id}/browser/mcp-preset", status_code=201)
+async def ensure_browser_mcp_preset(
+    workspace_id: str,
+    body: BrowserMCPPresetRequest,
+    user: CurrentUser = Depends(require_skills_write),
+) -> dict:
+    """Provision the internal Browser MCP preset for a workspace."""
+    from cognix.browser.service import BrowserAutomationService
+    from cognix.mcp.manager import default_mcp_runtime
+
+    server = BrowserAutomationService(workspace_id).ensure_mcp_preset(
+        enabled=body.enabled,
+        profile=body.profile,
+    )
+    await default_mcp_runtime.invalidate(server.id)
+    return server.__dict__
+
+
+@router.get("/{workspace_id}/browser/profile")
+async def get_browser_profile_status(
+    workspace_id: str,
+    profile: str = "default",
+    user: CurrentUser = Depends(require_skills_read),
+) -> dict:
+    """Return the isolated browser profile status for a workspace."""
+    from cognix.browser.service import BrowserAutomationService
+
+    return BrowserAutomationService(workspace_id).profile_status(profile)
+
+
+@router.post("/{workspace_id}/browser/run")
+async def run_browser_automation(
+    workspace_id: str,
+    body: BrowserAutomationRunRequest,
+    user: CurrentUser = Depends(require_agents_write),
+) -> dict:
+    """Run or approval-gate a workspace browser automation task."""
+    from cognix.browser.service import BrowserAutomationRun, BrowserAutomationService
+    from cognix.core.permissions import clamp_permission_mode
+
+    engine = body.engine if body.engine in {"playwright", "mcp"} else "playwright"
+    request = BrowserAutomationRun(
+        objective=body.objective,
+        url=body.url,
+        engine=engine,  # type: ignore[arg-type]
+        profile=body.profile,
+        selectors=body.selectors,
+        extract_text=body.extract_text,
+        extract_links=body.extract_links,
+        extract_tables=body.extract_tables,
+        screenshot=body.screenshot,
+        wait_for_selector=body.wait_for_selector,
+        permission_mode=clamp_permission_mode(body.permission_mode, user.role),
+        approval_id=body.approval_id,
+        task_id=body.task_id,
+        agent_id=body.agent_id,
+        plan_id=body.plan_id,
+    )
+    try:
+        return await BrowserAutomationService(workspace_id).run(request, user_id=user.id)
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from None
 
 
 @router.get("/{workspace_id}/mcp/servers/{server_id}/tools")

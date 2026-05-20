@@ -161,3 +161,18 @@ POST /api/v1/workspaces/{workspace_id}/mcp/servers/{server_id}/tools/{tool_name}
 
 Tool calls require skills write permission and apply `permission_mode` checks before execution.
 Set `metadata.disabled_tools` on a workspace MCP server to hide individual tools from Agent mounting and debug calls.
+
+---
+
+### Browser Automation
+
+```
+POST /api/v1/workspaces/{workspace_id}/browser/mcp-preset
+GET /api/v1/workspaces/{workspace_id}/browser/profile?profile=default
+POST /api/v1/workspaces/{workspace_id}/browser/run
+```
+
+Browser automation is an internal capability selected by the planner. The MCP
+preset provisions a Playwright MCP server with a workspace-scoped browser profile.
+`browser/run` applies workspace network policy, creates approval requests when
+needed, runs Playwright when allowed, and persists browser output as an artifact.

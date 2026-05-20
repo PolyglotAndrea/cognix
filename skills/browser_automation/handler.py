@@ -89,6 +89,10 @@ async def plan_browser_task(
         "planner_hints": {
             "recommended_agent": "browser-operator",
             "recommended_tools": ["browser_mcp", "playwright", "file_writer"],
+            "runtime_endpoints": [
+                "POST /api/v1/workspaces/{workspace_id}/browser/mcp-preset",
+                "POST /api/v1/workspaces/{workspace_id}/browser/run",
+            ],
             "approval_events": ["approval_request", "tool_call", "tool_result", "artifact_created"],
         },
     }

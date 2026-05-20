@@ -55,6 +55,7 @@ class CapabilityResolver:
 
         mcp_servers = self._mcp_servers(ws_config, policy)
         connectors = self._connectors(ws_config, policy)
+        browser_automation = self._browser_automation(ws_config, policy)
         workspace_files = self._workspace_files(workspace_id)
         agents = await self._agents(workspace_id)
         entitlement_status = await self._entitlement_status(user_id, workspace_id)
@@ -80,6 +81,7 @@ class CapabilityResolver:
             *installed_skills,
             *[tool for server in mcp_servers for tool in server.get("tools", [])],
             *[tool for connector in connectors for tool in connector.get("tools", [])],
+            browser_automation,
             *cli_tools,
             memory,
         ]
@@ -95,6 +97,7 @@ class CapabilityResolver:
             "installed_skills": installed_skills[:20],
             "mcp_servers": mcp_servers,
             "connectors": connectors,
+            "browser_automation": browser_automation,
             "cli_tools": cli_tools,
             "memory": memory,
             "agents": agents,
@@ -187,6 +190,41 @@ class CapabilityResolver:
         except Exception:
             return []
         return connectors
+
+    def _browser_automation(
+        self,
+        ws_config: WorkspaceConfigStore,
+        policy: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Expose browser automation as an internal capability preset."""
+        preset = None
+        try:
+            preset = next(
+                (
+                    server
+                    for server in ws_config.list_mcp_servers()
+                    if server.metadata.get("capability") == "browser_automation"
+                    or server.id == "browser_playwright"
+                ),
+                None,
+            )
+        except Exception:
+            preset = None
+        return {
+            "id": "browser.automation",
+            "kind": "browser_automation",
+            "name": "Browser automation",
+            "description": (
+                "Run authorized browser workflows through an isolated Playwright profile "
+                "or Browser MCP preset."
+            ),
+            "risk_level": "high",
+            "requires_approval": policy.get("network_access", "ask") != "workspace-write",
+            "workspace_enabled": True,
+            "mcp_preset_configured": bool(preset),
+            "mcp_server_id": preset.id if preset else "",
+            "engines": ["playwright", "mcp"],
+        }
 
     def _cli_tools(self, policy: dict[str, Any]) -> list[dict[str, Any]]:
         blocked = policy.get("blocked_commands", [])

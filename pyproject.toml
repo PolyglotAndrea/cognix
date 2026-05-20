@@ -53,6 +53,10 @@ redis = [
     "redis>=5.0",
     "arq>=0.26",
 ]
+browser = [
+    "playwright>=1.44",
+    "browser-use>=0.1",
+]
 
 [project.scripts]
 cognix = "cognix.cli.app:app"

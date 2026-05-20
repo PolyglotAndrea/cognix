@@ -138,10 +138,19 @@ cognix skill search --tags search
 ## Built-in Browser Automation Skill
 
 `browser_automation` is an internal planning skill for authorized browser work. It
-does not bypass platform restrictions or drive a browser directly. Instead it gives
-the planner a reusable contract for choosing API/export/browser routes, requesting
-approval before risky browser actions, normalizing extracted observations, and
-creating artifact-ready results with source attribution.
+does not bypass platform restrictions. It gives the planner a reusable contract
+for choosing API/export/browser routes, requesting approval before risky browser
+actions, normalizing extracted observations, and creating artifact-ready results
+with source attribution.
+
+Cognix also provides a workspace-scoped Browser Automation runtime:
+
+- `POST /api/v1/workspaces/{workspace_id}/browser/mcp-preset` provisions the
+  internal Playwright MCP preset with an isolated workspace browser profile.
+- `GET /api/v1/workspaces/{workspace_id}/browser/profile` reports profile and
+  cookie-store status.
+- `POST /api/v1/workspaces/{workspace_id}/browser/run` runs or approval-gates a
+  browser task and writes the result as a browser artifact.
 
 Install it into the local skill hub when needed:
 
