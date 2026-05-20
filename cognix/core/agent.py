@@ -45,7 +45,7 @@ class AgentChunk:
 
 @dataclass
 class AgentEvent:
-    """Structured runtime event using delta/tool_call/tool_result/error/done types."""
+    """Structured runtime event using the stable stream event protocol."""
 
     type: str
     data: dict[str, Any] = field(default_factory=dict)
@@ -376,8 +376,9 @@ class Agent:
         kwargs: dict[str, Any] = {
             "model": model,
             "messages": messages,
-            "temperature": self.temperature,
         }
+        if self._supports_temperature(model):
+            kwargs["temperature"] = self.temperature
 
         # Support custom API base URL and key
         if api_base:
@@ -469,9 +470,10 @@ class Agent:
         kwargs: dict[str, Any] = {
             "model": model,
             "messages": messages,
-            "temperature": self.temperature,
             "stream": True,
         }
+        if self._supports_temperature(model):
+            kwargs["temperature"] = self.temperature
 
         # Support custom API base URL and key
         if api_base:
@@ -1111,6 +1113,19 @@ class Agent:
             "permission_mode": self.permission_mode,
             "tools": [t.name for t in self.tools],
         }
+
+    @staticmethod
+    def _supports_temperature(model: str | None) -> bool:
+        """Return whether the selected LiteLLM model accepts temperature.
+
+        OpenAI GPT-5 family endpoints reject non-default temperature values.
+        Omitting the parameter lets the provider use its supported default and
+        avoids a stream that opens successfully but then fails before output.
+        """
+        if not model:
+            return True
+        normalized = model.lower().split("/")[-1]
+        return not normalized.startswith("gpt-5")
 
     # ── Snapshot persistence ────────────────────────────────────────
 

@@ -9,10 +9,17 @@ interface SimpleModeProps {
   onSwitchToAdvanced: () => void
 }
 
+interface StreamStep {
+  id: string
+  label: string
+  status: 'pending' | 'running' | 'done' | 'failed'
+}
+
 export function SimpleMode({ workspaceId, onSwitchToAdvanced }: SimpleModeProps) {
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState<Array<{ role: string; content: string }>>([])
   const [streaming, setStreaming] = useState(false)
+  const [streamSteps, setStreamSteps] = useState<StreamStep[]>([])
   const queryClient = useQueryClient()
 
   const switchModeMutation = useMutation({
@@ -75,20 +82,48 @@ export function SimpleMode({ workspaceId, onSwitchToAdvanced }: SimpleModeProps)
       if (!reader) return
       const decoder = new TextDecoder()
       let assistantContent = ''
+      let streamBuffer = ''
 
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
-        const text = decoder.decode(value, { stream: true })
-        for (const line of text.split('\n')) {
-          if (!line.startsWith('data: ')) continue
+        streamBuffer += decoder.decode(value, { stream: true })
+        const frames = streamBuffer.split('\n\n')
+        streamBuffer = frames.pop() || ''
+        for (const frame of frames) {
+          const jsonStr = frame
+            .split('\n')
+            .filter((line) => line.startsWith('data: '))
+            .map((line) => line.slice(6).trim())
+            .join('')
+          if (!jsonStr || jsonStr === '[DONE]') continue
           try {
-            const event = JSON.parse(line.slice(6))
+            const event = JSON.parse(jsonStr)
             if (event.type === 'delta' && event.delta) {
               assistantContent += event.delta
               setMessages((prev) => {
                 const updated = [...prev]
                 updated[updated.length - 1] = { role: 'assistant', content: assistantContent }
+                return updated
+              })
+            } else if (event.type === 'todo' && Array.isArray(event.items)) {
+              setStreamSteps(
+                event.items.map((item: Partial<StreamStep>, index: number) => ({
+                  id: item.id || `step-${index}`,
+                  label: item.label || `Step ${index + 1}`,
+                  status: item.status || 'pending',
+                }))
+              )
+            } else if (event.type === 'error') {
+              const error = event.error || event.message || 'Model stream failed.'
+              setStreamSteps((items) =>
+                items.map((item) =>
+                  item.status === 'running' ? { ...item, status: 'failed' } : item
+                )
+              )
+              setMessages((prev) => {
+                const updated = [...prev]
+                updated[updated.length - 1] = { role: 'assistant', content: `Error: ${error}` }
                 return updated
               })
             }
@@ -105,6 +140,7 @@ export function SimpleMode({ workspaceId, onSwitchToAdvanced }: SimpleModeProps)
       })
     } finally {
       setStreaming(false)
+      setStreamSteps([])
     }
   }
 
@@ -155,6 +191,21 @@ export function SimpleMode({ workspaceId, onSwitchToAdvanced }: SimpleModeProps)
             </div>
           </div>
         ))}
+        {streaming && streamSteps.length > 0 && (
+          <div className="rounded-2xl border border-border bg-card/70 px-4 py-3 text-xs text-muted-foreground">
+            <div className="mb-2 font-bold uppercase tracking-widest text-foreground/70">
+              Execution checklist
+            </div>
+            <div className="space-y-1.5">
+              {streamSteps.map((step) => (
+                <div key={step.id} className="flex items-center justify-between gap-3">
+                  <span>{step.label}</span>
+                  <span className="font-bold uppercase tracking-wider text-[10px]">{step.status}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Input */}

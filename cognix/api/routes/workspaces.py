@@ -18,7 +18,7 @@ from cognix.auth.dependencies import (
     require_skills_read,
     require_skills_write,
 )
-from cognix.core.agent import Agent
+from cognix.core.agent import Agent, AgentEvent
 from cognix.core.context import Context
 from cognix.core.streaming import encode_sse_event
 from cognix.local.attachments import AttachmentStore, ParsedAttachment
@@ -909,21 +909,96 @@ async def stream_chat_message(
             model=model,
             system_prompt=chat.system_prompt or "You are a helpful assistant.",
         )
+        yield encode_sse_event(
+            AgentEvent(
+                "status",
+                {
+                    "stage": "planning",
+                    "message": (
+                        "Preparing workspace context, attachments, tools, "
+                        "and model provider."
+                    ),
+                },
+            ),
+            extra={"model": model},
+        )
+        yield encode_sse_event(
+            AgentEvent(
+                "todo",
+                {
+                    "items": [
+                        {"id": "context", "label": "Load workspace chat context", "status": "done"},
+                        {
+                            "id": "attachments",
+                            "label": "Parse attached files and images",
+                            "status": "done",
+                        },
+                        {
+                            "id": "provider",
+                            "label": "Resolve provider and selected model",
+                            "status": "done",
+                        },
+                        {"id": "execute", "label": "Run model stream", "status": "running"},
+                        {"id": "persist", "label": "Save assistant response", "status": "pending"},
+                    ]
+                },
+            ),
+            extra={"model": model},
+        )
         await _prepare_chat_agent(agent, workspace_id)
+        yield encode_sse_event(
+            AgentEvent(
+                "status",
+                {"stage": "executing", "message": f"Streaming response from {model}."},
+            ),
+            extra={"model": model},
+        )
         assistant_content = ""
+        stream_failed = False
         async for event in agent.stream_events(
             body.content,
             context=context,
         ):
             if event.type == "delta":
                 assistant_content += event.data.get("delta", "")
+            elif event.type == "error":
+                stream_failed = True
             yield encode_sse_event(event, extra={"model": model})
+        if stream_failed:
+            return
+        yield encode_sse_event(
+            AgentEvent(
+                "todo",
+                {
+                    "items": [
+                        {"id": "context", "label": "Load workspace chat context", "status": "done"},
+                        {
+                            "id": "attachments",
+                            "label": "Parse attached files and images",
+                            "status": "done",
+                        },
+                        {
+                            "id": "provider",
+                            "label": "Resolve provider and selected model",
+                            "status": "done",
+                        },
+                        {"id": "execute", "label": "Run model stream", "status": "done"},
+                        {"id": "persist", "label": "Save assistant response", "status": "running"},
+                    ]
+                },
+            ),
+            extra={"model": model},
+        )
         assistant = store.append_message(
             chat_id,
             role="assistant",
             content=assistant_content,
             model=model,
             parent_id=user_message.id,
+        )
+        yield encode_sse_event(
+            AgentEvent("status", {"stage": "saved", "message": "Assistant response saved."}),
+            extra={"model": model},
         )
         yield (
             "data: "

@@ -73,6 +73,12 @@ interface PendingAttachment {
   content: string
 }
 
+interface StreamStep {
+  id: string
+  label: string
+  status: 'pending' | 'running' | 'done' | 'failed'
+}
+
 export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleProps }) {
   const { selectedAgentId, setSelectedAgent, inputMode, setInputMode, addToolResult, addLog } = useWorkspaceStore()
   const queryClient = useQueryClient()
@@ -85,6 +91,7 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleP
   const [systemPrompt, setSystemPrompt] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [promptSaved, setPromptSaved] = useState(false)
+  const [streamSteps, setStreamSteps] = useState<StreamStep[]>([])
   const ensuredWorkspaceRef = useRef(false)
   const creatingChatRef = useRef<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -354,24 +361,46 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleP
 
       const decoder = new TextDecoder()
       let assistantContent = ''
+      let streamBuffer = ''
+      let streamError: string | null = null
+      setStreamSteps([])
       setMessages((prev) => [...prev, { role: 'assistant', content: '' }])
 
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
 
-        const text = decoder.decode(value, { stream: true })
-        const lines = text.split('\n')
+        streamBuffer += decoder.decode(value, { stream: true })
+        const frames = streamBuffer.split('\n\n')
+        streamBuffer = frames.pop() || ''
 
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          const jsonStr = line.slice(6).trim()
+        for (const frame of frames) {
+          const jsonStr = frame
+            .split('\n')
+            .filter((line) => line.startsWith('data: '))
+            .map((line) => line.slice(6).trim())
+            .join('')
           if (!jsonStr || jsonStr === '[DONE]') continue
 
           try {
             const event = JSON.parse(jsonStr)
 
-            if (event.type === 'tool_call') {
+            if (event.type === 'status') {
+              addLog({
+                id: '',
+                level: 'info',
+                message: event.message || `Stream status: ${event.stage || 'running'}`,
+                timestamp: Date.now(),
+              })
+            } else if (event.type === 'todo' && Array.isArray(event.items)) {
+              setStreamSteps(
+                event.items.map((item: Partial<StreamStep>, index: number) => ({
+                  id: item.id || `step-${index}`,
+                  label: item.label || `Step ${index + 1}`,
+                  status: item.status || 'pending',
+                }))
+              )
+            } else if (event.type === 'tool_call') {
               addLog({
                 id: '',
                 level: 'info',
@@ -408,6 +437,28 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleP
                 message: event.message,
                 timestamp: Date.now(),
               })
+            } else if (event.type === 'error') {
+              const errorMessage = event.error || event.message || 'Model stream failed.'
+              streamError = errorMessage
+              addLog({
+                id: '',
+                level: 'error',
+                message: errorMessage,
+                timestamp: Date.now(),
+              })
+              setStreamSteps((items) =>
+                items.map((item) =>
+                  item.status === 'running' ? { ...item, status: 'failed' } : item
+                )
+              )
+              setMessages((prev) => {
+                const updated = [...prev]
+                updated[updated.length - 1] = {
+                  role: 'assistant',
+                  content: `Error: ${streamError}`,
+                }
+                return updated
+              })
             } else if (event.delta) {
               assistantContent += event.delta
               setMessages((prev) => {
@@ -424,6 +475,7 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleP
           }
         }
       }
+      if (streamError) return
       queryClient.invalidateQueries({ queryKey: ['workspace-chat-messages', workspaceId, chatId] })
       queryClient.invalidateQueries({ queryKey: ['workspace-chats', workspaceId, selectedAgentId] })
     } catch (err) {
@@ -439,6 +491,7 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleP
       ])
     } finally {
       setIsStreaming(false)
+      setStreamSteps([])
     }
   }
 
@@ -851,6 +904,41 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleP
             </div>
           </div>
         ))}
+        {isStreaming && streamSteps.length > 0 && (
+          <div className="ml-[52px] max-w-[75%] rounded-2xl border border-border bg-card/70 p-4 shadow-xl">
+            <div className="mb-3 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+              Execution checklist
+            </div>
+            <div className="space-y-2">
+              {streamSteps.map((step) => (
+                <div key={step.id} className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span
+                    className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${
+                      step.status === 'done'
+                        ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-600'
+                        : step.status === 'running'
+                          ? 'border-primary/30 bg-primary/10 text-primary'
+                          : step.status === 'failed'
+                            ? 'border-destructive/30 bg-destructive/10 text-destructive'
+                            : 'border-border bg-muted text-muted-foreground'
+                    }`}
+                  >
+                    {step.status === 'done' ? (
+                      <Check className="h-3 w-3" />
+                    ) : step.status === 'failed' ? (
+                      <X className="h-3 w-3" />
+                    ) : step.status === 'running' ? (
+                      <Spinner size="sm" />
+                    ) : (
+                      <span className="h-1.5 w-1.5 rounded-full bg-current opacity-50" />
+                    )}
+                  </span>
+                  <span className="font-medium text-foreground/80">{step.label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         <div ref={messagesEndRef} />
       </div>
 
