@@ -21,6 +21,7 @@ class WorkspaceInfo:
     created_at: str
     updated_at: str
     description: str = ""
+    owner_id: str | None = None
 
 
 class WorkspaceManager:
@@ -35,6 +36,7 @@ class WorkspaceManager:
         *,
         description: str = "",
         workspace_id: str | None = None,
+        owner_id: str | None = None,
     ) -> WorkspaceInfo:
         workspace_id = workspace_id or self._new_workspace_id(name)
         path = self.workspace_path(workspace_id)
@@ -59,6 +61,7 @@ class WorkspaceManager:
             path=str(path),
             created_at=now,
             updated_at=now,
+            owner_id=owner_id,
         )
         self._write_json(path / "workspace.json", asdict(info))
         self._write_json(
@@ -87,13 +90,15 @@ class WorkspaceManager:
         data = json.loads(meta.read_text(encoding="utf-8"))
         return WorkspaceInfo(**data)
 
-    def list_all(self) -> list[WorkspaceInfo]:
+    def list_all(self, *, owner_id: str | None = None) -> list[WorkspaceInfo]:
         results = []
         for path in sorted(self.home.workspaces_dir.iterdir()):
             if not path.is_dir():
                 continue
             info = self.get(path.name)
             if info:
+                if owner_id is not None and info.owner_id != owner_id:
+                    continue
                 results.append(info)
         return results
 

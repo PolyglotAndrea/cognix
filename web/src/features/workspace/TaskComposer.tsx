@@ -65,7 +65,7 @@ export function TaskComposer({
       return api.post(`/workspaces/${workspaceId}/plans/${planId}/apply`)
     },
     onSuccess: (response) => {
-      queryClient.invalidateQueries({ queryKey: ['agents'] })
+      queryClient.invalidateQueries({ queryKey: ['agents', workspaceId] })
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
       queryClient.invalidateQueries({ queryKey: ['artifacts', workspaceId] })
       queryClient.invalidateQueries({ queryKey: ['workspace-settings', workspaceId] })

@@ -130,7 +130,17 @@ class SendChatMessageRequest(BaseModel):
 
 @router.get("")
 async def list_workspaces(user: CurrentUser = Depends(get_current_user)) -> list[dict]:
-    return [workspace.__dict__ for workspace in WorkspaceManager().list_all()]
+    manager = WorkspaceManager()
+    workspaces = manager.list_all(owner_id=user.id)
+    if not workspaces:
+        workspaces = [
+            manager.create(
+                "My Workspace",
+                description="Default workspace",
+                owner_id=user.id,
+            )
+        ]
+    return [workspace.__dict__ for workspace in workspaces]
 
 
 @router.post("", status_code=201)
@@ -138,7 +148,11 @@ async def create_workspace(
     body: CreateWorkspaceRequest,
     user: CurrentUser = Depends(require_agents_write),
 ) -> dict:
-    workspace = WorkspaceManager().create(body.name, description=body.description)
+    workspace = WorkspaceManager().create(
+        body.name,
+        description=body.description,
+        owner_id=user.id,
+    )
     return workspace.__dict__
 
 
@@ -149,6 +163,8 @@ async def get_workspace(
 ) -> dict:
     workspace = WorkspaceManager().get(workspace_id)
     if not workspace:
+        raise HTTPException(404, "Workspace not found")
+    if workspace.owner_id != user.id:
         raise HTTPException(404, "Workspace not found")
     return workspace.__dict__
 

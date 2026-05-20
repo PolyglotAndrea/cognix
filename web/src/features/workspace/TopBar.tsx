@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, Suspense } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { Search, Puzzle, Download, Settings, Clock, CreditCard, LogOut, Zap, Moon, Sun, Monitor, KeyRound, UserCircle } from 'lucide-react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Search, Puzzle, Download, Settings, Clock, CreditCard, LogOut, Zap, Moon, Sun, Monitor, KeyRound, UserCircle, Plus } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '@/shared/api/client'
 import { useAuthStore } from '@/features/auth/store'
@@ -24,6 +24,7 @@ interface Skill {
 type ModalType = 'tasks' | 'billing' | 'workspace-settings' | 'account-settings' | 'api-access' | null
 
 export function TopBar() {
+  const queryClient = useQueryClient()
   const [search, setSearch] = useState('')
   const [open, setOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -44,6 +45,20 @@ export function TopBar() {
   const handleLogout = () => {
     logout()
     navigate('/login')
+  }
+
+  const createWorkspaceMutation = useMutation({
+    mutationFn: (name: string) => api.post('/workspaces', { name }),
+    onSuccess: (response) => {
+      queryClient.invalidateQueries({ queryKey: ['workspaces'] })
+      setSelectedWorkspace(response.data.id)
+    },
+  })
+
+  const handleCreateWorkspace = () => {
+    const name = window.prompt('Workspace name')
+    if (!name?.trim()) return
+    createWorkspaceMutation.mutate(name.trim())
   }
 
   const { data: skills = [] } = useQuery<Skill[]>({
@@ -121,6 +136,16 @@ export function TopBar() {
               ))
             )}
           </select>
+          <button
+            type="button"
+            onClick={handleCreateWorkspace}
+            disabled={createWorkspaceMutation.isPending}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-all hover:bg-background hover:text-primary disabled:opacity-40"
+            title="Create workspace"
+            aria-label="Create workspace"
+          >
+            <Plus className="h-3.5 w-3.5" />
+          </button>
         </div>
 
         {/* Skills Search */}

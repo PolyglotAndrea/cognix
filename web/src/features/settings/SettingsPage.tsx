@@ -116,8 +116,10 @@ export default function SettingsPage({
   const { workspace } = useCurrentWorkspace()
 
   const { data: agents = [] } = useQuery<AgentInfo[]>({
-    queryKey: ['agents'],
-    queryFn: () => api.get('/agents').then((r) => r.data),
+    queryKey: ['agents', workspace?.id],
+    queryFn: () =>
+      api.get('/agents', { params: { workspace_id: workspace?.id } }).then((r) => r.data),
+    enabled: !!workspace,
   })
 
   const { data: bots = [] } = useQuery<RemoteBot[]>({

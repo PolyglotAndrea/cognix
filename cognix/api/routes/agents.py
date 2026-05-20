@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket
 from pydantic import BaseModel
 from starlette.responses import StreamingResponse
 
@@ -44,8 +44,17 @@ class ChatRequest(BaseModel):
 
 
 @router.get("")
-async def list_agents(user: CurrentUser = Depends(get_current_user)) -> list[dict]:
-    return await list_agent_runtimes()
+async def list_agents(
+    workspace_id: str | None = Query(default=None),
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    if workspace_id is not None:
+        from cognix.local.workspace import WorkspaceManager
+
+        workspace = WorkspaceManager().get(workspace_id)
+        if not workspace or workspace.owner_id != user.id:
+            raise HTTPException(404, "Workspace not found")
+    return await list_agent_runtimes(workspace_id=workspace_id)
 
 
 @router.post("", status_code=201)
@@ -55,8 +64,14 @@ async def create_agent(
 ) -> dict:
     from cognix.core.agent import Agent
     from cognix.core.memory import SQLiteBackend
+    from cognix.local.workspace import WorkspaceManager
     from cognix.storage.database import get_session
     from cognix.storage.models import AgentModel
+
+    if body.workspace_id is not None:
+        workspace = WorkspaceManager().get(body.workspace_id)
+        if not workspace or workspace.owner_id != user.id:
+            raise HTTPException(404, "Workspace not found")
 
     agent = Agent(
         name=body.name,

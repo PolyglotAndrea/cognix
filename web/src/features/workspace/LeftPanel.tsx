@@ -21,6 +21,7 @@ interface Agent {
   system_prompt: string
   temperature: number
   max_iterations: number
+  workspace_id?: string | null
 }
 
 const FALLBACK_MODELS = ['gpt-4o', 'gpt-4o-mini', 'claude-sonnet-4-20250514']
@@ -28,10 +29,12 @@ const FALLBACK_MODELS = ['gpt-4o', 'gpt-4o-mini', 'claude-sonnet-4-20250514']
 export function LeftPanel({ dragHandleProps }: { dragHandleProps?: DragHandleProps }) {
   const { selectedAgentId, setSelectedAgent } = useWorkspaceStore()
   const queryClient = useQueryClient()
+  const { workspaceId } = useCurrentWorkspace()
 
   const { data: agents = [] } = useQuery<Agent[]>({
-    queryKey: ['agents'],
-    queryFn: () => api.get('/agents').then((r) => r.data),
+    queryKey: ['agents', workspaceId],
+    queryFn: () => api.get('/agents', { params: { workspace_id: workspaceId } }).then((r) => r.data),
+    enabled: !!workspaceId,
   })
 
   const selected = agents.find((a) => a.id === selectedAgentId) || null
@@ -49,9 +52,10 @@ export function LeftPanel({ dragHandleProps }: { dragHandleProps?: DragHandlePro
   const [newModel, setNewModel] = useState('gpt-4o')
 
   const createMutation = useMutation({
-    mutationFn: (data: { name: string; model: string }) => api.post('/agents', data),
+    mutationFn: (data: { name: string; model: string }) =>
+      api.post('/agents', { ...data, workspace_id: workspaceId }),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['agents'] })
+      queryClient.invalidateQueries({ queryKey: ['agents', workspaceId] })
       setShowCreate(false)
       setNewName('')
     },
@@ -61,12 +65,10 @@ export function LeftPanel({ dragHandleProps }: { dragHandleProps?: DragHandlePro
   const updateMutation = useMutation({
     mutationFn: (data: Partial<Agent>) =>
       api.put(`/agents/${selectedAgentId}`, data),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['agents'] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['agents', workspaceId] }),
   })
 
   // Workspace skills
-  const { workspaceId } = useCurrentWorkspace()
-
   interface SkillInfo { name: string; description?: string; enabled: boolean }
   const { data: skills = [] } = useQuery<SkillInfo[]>({
     queryKey: ['workspace-skills', workspaceId],
@@ -160,7 +162,7 @@ export function LeftPanel({ dragHandleProps }: { dragHandleProps?: DragHandlePro
                     <Button
                       size="sm"
                       className="flex-1"
-                      disabled={!newName.trim() || createMutation.isPending}
+                      disabled={!workspaceId || !newName.trim() || createMutation.isPending}
                       onClick={() => createMutation.mutate({ name: newName, model: newModel })}
                     >
                       Create
