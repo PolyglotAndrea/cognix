@@ -57,7 +57,10 @@ Cognix uses [LiteLLM](https://docs.litellm.ai/) for model abstraction. Supported
 |----------|--------|
 | OpenAI | `gpt-4o`, `gpt-4o-mini`, `gpt-4-turbo` |
 | Anthropic | `claude-3.5-sonnet`, `claude-3-opus` |
-| Local | `echo` (built-in echo model for testing) |
+| Custom/OpenAI-compatible | Models discovered from the configured provider |
+
+Local mock models such as `echo`, `noop`, and `mock` are disabled in product execution paths.
+Configure a real provider in Account Settings or Workspace Settings before running an Agent.
 
 ## Chat with an Agent
 

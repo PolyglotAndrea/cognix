@@ -8,11 +8,17 @@ export default function AgentList() {
   const queryClient = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
   const [name, setName] = useState('')
-  const [model, setModel] = useState('gpt-4o')
+  const [model, setModel] = useState('')
 
   const { data: agents, isLoading } = useQuery({
     queryKey: ['agents'],
     queryFn: () => api.get('/agents').then((r) => r.data),
+  })
+
+  const { data: availableModels = [] } = useQuery<string[]>({
+    queryKey: ['models'],
+    queryFn: () => api.get('/providers/models').then((r) => r.data),
+    staleTime: 5 * 60 * 1000,
   })
 
   const createMutation = useMutation({
@@ -56,18 +62,22 @@ export default function AgentList() {
               className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
             />
             <select
-              value={model}
+              value={model || availableModels[0] || ''}
               onChange={(e) => setModel(e.target.value)}
               className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
             >
-              <option value="gpt-4o">GPT-4o</option>
-              <option value="gpt-4o-mini">GPT-4o Mini</option>
-              <option value="claude-3-5-sonnet">Claude 3.5 Sonnet</option>
-              <option value="echo">Echo (test)</option>
+              {availableModels.length === 0 && (
+                <option value="">Configure provider models first</option>
+              )}
+              {availableModels.map((availableModel) => (
+                <option key={availableModel} value={availableModel}>
+                  {availableModel}
+                </option>
+              ))}
             </select>
             <button
-              onClick={() => createMutation.mutate({ name, model })}
-              disabled={!name || createMutation.isPending}
+              onClick={() => createMutation.mutate({ name, model: model || availableModels[0] })}
+              disabled={!name || !availableModels.length || createMutation.isPending}
               className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50"
             >
               {createMutation.isPending ? 'Creating...' : 'Create'}

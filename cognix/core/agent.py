@@ -327,17 +327,18 @@ class Agent:
 
     async def _call_llm(self, ctx: Context) -> AgentResponse:
         """Call the LLM. Override for custom providers."""
-        # Fallback for non-LLM models (e.g. "echo" for testing)
         if self.model in ("echo", "noop", "mock"):
-            text = self._message_text(ctx.messages[-1].content)
-            return AgentResponse(content=f"[{self.name}] Echo: {text}")
+            raise RuntimeError(
+                "Local mock models are disabled. Configure a real provider and select an "
+                "available model in Account Settings or Workspace Settings."
+            )
 
         try:
             import litellm
         except ImportError:
-            logger.warning("litellm not installed, falling back to echo mode")
-            text = self._message_text(ctx.messages[-1].content)
-            return AgentResponse(content=f"[{self.name}] Echo: {text}")
+            raise RuntimeError(
+                "litellm is not installed; real model execution is unavailable."
+            ) from None
 
         messages = [{"role": "system", "content": self.system_prompt}]
         # Use history_window from workspace settings to limit conversation length
@@ -365,6 +366,12 @@ class Agent:
             api_base = api_base or provider.base_url
             api_key = api_key or provider.api_key
             model = model or provider.default_model
+
+        if not api_key:
+            raise RuntimeError(
+                "No model provider API key is configured. Configure Account Settings or a "
+                "workspace provider override before running agents."
+            )
 
         kwargs: dict[str, Any] = {
             "model": model,
@@ -413,23 +420,18 @@ class Agent:
 
     async def _stream_llm(self, ctx: Context) -> AsyncIterator[AgentChunk]:
         """Stream from LLM. Override for custom providers."""
-        # Fallback for non-LLM models (e.g. "echo" for testing)
         if self.model in ("echo", "noop", "mock"):
-            yield AgentChunk(
-                delta=f"[{self.name}] Echo: {self._message_text(ctx.messages[-1].content)}",
-                finish_reason="stop",
+            raise RuntimeError(
+                "Local mock models are disabled. Configure a real provider and select an "
+                "available model in Account Settings or Workspace Settings."
             )
-            return
 
         try:
             import litellm
         except ImportError:
-            logger.warning("litellm not installed, falling back to echo mode")
-            yield AgentChunk(
-                delta=f"[{self.name}] Echo: {self._message_text(ctx.messages[-1].content)}",
-                finish_reason="stop",
-            )
-            return
+            raise RuntimeError(
+                "litellm is not installed; real model execution is unavailable."
+            ) from None
 
         messages = [{"role": "system", "content": self.system_prompt}]
         # Use history_window from workspace settings to limit conversation length
@@ -457,6 +459,12 @@ class Agent:
             api_base = api_base or provider.base_url
             api_key = api_key or provider.api_key
             model = model or provider.default_model
+
+        if not api_key:
+            raise RuntimeError(
+                "No model provider API key is configured. Configure Account Settings or a "
+                "workspace provider override before running agents."
+            )
 
         kwargs: dict[str, Any] = {
             "model": model,

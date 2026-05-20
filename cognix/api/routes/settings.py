@@ -37,25 +37,6 @@ class ListModelsRequest(BaseModel):
     api_key: str | None = None
 
 
-COMMON_MODELS = [
-    "gpt-4o",
-    "gpt-4o-mini",
-    "gpt-4-turbo",
-    "gpt-4",
-    "gpt-3.5-turbo",
-    "claude-sonnet-4-20250514",
-    "claude-3-5-sonnet-20241022",
-    "claude-3-haiku-20240307",
-    "claude-3-opus-20240229",
-    "deepseek-chat",
-    "deepseek-reasoner",
-    "gemini/gemini-2.0-flash",
-    "gemini/gemini-1.5-pro",
-    "ollama/llama3.1",
-    "ollama/qwen2.5",
-]
-
-
 def _mask_key(key: str | None) -> str | None:
     if not key or len(key) < 8:
         return key
@@ -159,7 +140,7 @@ async def discover_llm_models(
     base_url: str | None = None,
     api_key: str | None = None,
 ) -> list[str]:
-    """Discover configured LLM provider models with conservative fallbacks."""
+    """Discover models from the configured provider only."""
     store = ConfigStore()
     cfg = store.get_llm()
     resolved_api_key = _usable_request_key(api_key) or cfg.api_key
@@ -184,18 +165,5 @@ async def discover_llm_models(
                         models = [m.get("id", m) if isinstance(m, dict) else str(m) for m in items]
         except Exception:
             pass
-
-    # Fallback to litellm's built-in model list
-    if not models:
-        try:
-            import litellm
-
-            if hasattr(litellm, "model_list") and isinstance(litellm.model_list, list):
-                models = list(litellm.model_list)
-        except ImportError:
-            pass
-
-    if not models:
-        models = COMMON_MODELS
 
     return sorted(models)

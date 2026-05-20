@@ -842,7 +842,10 @@ async def send_chat_message(
         content=body.content,
         attachments=attachments,
     )
-    models = body.models or chat.model_profiles or ["echo"]
+    ws_llm = resolve_workspace_llm(workspace_id)
+    if not ws_llm.get("api_key"):
+        raise HTTPException(400, "No model provider API key is configured")
+    models = body.models or chat.model_profiles or [ws_llm["default_model"]]
     responses = await asyncio.gather(
         *[
             _run_model_response(
@@ -883,7 +886,10 @@ async def stream_chat_message(
     if not chat:
         raise HTTPException(404, "Chat not found")
 
-    model = (body.models or chat.model_profiles or ["echo"])[0]
+    ws_llm = resolve_workspace_llm(workspace_id)
+    if not ws_llm.get("api_key"):
+        raise HTTPException(400, "No model provider API key is configured")
+    model = (body.models or chat.model_profiles or [ws_llm["default_model"]])[0]
     attachments = _attachments_from_requests(workspace_id, body.attachments)
     attachment_context = _attachment_context(attachments)
     history = store.list_messages(chat_id, limit=20)

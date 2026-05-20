@@ -24,8 +24,6 @@ interface Agent {
   workspace_id?: string | null
 }
 
-const FALLBACK_MODELS = ['gpt-4o', 'gpt-4o-mini', 'claude-sonnet-4-20250514']
-
 export function LeftPanel({ dragHandleProps }: { dragHandleProps?: DragHandleProps }) {
   const { selectedAgentId, setSelectedAgent } = useWorkspaceStore()
   const queryClient = useQueryClient()
@@ -39,8 +37,8 @@ export function LeftPanel({ dragHandleProps }: { dragHandleProps?: DragHandlePro
 
   const selected = agents.find((a) => a.id === selectedAgentId) || null
 
-  // Fetch available models, fallback to hardcoded list
-  const { data: availableModels = FALLBACK_MODELS } = useQuery<string[]>({
+  // Fetch available models from the configured provider.
+  const { data: availableModels = [] } = useQuery<string[]>({
     queryKey: ['models'],
     queryFn: () => api.get('/providers/models').then((r) => r.data),
     staleTime: 5 * 60 * 1000,
@@ -49,7 +47,7 @@ export function LeftPanel({ dragHandleProps }: { dragHandleProps?: DragHandlePro
   // Create agent
   const [showCreate, setShowCreate] = useState(false)
   const [newName, setNewName] = useState('')
-  const [newModel, setNewModel] = useState('gpt-4o')
+  const [newModel, setNewModel] = useState('')
 
   const createMutation = useMutation({
     mutationFn: (data: { name: string; model: string }) =>
@@ -147,11 +145,14 @@ export function LeftPanel({ dragHandleProps }: { dragHandleProps?: DragHandlePro
                     className="bg-background"
                   />
                   <select
-                    value={newModel}
+                    value={newModel || availableModels[0] || ''}
                     onChange={(e) => setNewModel(e.target.value)}
                     className="w-full px-4 py-2 bg-background border border-border rounded-xl text-sm text-foreground outline-none focus:ring-2 focus:ring-primary/20 transition-all appearance-none"
                     style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2364748b'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 1rem center', backgroundSize: '1rem' }}
                   >
+                    {availableModels.length === 0 && (
+                      <option value="">Configure provider models first</option>
+                    )}
                     {availableModels.map((m) => (
                       <option key={m} value={m}>
                         {m}
@@ -162,8 +163,8 @@ export function LeftPanel({ dragHandleProps }: { dragHandleProps?: DragHandlePro
                     <Button
                       size="sm"
                       className="flex-1"
-                      disabled={!workspaceId || !newName.trim() || createMutation.isPending}
-                      onClick={() => createMutation.mutate({ name: newName, model: newModel })}
+                      disabled={!workspaceId || !newName.trim() || !availableModels.length || createMutation.isPending}
+                      onClick={() => createMutation.mutate({ name: newName, model: newModel || availableModels[0] })}
                     >
                       Create
                     </Button>

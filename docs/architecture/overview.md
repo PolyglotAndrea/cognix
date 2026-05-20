@@ -89,7 +89,7 @@ Agent Runtime
 2. **Tool vs Skill**: Tool is atomic; Skill is Tool + config + dependencies
 3. **Event-driven**: modules decoupled via EventBus
 4. **Progressive storage**: SQLite for dev (zero config), PostgreSQL for prod
-5. **LLM abstraction**: LiteLLM provides unified interface; Agent falls back to echo if not configured
+5. **LLM abstraction**: LiteLLM provides the unified interface; Agents require a real configured provider and fail with an actionable error when provider credentials or models are unavailable
 
 ## Product Refactor Plan
 
