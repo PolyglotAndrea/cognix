@@ -37,8 +37,15 @@ steps:
     output: summary
 `
 
-export default function TaskList() {
+type TaskListView = 'full' | 'scheduled'
+
+interface TaskListProps {
+  view?: TaskListView
+}
+
+export default function TaskList({ view = 'full' }: TaskListProps) {
   const queryClient = useQueryClient()
+  const scheduledOnly = view === 'scheduled'
   const [showWorkflowForm, setShowWorkflowForm] = useState(false)
   const [workflowName, setWorkflowName] = useState('Research Team')
   const [workflowDefinition, setWorkflowDefinition] = useState(DEFAULT_WORKFLOW)
@@ -58,6 +65,11 @@ export default function TaskList() {
     queryFn: () => api.get(`/workspaces/${workspace.id}/workflows`).then((r) => r.data),
     enabled: !!workspace,
   })
+
+  const visibleTasks =
+    scheduledOnly && workspace?.id
+      ? tasks.filter((task) => task.workspace_id === workspace.id)
+      : tasks
 
   const saveWorkflowMutation = useMutation({
     mutationFn: () =>
@@ -120,21 +132,23 @@ export default function TaskList() {
   })
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500 font-outfit">
-      <div className="flex items-center justify-between gap-6">
-        <div>
-          <h2 className="text-3xl font-bold tracking-tight text-foreground">Agent Teams & Tasks</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Monitor scheduled jobs and define workspace-scoped multi-agent workflows.
-          </p>
+    <div className={`${scheduledOnly ? 'space-y-0' : 'space-y-8'} animate-in fade-in duration-500 font-outfit`}>
+      {!scheduledOnly && (
+        <div className="flex items-center justify-between gap-6">
+          <div>
+            <h2 className="text-3xl font-bold tracking-tight text-foreground">Agent Teams & Tasks</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Monitor scheduled jobs and define workspace-scoped multi-agent workflows.
+            </p>
+          </div>
+          <Button onClick={() => setShowWorkflowForm((open) => !open)}>
+            <Plus className="h-4 w-4" />
+            Workflow
+          </Button>
         </div>
-        <Button onClick={() => setShowWorkflowForm((open) => !open)}>
-          <Plus className="h-4 w-4" />
-          Workflow
-        </Button>
-      </div>
+      )}
 
-      {showWorkflowForm && (
+      {!scheduledOnly && showWorkflowForm && (
         <section className="rounded-2xl border border-border bg-card p-5 shadow-xl">
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-[320px_1fr]">
             <div className="space-y-4">
@@ -158,77 +172,83 @@ export default function TaskList() {
         </section>
       )}
 
-      <section className="rounded-2xl border border-border bg-card">
-        <div className="flex items-center justify-between border-b border-border px-6 py-4">
-          <div>
-            <h3 className="text-sm font-bold text-foreground">Workspace Workflows</h3>
-            <p className="text-[11px] text-muted-foreground">{workspace?.name || 'No workspace selected'}</p>
+      {!scheduledOnly && (
+        <section className="rounded-2xl border border-border bg-card">
+          <div className="flex items-center justify-between border-b border-border px-6 py-4">
+            <div>
+              <h3 className="text-sm font-bold text-foreground">Workspace Workflows</h3>
+              <p className="text-[11px] text-muted-foreground">{workspace?.name || 'No workspace selected'}</p>
+            </div>
+            <Badge variant="primary">{workflows.length} definitions</Badge>
           </div>
-          <Badge variant="primary">{workflows.length} definitions</Badge>
-        </div>
 
-        {workflowsLoading ? (
-          <LoadingState text="Loading workflows..." />
-        ) : workflows.length === 0 ? (
-          <EmptyState icon={FileCode2} title="No Workflows" text="Create a YAML workflow to coordinate multiple agents." />
-        ) : (
-          <div className="divide-y divide-border">
-            {workflows.map((workflow) => (
-              <div key={workflow.id} className="px-6 py-5">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h4 className="text-sm font-bold text-foreground">{workflow.name}</h4>
-                      <Badge variant={workflow.errors.length ? 'error' : 'success'}>
-                        {workflow.errors.length ? 'Invalid' : `${workflow.step_count} steps`}
-                      </Badge>
+          {workflowsLoading ? (
+            <LoadingState text="Loading workflows..." />
+          ) : workflows.length === 0 ? (
+            <EmptyState icon={FileCode2} title="No Workflows" text="Create a YAML workflow to coordinate multiple agents." />
+          ) : (
+            <div className="divide-y divide-border">
+              {workflows.map((workflow) => (
+                <div key={workflow.id} className="px-6 py-5">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h4 className="text-sm font-bold text-foreground">{workflow.name}</h4>
+                        <Badge variant={workflow.errors.length ? 'error' : 'success'}>
+                          {workflow.errors.length ? 'Invalid' : `${workflow.step_count} steps`}
+                        </Badge>
+                      </div>
+                      <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                        {workflow.description || workflow.id}
+                      </p>
+                      {workflow.errors.length > 0 && (
+                        <p className="mt-2 text-xs font-medium text-rose-500">{workflow.errors.join(', ')}</p>
+                      )}
+                      {runOutput[workflow.id] && (
+                        <pre className="mt-3 max-h-32 overflow-auto rounded-xl border border-border bg-muted/50 p-3 text-xs text-muted-foreground">
+                          {runOutput[workflow.id]}
+                        </pre>
+                      )}
                     </div>
-                    <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                      {workflow.description || workflow.id}
-                    </p>
-                    {workflow.errors.length > 0 && (
-                      <p className="mt-2 text-xs font-medium text-rose-500">{workflow.errors.join(', ')}</p>
-                    )}
-                    {runOutput[workflow.id] && (
-                      <pre className="mt-3 max-h-32 overflow-auto rounded-xl border border-border bg-muted/50 p-3 text-xs text-muted-foreground">
-                        {runOutput[workflow.id]}
-                      </pre>
-                    )}
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <button
-                      onClick={() => runWorkflowMutation.mutate(workflow.id)}
-                      disabled={workflow.errors.length > 0 || runWorkflowMutation.isPending}
-                      className="flex h-9 w-9 items-center justify-center rounded-xl border border-transparent text-muted-foreground transition-all hover:border-emerald-500/20 hover:bg-emerald-500/10 hover:text-emerald-500 disabled:opacity-40"
-                      aria-label={`Run ${workflow.name}`}
-                    >
-                      <Play className="h-4 w-4" />
-                    </button>
-                    <button
-                      onClick={() => deleteWorkflowMutation.mutate(workflow.id)}
-                      disabled={deleteWorkflowMutation.isPending}
-                      className="flex h-9 w-9 items-center justify-center rounded-xl border border-transparent text-muted-foreground transition-all hover:border-rose-500/20 hover:bg-rose-500/10 hover:text-rose-500 disabled:opacity-40"
-                      aria-label={`Delete ${workflow.name}`}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <button
+                        onClick={() => runWorkflowMutation.mutate(workflow.id)}
+                        disabled={workflow.errors.length > 0 || runWorkflowMutation.isPending}
+                        className="flex h-9 w-9 items-center justify-center rounded-xl border border-transparent text-muted-foreground transition-all hover:border-emerald-500/20 hover:bg-emerald-500/10 hover:text-emerald-500 disabled:opacity-40"
+                        aria-label={`Run ${workflow.name}`}
+                      >
+                        <Play className="h-4 w-4" />
+                      </button>
+                      <button
+                        onClick={() => deleteWorkflowMutation.mutate(workflow.id)}
+                        disabled={deleteWorkflowMutation.isPending}
+                        className="flex h-9 w-9 items-center justify-center rounded-xl border border-transparent text-muted-foreground transition-all hover:border-rose-500/20 hover:bg-rose-500/10 hover:text-rose-500 disabled:opacity-40"
+                        aria-label={`Delete ${workflow.name}`}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       <section className="rounded-2xl border border-border bg-card">
         <div className="border-b border-border px-6 py-4">
           <h3 className="text-sm font-bold text-foreground">Scheduled Tasks</h3>
-          <p className="text-[11px] text-muted-foreground">APScheduler-backed recurring and one-shot jobs</p>
+          <p className="text-[11px] text-muted-foreground">
+            {scheduledOnly
+              ? `${workspace?.name || 'Current workspace'} scoped recurring and one-shot jobs`
+              : 'APScheduler-backed recurring and one-shot jobs'}
+          </p>
         </div>
 
         {tasksLoading ? (
           <LoadingState text="Synchronizing task scheduler..." />
-        ) : tasks.length === 0 ? (
+        ) : visibleTasks.length === 0 ? (
           <EmptyState icon={Clock} title="No Scheduled Tasks" text="Create one-shot or recurring task schedules through the API or CLI." />
         ) : (
           <div className="overflow-hidden">
@@ -244,7 +264,7 @@ export default function TaskList() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {tasks.map((task) => (
+                {visibleTasks.map((task) => (
                   <Fragment key={task.id}>
                     <tr className="group transition-colors hover:bg-muted/30">
                       <td className="px-6 py-5">

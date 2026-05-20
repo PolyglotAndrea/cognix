@@ -342,7 +342,7 @@ export function TopBar() {
         size="xl"
       >
         <Suspense fallback={<div className="py-20 flex flex-col items-center gap-4 text-muted-foreground"><Spinner /><p className="text-sm animate-pulse">Initializing tasks...</p></div>}>
-          <TaskList />
+          <TaskList view="scheduled" />
         </Suspense>
       </Modal>
 
