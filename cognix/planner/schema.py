@@ -33,11 +33,18 @@ class WorkspacePlan:
     id: str
     workspace_id: str
     summary: str
+    intent_type: str = "task"
+    execution_mode: str = "once"
     steps: list[PlanStep] = field(default_factory=list)
     required_skills: list[str] = field(default_factory=list)
     required_connectors: list[str] = field(default_factory=list)
     sandbox_permissions: list[str] = field(default_factory=list)
     expected_artifacts: list[str] = field(default_factory=list)
+    recommended_agents: list[dict[str, Any]] = field(default_factory=list)
+    recommended_skills: list[dict[str, Any]] = field(default_factory=list)
+    recommended_mcp_tools: list[dict[str, Any]] = field(default_factory=list)
+    scheduling: dict[str, Any] = field(default_factory=dict)
+    capability_snapshot: dict[str, Any] = field(default_factory=dict)
     estimated_cost: str = "unknown"
     status: str = "proposed"  # proposed, confirmed, rejected, executing, applied
     # step_id -> pending|executing|completed|failed
@@ -49,11 +56,18 @@ class WorkspacePlan:
             "id": self.id,
             "workspace_id": self.workspace_id,
             "summary": self.summary,
+            "intent_type": self.intent_type,
+            "execution_mode": self.execution_mode,
             "steps": [s.to_dict() for s in self.steps],
             "required_skills": self.required_skills,
             "required_connectors": self.required_connectors,
             "sandbox_permissions": self.sandbox_permissions,
             "expected_artifacts": self.expected_artifacts,
+            "recommended_agents": self.recommended_agents,
+            "recommended_skills": self.recommended_skills,
+            "recommended_mcp_tools": self.recommended_mcp_tools,
+            "scheduling": self.scheduling,
+            "capability_snapshot": self.capability_snapshot,
             "estimated_cost": self.estimated_cost,
             "status": self.status,
             "step_statuses": self.step_statuses,

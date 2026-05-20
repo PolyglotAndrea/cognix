@@ -47,6 +47,12 @@ export function PlanCard({
 }) {
   const stepStatuses = plan.step_statuses || {}
   const isExecuting = plan.status === 'executing' || isApplying
+  const recommendedAgents = plan.recommended_agents || []
+  const recommendedSkills = plan.recommended_skills || []
+  const recommendedMcpTools = plan.recommended_mcp_tools || []
+  const scheduling = plan.scheduling || {}
+  const capabilitySnapshot = plan.capability_snapshot || {}
+  const provider = (capabilitySnapshot.provider || {}) as Record<string, unknown>
   return (
     <div className="rounded-2xl border border-border bg-card shadow-lg overflow-hidden animate-in fade-in slide-in-from-bottom-4 duration-300">
       {/* Header */}
@@ -60,6 +66,11 @@ export function PlanCard({
               </span>
             </div>
             <p className="text-sm font-semibold text-foreground">{plan.summary}</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <PlanPill label={plan.intent_type || 'task'} />
+              <PlanPill label={plan.execution_mode || 'once'} />
+              {Boolean(provider.default_model) && <PlanPill label={String(provider.default_model)} muted />}
+            </div>
           </div>
           <span
             className={`text-xs font-bold font-mono ${
@@ -70,6 +81,46 @@ export function PlanCard({
           </span>
         </div>
       </div>
+
+      {/* Planner Decisions */}
+      {(recommendedAgents.length > 0 || recommendedSkills.length > 0 || recommendedMcpTools.length > 0 || Boolean(scheduling.needed)) && (
+        <div className="px-6 py-4 border-b border-border/50 bg-muted/10 grid grid-cols-1 gap-3">
+          {recommendedAgents.length > 0 && (
+            <DecisionRow
+              icon={Bot}
+              label="Agents"
+              value={recommendedAgents
+                .map((agent) => String(agent.name || agent.role || 'agent'))
+                .join(', ')}
+            />
+          )}
+          {recommendedSkills.length > 0 && (
+            <DecisionRow
+              icon={Puzzle}
+              label="Skills"
+              value={recommendedSkills
+                .map((skill) => `${String(skill.name || 'skill')}${skill.available === false ? ' (recommended)' : ''}`)
+                .join(', ')}
+            />
+          )}
+          {recommendedMcpTools.length > 0 && (
+            <DecisionRow
+              icon={Cpu}
+              label="MCP"
+              value={recommendedMcpTools
+                .map((tool) => `${String(tool.server || 'mcp')}/${String(tool.tool || 'tool')}`)
+                .join(', ')}
+            />
+          )}
+          {Boolean(scheduling.needed) && (
+            <DecisionRow
+              icon={Clock}
+              label="Schedule"
+              value={`${String(scheduling.kind || 'scheduled')} ${String(scheduling.expression || '')}`.trim()}
+            />
+          )}
+        </div>
+      )}
 
       {/* Steps */}
       <div className="px-6 py-4 space-y-3">
@@ -186,6 +237,36 @@ export function PlanCard({
           </>
         )}
       </div>
+    </div>
+  )
+}
+
+function PlanPill({ label, muted = false }: { label: string; muted?: boolean }) {
+  return (
+    <span className={`rounded-full border px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider ${
+      muted
+        ? 'border-border bg-background text-muted-foreground'
+        : 'border-primary/20 bg-primary/10 text-primary'
+    }`}>
+      {label}
+    </span>
+  )
+}
+
+function DecisionRow({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: typeof Bot
+  label: string
+  value: string
+}) {
+  return (
+    <div className="flex items-center gap-2 text-[11px]">
+      <Icon className="h-3.5 w-3.5 text-primary/60" />
+      <span className="font-bold uppercase tracking-wider text-muted-foreground/60">{label}</span>
+      <span className="min-w-0 flex-1 truncate text-foreground/70">{value}</span>
     </div>
   )
 }

@@ -12,11 +12,18 @@ export interface WorkspacePlan {
   id: string
   workspace_id: string
   summary: string
+  intent_type: string
+  execution_mode: string
   steps: PlanStep[]
   required_skills: string[]
   required_connectors: string[]
   sandbox_permissions: string[]
   expected_artifacts: string[]
+  recommended_agents: Array<Record<string, unknown>>
+  recommended_skills: Array<Record<string, unknown>>
+  recommended_mcp_tools: Array<Record<string, unknown>>
+  scheduling: Record<string, unknown>
+  capability_snapshot: Record<string, unknown>
   estimated_cost: string
   status: string
   step_statuses: Record<string, string>

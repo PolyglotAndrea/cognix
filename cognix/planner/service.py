@@ -19,11 +19,16 @@ logger = logging.getLogger(__name__)
 
 PLAN_SYSTEM_PROMPT = """\
 You are a workspace planning agent. Given a user's intent and the current workspace state, \
-produce a structured execution plan as JSON.
+produce a structured execution plan as JSON. You must decide whether the request is a simple \
+chat, one-shot task, long-running task, recurring scheduled task, research workflow, file \
+operation, integration workflow, or multi-agent team workflow. Use only capabilities that are \
+available in the workspace context unless you explicitly recommend installing or enabling them.
 
 Output ONLY valid JSON matching this schema:
 {
   "summary": "One-sentence description of what will happen",
+  "intent_type": "chat|task|research|automation|file_operation|integration|multi_agent|scheduled",
+  "execution_mode": "chat|once|long_running|scheduled|multi_agent",
   "steps": [
     {
       "id": "step_1",
@@ -37,6 +42,21 @@ Output ONLY valid JSON matching this schema:
   "required_connectors": ["connector_name"],
   "sandbox_permissions": ["file_write", "network_access"],
   "expected_artifacts": ["report", "dataset"],
+  "recommended_agents": [
+    {"name": "research-agent", "role": "researcher", "reason": "why this agent is needed"}
+  ],
+  "recommended_skills": [
+    {"name": "web_search", "available": true, "reason": "why it helps"}
+  ],
+  "recommended_mcp_tools": [
+    {"server": "filesystem", "tool": "read_file", "reason": "why it is needed"}
+  ],
+  "scheduling": {
+    "needed": false,
+    "kind": "once|interval|cron",
+    "expression": "",
+    "reason": ""
+  },
   "estimated_cost": "low|medium|high"
 }
 
@@ -45,6 +65,14 @@ Actions:
 - create_task: params = { name, agent_name, schedule_type, cron_or_interval, input }
 - install_skill: params = { skill_name }
 - configure_mcp: params = { name, command, args }
+
+Rules:
+- Prefer one primary agent for simple work.
+- Use multiple agents only when distinct roles can run independently or sequentially.
+- Use create_task with schedule_type="once" for immediate execution.
+- Use create_task with schedule_type="cron" or "interval" only for explicitly recurring work.
+- Set expected_artifacts to useful user-facing outputs, never raw logs.
+- If a model is not listed as available, use the effective default model from context.
 """
 
 
@@ -96,11 +124,18 @@ class PlannerService:
             id=data["id"],
             workspace_id=data["workspace_id"],
             summary=data["summary"],
+            intent_type=data.get("intent_type", "task"),
+            execution_mode=data.get("execution_mode", "once"),
             steps=steps,
             required_skills=data.get("required_skills", []),
             required_connectors=data.get("required_connectors", []),
             sandbox_permissions=data.get("sandbox_permissions", []),
             expected_artifacts=data.get("expected_artifacts", []),
+            recommended_agents=data.get("recommended_agents", []),
+            recommended_skills=data.get("recommended_skills", []),
+            recommended_mcp_tools=data.get("recommended_mcp_tools", []),
+            scheduling=data.get("scheduling", {}),
+            capability_snapshot=data.get("capability_snapshot", {}),
             estimated_cost=data.get("estimated_cost", "unknown"),
             status=data.get("status", "proposed"),
             step_statuses=data.get("step_statuses", {}),
@@ -165,11 +200,18 @@ class PlannerService:
             id=plan_id,
             workspace_id=workspace_id,
             summary=plan_json.get("summary", user_intent[:100]),
+            intent_type=plan_json.get("intent_type", "task"),
+            execution_mode=plan_json.get("execution_mode", "once"),
             steps=steps,
             required_skills=plan_json.get("required_skills", []),
             required_connectors=plan_json.get("required_connectors", []),
             sandbox_permissions=plan_json.get("sandbox_permissions", []),
             expected_artifacts=plan_json.get("expected_artifacts", []),
+            recommended_agents=plan_json.get("recommended_agents", []),
+            recommended_skills=plan_json.get("recommended_skills", []),
+            recommended_mcp_tools=plan_json.get("recommended_mcp_tools", []),
+            scheduling=plan_json.get("scheduling", {}),
+            capability_snapshot=self._compact_capability_snapshot(context),
             estimated_cost=plan_json.get("estimated_cost", "unknown"),
             status="proposed",
             created_at=now,
@@ -453,34 +495,100 @@ class PlannerService:
             run = await executor.execute(task_id, payload)
         except Exception as exc:
             logger.warning("Plan task execution failed: %s", exc)
-            return {"status": "failure", "result": "", "error": str(exc)}
+            return {
+                "status": "failure",
+                "result": "",
+                "error": self._humanize_runtime_error(str(exc)),
+            }
 
         status = run.get("status", "success")
         return {
             "status": status,
             "result": run.get("result", "") if status == "success" else "",
-            "error": run.get("error", "") if status != "success" else "",
+            "error": self._humanize_runtime_error(run.get("error", ""))
+            if status != "success"
+            else "",
             "artifact_id": run.get("artifact_id"),
             "duration_ms": run.get("duration_ms", 0),
             "started_at": run.get("started_at"),
             "finished_at": run.get("finished_at"),
         }
 
+    @staticmethod
+    def _humanize_runtime_error(error: str) -> str:
+        """Convert provider/runtime internals into actionable product errors."""
+        if not error:
+            return ""
+        lowered = error.lower()
+        if "<!doctype html>" in lowered or "<html" in lowered:
+            return (
+                "The configured provider returned a web page instead of an API response. "
+                "Check the provider Base URL in Account Settings or Workspace Settings; "
+                "OpenAI-compatible gateways usually need a /v1 API endpoint."
+            )
+        if "model" in lowered and (
+            "not found" in lowered or "no channel" in lowered or "under group" in lowered
+        ):
+            return (
+                "The selected model is not available from the current provider. "
+                "Choose an available model or update the provider configuration."
+            )
+        if "api key" in lowered or "unauthorized" in lowered or "401" in lowered:
+            return (
+                "The provider rejected the API key. Update the API key in Account Settings "
+                "or configure a workspace-level provider override."
+            )
+        return error
+
     def _build_workspace_context(self, workspace_id: str) -> dict:
         """Load current workspace state for the planner."""
+        from cognix.config import get_settings
+        from cognix.providers.resolver import resolve_provider
+        from cognix.skills.manager import SkillsManager
+
         ws_config = WorkspaceConfigStore(workspace_id)
+        provider = resolve_provider(workspace_id)
 
         skills = []
+        installed_skills = []
         try:
             settings = ws_config.get_settings()
             skills = settings.get("enabled_skills", [])
+        except Exception:
+            pass
+        try:
+            installed_skills = [
+                {
+                    "name": skill.get("name", ""),
+                    "description": skill.get("description", ""),
+                    "tags": skill.get("tags", ""),
+                    "enabled": skill.get("name") in skills,
+                }
+                for skill in SkillsManager(
+                    local_dir=get_settings().skills.local_dir
+                ).list_installed()
+            ]
         except Exception:
             pass
 
         mcp_servers = []
         try:
             mcp_servers = [
-                {"id": s.id, "name": s.name, "command": s.command}
+                {
+                    "id": s.id,
+                    "name": s.name,
+                    "command": s.command,
+                    "enabled": getattr(s, "enabled", True),
+                    "tool_count": len(getattr(s, "tools", []) or []),
+                    "tools": [
+                        {
+                            "name": tool.get("name", ""),
+                            "description": tool.get("description", ""),
+                        }
+                        for tool in (getattr(s, "tools", []) or [])[:8]
+                        if isinstance(tool, dict)
+                    ],
+                }
                 for s in ws_config.list_mcp_servers()
             ]
         except Exception:
@@ -494,9 +602,36 @@ class PlannerService:
 
         return {
             "workspace_id": workspace_id,
+            "provider": {
+                "configured": bool(provider.api_key),
+                "base_url_configured": bool(provider.base_url),
+                "default_model": provider.default_model,
+            },
             "enabled_skills": skills,
+            "installed_skills": installed_skills[:20],
             "mcp_servers": mcp_servers,
             "connectors": connectors,
+            "agents": [],
+        }
+
+    @staticmethod
+    def _compact_capability_snapshot(context: dict) -> dict:
+        """Persist a small explanation snapshot without storing secrets or large tool schemas."""
+        return {
+            "provider": context.get("provider", {}),
+            "enabled_skills": context.get("enabled_skills", []),
+            "installed_skill_count": len(context.get("installed_skills", [])),
+            "mcp_server_count": len(context.get("mcp_servers", [])),
+            "connector_count": len(context.get("connectors", [])),
+            "mcp_servers": [
+                {
+                    "name": server.get("name", ""),
+                    "tool_count": server.get("tool_count", 0),
+                    "enabled": server.get("enabled", True),
+                }
+                for server in context.get("mcp_servers", [])[:10]
+            ],
+            "connectors": context.get("connectors", [])[:10],
         }
 
     async def _generate_plan_json(
@@ -511,7 +646,7 @@ class PlannerService:
         provider = resolve_provider(workspace_id)
         if not provider.api_key:
             # Fallback: generate a simple default plan
-            return self._default_plan(user_intent)
+            return self._default_plan(user_intent, context)
 
         try:
             import litellm
@@ -555,10 +690,10 @@ class PlannerService:
                         json_lines.append(line)
                 content = "\n".join(json_lines)
 
-            return json.loads(content)
+            return self._normalize_plan_json(json.loads(content), user_intent, context)
         except Exception as exc:
             logger.warning("LLM plan generation failed: %s — using default plan", exc)
-            return self._default_plan(user_intent)
+            return self._default_plan(user_intent, context)
 
     @staticmethod
     def _sort_steps(steps: list[PlanStep]) -> list[PlanStep]:
@@ -592,20 +727,99 @@ class PlannerService:
 
         return result
 
-    @staticmethod
-    def _default_plan(user_intent: str) -> dict[str, Any]:
-        """Generate a simple default plan when LLM is unavailable."""
+    def _default_plan(self, user_intent: str, context: dict | None = None) -> dict[str, Any]:
+        """Generate a capability-aware default plan when LLM planning is unavailable."""
+        context = context or {}
+        text = user_intent.lower()
+        provider = context.get("provider", {})
+        model = provider.get("default_model") or "gpt-4o"
+        scheduled = any(
+            token in text
+            for token in (
+                "daily",
+                "weekly",
+                "monthly",
+                "每天",
+                "每周",
+                "每月",
+                "定时",
+                "周期",
+                "cron",
+            )
+        )
+        research = any(
+            token in text for token in ("research", "deep research", "调研", "研究", "分析")
+        )
+        long_running = any(
+            token in text for token in ("long", "长期", "持续", "监控", "watch", "monitor")
+        )
+        multi_agent = any(
+            token in text
+            for token in ("team", "团队", "多 agent", "多agent", "拆分", "子 agent", "子agent")
+        )
+        needs_web = any(
+            token in text for token in ("web", "search", "news", "联网", "搜索", "新闻", "最新")
+        )
+
+        intent_type = (
+            "scheduled"
+            if scheduled
+            else "multi_agent"
+            if multi_agent
+            else "research"
+            if research
+            else "automation"
+            if long_running
+            else "task"
+        )
+        execution_mode = (
+            "scheduled"
+            if scheduled
+            else "multi_agent"
+            if multi_agent
+            else "long_running"
+            if long_running
+            else "once"
+        )
+
+        recommended_skills = self._recommend_skills(user_intent, context)
+        recommended_mcp_tools = self._recommend_mcp_tools(user_intent, context)
+        if needs_web and not any(item.get("name") == "web_search" for item in recommended_skills):
+            recommended_skills.append(
+                {
+                    "name": "web_search",
+                    "available": False,
+                    "reason": "The request appears to need current external information.",
+                }
+            )
+
+        agent_name = (
+            "research-agent"
+            if research
+            else "automation-agent"
+            if scheduled or long_running
+            else "task-agent"
+        )
+        artifact = "research report" if research else "task result"
+        schedule_expression = "every 24h" if scheduled else ""
+        schedule_type = "interval" if scheduled else "once"
         return {
             "summary": f"Execute: {user_intent[:100]}",
+            "intent_type": intent_type,
+            "execution_mode": execution_mode,
             "steps": [
                 {
                     "id": "step_1",
                     "action": "create_agent",
                     "description": "Create an agent to handle the task",
                     "params": {
-                        "name": "task-agent",
-                        "model": "gpt-4o",
-                        "system_prompt": f"You are a helpful assistant. Task: {user_intent}",
+                        "name": agent_name,
+                        "model": model,
+                        "system_prompt": (
+                            f"You are a workspace agent. Execute the user's task with clear "
+                            f"progress, source attribution, and durable artifact output.\n\n"
+                            f"Task: {user_intent}"
+                        ),
                     },
                     "depends_on": [],
                 },
@@ -615,19 +829,117 @@ class PlannerService:
                     "description": "Run the agent with the user's request",
                     "params": {
                         "name": "user-task",
-                        "agent_name": "task-agent",
-                        "schedule_type": "once",
+                        "agent_name": agent_name,
+                        "schedule_type": schedule_type,
+                        "cron_or_interval": schedule_expression,
                         "input": user_intent,
+                        "artifact_title": artifact.title(),
                     },
                     "depends_on": ["step_1"],
                 },
             ],
-            "required_skills": [],
+            "required_skills": [
+                item["name"] for item in recommended_skills if item.get("available")
+            ],
             "required_connectors": [],
-            "sandbox_permissions": ["workspace_write"],
-            "expected_artifacts": [],
-            "estimated_cost": "low",
+            "sandbox_permissions": ["network_access"] if needs_web else ["workspace_write"],
+            "expected_artifacts": [artifact],
+            "recommended_agents": [
+                {
+                    "name": agent_name,
+                    "role": "researcher" if research else "operator",
+                    "reason": "Primary owner for planning, execution, and artifact generation.",
+                }
+            ],
+            "recommended_skills": recommended_skills,
+            "recommended_mcp_tools": recommended_mcp_tools,
+            "scheduling": {
+                "needed": scheduled,
+                "kind": schedule_type,
+                "expression": schedule_expression,
+                "reason": "The request asks for recurring execution." if scheduled else "",
+            },
+            "estimated_cost": "medium" if research or multi_agent else "low",
         }
+
+    def _normalize_plan_json(
+        self, plan: dict[str, Any], user_intent: str, context: dict
+    ) -> dict[str, Any]:
+        """Fill missing planner fields and keep model/tool choices aligned with context."""
+        defaults = self._default_plan(user_intent, context)
+        normalized = {**defaults, **plan}
+        normalized["steps"] = plan.get("steps") or defaults["steps"]
+        normalized["recommended_agents"] = (
+            plan.get("recommended_agents") or defaults["recommended_agents"]
+        )
+        normalized["recommended_skills"] = plan.get("recommended_skills") or self._recommend_skills(
+            user_intent, context
+        )
+        normalized["recommended_mcp_tools"] = plan.get(
+            "recommended_mcp_tools"
+        ) or self._recommend_mcp_tools(user_intent, context)
+        normalized["scheduling"] = plan.get("scheduling") or defaults["scheduling"]
+
+        model = context.get("provider", {}).get("default_model") or "gpt-4o"
+        for step in normalized.get("steps", []):
+            if step.get("action") == "create_agent":
+                params = step.setdefault("params", {})
+                params["model"] = params.get("model") or model
+            if step.get("action") == "create_task":
+                params = step.setdefault("params", {})
+                if params.get("schedule_type") in {"interval", "cron"} and not params.get(
+                    "cron_or_interval"
+                ):
+                    params["cron_or_interval"] = (
+                        normalized.get("scheduling", {}).get("expression") or "every 24h"
+                    )
+        return normalized
+
+    @staticmethod
+    def _recommend_skills(user_intent: str, context: dict) -> list[dict[str, Any]]:
+        terms = {
+            part
+            for part in user_intent.lower().replace("/", " ").replace("-", " ").split()
+            if len(part) > 2
+        }
+        recommendations: list[dict[str, Any]] = []
+        for skill in context.get("installed_skills", []):
+            haystack = " ".join(
+                str(skill.get(key, "")).lower() for key in ("name", "description", "tags")
+            )
+            if terms and not any(term in haystack for term in terms):
+                continue
+            recommendations.append(
+                {
+                    "name": skill.get("name", ""),
+                    "available": True,
+                    "enabled": skill.get("enabled", False),
+                    "reason": skill.get("description") or "Installed skill matching the request.",
+                }
+            )
+            if len(recommendations) >= 5:
+                break
+        return recommendations
+
+    @staticmethod
+    def _recommend_mcp_tools(user_intent: str, context: dict) -> list[dict[str, Any]]:
+        text = user_intent.lower()
+        recommendations: list[dict[str, Any]] = []
+        for server in context.get("mcp_servers", []):
+            for tool in server.get("tools", []) or []:
+                tool_text = f"{tool.get('name', '')} {tool.get('description', '')}".lower()
+                if any(token in tool_text for token in text.split() if len(token) > 2):
+                    recommendations.append(
+                        {
+                            "server": server.get("name", ""),
+                            "tool": tool.get("name", ""),
+                            "reason": tool.get("description")
+                            or "MCP tool appears relevant to this task.",
+                        }
+                    )
+                if len(recommendations) >= 6:
+                    return recommendations
+        return recommendations
 
     @staticmethod
     async def _store_task_artifact(
@@ -730,11 +1042,14 @@ class PlannerService:
         user_id: str | None = None,
     ) -> str:
         """Create a scheduled task from plan step params."""
+        from cognix.scheduler.schedules import next_run_time
         from cognix.storage.database import get_session
         from cognix.storage.models import ScheduledTaskModel, TaskState, TaskType
 
         task_id = uuid.uuid4().hex[:12]
-        schedule = params.get("cron") or params.get("schedule") or "once"
+        schedule = (
+            params.get("cron") or params.get("cron_or_interval") or params.get("schedule") or "once"
+        )
 
         # Resolve agent_name -> agent_id from the name mapping built during apply
         agent_id = params.get("agent_id", "")
@@ -757,6 +1072,12 @@ class PlannerService:
                 "step_id": params.get("_step_id", ""),
             }
         )
+        next_run = None
+        if schedule != "once":
+            try:
+                next_run = next_run_time(schedule)
+            except Exception:
+                next_run = None
         task = ScheduledTaskModel(
             id=task_id,
             name=params.get("name", "plan-task"),
@@ -765,7 +1086,19 @@ class PlannerService:
             schedule=schedule,
             payload=payload,
             state=TaskState.ACTIVE,
+            next_run=next_run,
         )
         async with get_session() as session:
             session.add(task)
+        if schedule != "once":
+            try:
+                from cognix.api.state import get_scheduler_engine, schedule_task_in_engine
+
+                engine = get_scheduler_engine()
+                if engine:
+                    schedule_task_in_engine(
+                        engine, task_id, schedule, json.loads(payload), name=task.name
+                    )
+            except Exception:
+                logger.warning("Failed to register planned task in scheduler", exc_info=True)
         return task_id

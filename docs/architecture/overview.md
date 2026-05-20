@@ -94,3 +94,5 @@ Agent Runtime
 ## Product Refactor Plan
 
 See [Cognix Product Refactor Plan](product-refactor-plan.md) for the task-first workspace architecture, BYOK and entitlement flow, sandbox policy, memory router, artifact studio, and phased implementation roadmap.
+
+See [Planner Orchestrator Refactor Plan](planner-orchestrator.md) for the intent-to-plan-to-execution product layer that turns a user goal into agents, skills, MCP usage, scheduled tasks, execution events, artifacts, and memory/playbook follow-up.
