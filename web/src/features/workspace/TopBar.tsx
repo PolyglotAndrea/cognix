@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, Suspense } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Search, Puzzle, Download, Settings, Clock, CreditCard, LogOut, Zap, Moon, Sun, Monitor } from 'lucide-react'
+import { Search, Puzzle, Download, Settings, Clock, CreditCard, LogOut, Zap, Moon, Sun, Monitor, KeyRound, UserCircle } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '@/shared/api/client'
 import { useAuthStore } from '@/features/auth/store'
@@ -21,18 +21,20 @@ interface Skill {
   tags: string
 }
 
-type ModalType = 'tasks' | 'billing' | 'settings' | null
+type ModalType = 'tasks' | 'billing' | 'workspace-settings' | 'account-settings' | 'api-access' | null
 
 export function TopBar() {
   const [search, setSearch] = useState('')
   const [open, setOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [themeMenuOpen, setThemeMenuOpen] = useState(false)
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
   const [activeModal, setActiveModal] = useState<ModalType>(null)
   
   const dropdownRef = useRef<HTMLDivElement>(null)
   const themeRef = useRef<HTMLDivElement>(null)
   const settingsRef = useRef<HTMLDivElement>(null)
+  const userRef = useRef<HTMLDivElement>(null)
   const user = useAuthStore((s) => s.user)
   const { logout } = useAuthStore()
   const { theme, setTheme } = useThemeStore()
@@ -68,6 +70,9 @@ export function TopBar() {
       }
       if (settingsRef.current && !settingsRef.current.contains(e.target as Node)) {
         setSettingsOpen(false)
+      }
+      if (userRef.current && !userRef.current.contains(e.target as Node)) {
+        setUserMenuOpen(false)
       }
     }
     document.addEventListener('mousedown', handleClickOutside)
@@ -237,9 +242,13 @@ export function TopBar() {
 
             <div className="relative" ref={settingsRef}>
               <button
-                onClick={() => setSettingsOpen(!settingsOpen)}
+                onClick={() => {
+                  setSettingsOpen(!settingsOpen)
+                  setThemeMenuOpen(false)
+                  setUserMenuOpen(false)
+                }}
                 className={`p-2 rounded-lg transition-all ${settingsOpen ? 'bg-background text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-background/80'}`}
-                title="Settings & Tools"
+                title="Workspace tools"
               >
                 <Settings className="h-4 w-4" />
               </button>
@@ -247,7 +256,7 @@ export function TopBar() {
               {settingsOpen && (
                 <div className="absolute top-full right-0 mt-3 w-56 bg-card border border-border rounded-2xl shadow-2xl z-[90] p-1.5 animate-in fade-in zoom-in-95 slide-in-from-top-2 duration-200">
                   <div className="px-3 py-2 text-[10px] font-bold text-muted-foreground uppercase tracking-widest border-b border-border/50 mb-1">
-                    Platform Modules
+                    Workspace Tools
                   </div>
                   <div className="space-y-0.5">
                     <button
@@ -268,23 +277,7 @@ export function TopBar() {
 
                     <button
                       onClick={() => {
-                        setActiveModal('billing')
-                        setSettingsOpen(false)
-                      }}
-                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted transition-all group"
-                    >
-                      <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-500 group-hover:bg-emerald-500 group-hover:text-white transition-colors shadow-sm">
-                        <CreditCard className="h-4 w-4" />
-                      </div>
-                      <div className="flex-1 text-left">
-                        <div className="font-bold">Billing & Usage</div>
-                        <div className="text-[10px] font-medium opacity-60">Plans & Invoices</div>
-                      </div>
-                    </button>
-
-                    <button
-                      onClick={() => {
-                        setActiveModal('settings')
+                        setActiveModal('workspace-settings')
                         setSettingsOpen(false)
                       }}
                       className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted transition-all group"
@@ -298,30 +291,20 @@ export function TopBar() {
                       </div>
                     </button>
                   </div>
-
-                  <div className="mt-1 pt-1 border-t border-border/50">
-                    <button
-                      onClick={handleLogout}
-                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold text-rose-500 hover:bg-rose-500/10 transition-all"
-                    >
-                      <div className="w-8 h-8 rounded-lg bg-rose-500/10 flex items-center justify-center">
-                        <LogOut className="h-4 w-4" />
-                      </div>
-                      Sign Out
-                    </button>
-                  </div>
                 </div>
               )}
             </div>
           </div>
           
-          <div className="flex items-center gap-3">
+          <div className="relative flex items-center gap-3" ref={userRef}>
             <button 
               onClick={() => {
-                setActiveModal('settings')
+                setUserMenuOpen(!userMenuOpen)
                 setSettingsOpen(false)
+                setThemeMenuOpen(false)
               }}
               className="w-9 h-9 rounded-xl bg-gradient-to-tr from-primary to-indigo-600 p-[1.5px] hover:scale-105 active:scale-95 transition-all cursor-pointer shadow-lg shadow-primary/20 flex items-center justify-center"
+              title="Account menu"
             >
               <div className="w-full h-full bg-card rounded-[10px] flex items-center justify-center group overflow-hidden relative">
                 <div className="absolute inset-0 bg-primary/0 group-hover:bg-primary/5 transition-colors" />
@@ -330,6 +313,80 @@ export function TopBar() {
                 </span>
               </div>
             </button>
+
+            {userMenuOpen && (
+              <div className="absolute top-full right-0 mt-3 w-64 bg-card border border-border rounded-2xl shadow-2xl z-[90] p-1.5 animate-in fade-in zoom-in-95 slide-in-from-top-2 duration-200">
+                <div className="px-3 py-3 border-b border-border/50 mb-1">
+                  <div className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Account</div>
+                  <div className="mt-1 truncate text-xs font-bold text-foreground">{user?.name || user?.email || 'Signed in'}</div>
+                  {user?.email && user?.name && (
+                    <div className="truncate text-[10px] font-medium text-muted-foreground">{user.email}</div>
+                  )}
+                </div>
+
+                <div className="space-y-0.5">
+                  <button
+                    onClick={() => {
+                      setActiveModal('account-settings')
+                      setUserMenuOpen(false)
+                    }}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted transition-all group"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-indigo-500/10 flex items-center justify-center text-indigo-500 group-hover:bg-indigo-500 group-hover:text-white transition-colors shadow-sm">
+                      <UserCircle className="h-4 w-4" />
+                    </div>
+                    <div className="flex-1 text-left">
+                      <div className="font-bold">Account Settings</div>
+                      <div className="text-[10px] font-medium opacity-60">Global defaults</div>
+                    </div>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setActiveModal('api-access')
+                      setUserMenuOpen(false)
+                    }}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted transition-all group"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center text-amber-500 group-hover:bg-amber-500 group-hover:text-white transition-colors shadow-sm">
+                      <KeyRound className="h-4 w-4" />
+                    </div>
+                    <div className="flex-1 text-left">
+                      <div className="font-bold">API Access</div>
+                      <div className="text-[10px] font-medium opacity-60">Tokens & CLI auth</div>
+                    </div>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setActiveModal('billing')
+                      setUserMenuOpen(false)
+                    }}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted transition-all group"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-500 group-hover:bg-emerald-500 group-hover:text-white transition-colors shadow-sm">
+                      <CreditCard className="h-4 w-4" />
+                    </div>
+                    <div className="flex-1 text-left">
+                      <div className="font-bold">Billing & Usage</div>
+                      <div className="text-[10px] font-medium opacity-60">Plans & invoices</div>
+                    </div>
+                  </button>
+                </div>
+
+                <div className="mt-1 pt-1 border-t border-border/50">
+                  <button
+                    onClick={handleLogout}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold text-rose-500 hover:bg-rose-500/10 transition-all"
+                  >
+                    <div className="w-8 h-8 rounded-lg bg-rose-500/10 flex items-center justify-center">
+                      <LogOut className="h-4 w-4" />
+                    </div>
+                    Sign Out
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </header>
@@ -358,13 +415,35 @@ export function TopBar() {
       </Modal>
 
       <Modal 
-        isOpen={activeModal === 'settings'} 
+        isOpen={activeModal === 'workspace-settings'} 
         onClose={() => setActiveModal(null)} 
         title="Workspace Settings"
         size="xl"
       >
         <Suspense fallback={<div className="py-20 flex flex-col items-center gap-4 text-muted-foreground"><Spinner /><p className="text-sm animate-pulse">Accessing runtime settings...</p></div>}>
           <SettingsPage scope="workspace" />
+        </Suspense>
+      </Modal>
+
+      <Modal 
+        isOpen={activeModal === 'account-settings'} 
+        onClose={() => setActiveModal(null)} 
+        title="Account Settings"
+        size="xl"
+      >
+        <Suspense fallback={<div className="py-20 flex flex-col items-center gap-4 text-muted-foreground"><Spinner /><p className="text-sm animate-pulse">Accessing account settings...</p></div>}>
+          <SettingsPage scope="global" initialSection="llm" />
+        </Suspense>
+      </Modal>
+
+      <Modal 
+        isOpen={activeModal === 'api-access'} 
+        onClose={() => setActiveModal(null)} 
+        title="API Access"
+        size="xl"
+      >
+        <Suspense fallback={<div className="py-20 flex flex-col items-center gap-4 text-muted-foreground"><Spinner /><p className="text-sm animate-pulse">Loading API access...</p></div>}>
+          <SettingsPage scope="global" initialSection="api" />
         </Suspense>
       </Modal>
     </>

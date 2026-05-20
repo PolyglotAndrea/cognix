@@ -70,10 +70,16 @@ const SETTINGS_SECTIONS = [
 type SectionId = typeof SETTINGS_SECTIONS[number]['id']
 type SettingsScope = 'global' | 'workspace'
 
-export default function SettingsPage({ scope = 'global' }: { scope?: SettingsScope }) {
+export default function SettingsPage({
+  scope = 'global',
+  initialSection = 'memory',
+}: {
+  scope?: SettingsScope
+  initialSection?: SectionId
+}) {
   const queryClient = useQueryClient()
   const isWorkspaceScope = scope === 'workspace'
-  const [activeSection, setActiveSection] = useState<SectionId>('memory')
+  const [activeSection, setActiveSection] = useState<SectionId>(initialSection)
   
   // State for Memory
   const [keyName, setKeyName] = useState('')
