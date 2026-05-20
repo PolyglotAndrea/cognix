@@ -33,6 +33,7 @@ type RightPanelTab =
 
 interface WorkspaceState {
   selectedWorkspaceId: string | null
+  selectedWorkspaceUserId: string | null
   selectedAgentId: string | null
   rightPanelTab: RightPanelTab
   rightPanelOpen: boolean
@@ -48,6 +49,7 @@ interface WorkspaceState {
   addLog: (log: LogEntry) => void
   clearResults: () => void
   toggleRightPanel: () => void
+  setWorkspaceOwner: (userId: string | null) => void
 }
 
 const uid = () => crypto.randomUUID()
@@ -56,6 +58,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
   persist(
     (set) => ({
       selectedWorkspaceId: null,
+      selectedWorkspaceUserId: null,
       selectedAgentId: null,
       rightPanelTab: 'tasks',
       rightPanelOpen: true,
@@ -64,6 +67,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       executionLogs: [],
       setSelectedWorkspace: (id) =>
         set({ selectedWorkspaceId: id, selectedAgentId: null, toolResults: [], executionLogs: [] }),
+      setWorkspaceOwner: (userId) => set({ selectedWorkspaceUserId: userId }),
       setSelectedAgent: (id) => set({ selectedAgentId: id }),
       setRightPanelTab: (tab) => set({ rightPanelTab: tab }),
       setRightPanelOpen: (open) => set({ rightPanelOpen: open }),
@@ -79,6 +83,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       name: 'cognix-workspace-ui',
       partialize: (state) => ({
         selectedWorkspaceId: state.selectedWorkspaceId,
+        selectedWorkspaceUserId: state.selectedWorkspaceUserId,
         rightPanelTab: state.rightPanelTab,
         rightPanelOpen: state.rightPanelOpen,
         inputMode: state.inputMode,
