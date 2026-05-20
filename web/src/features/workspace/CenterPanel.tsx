@@ -80,7 +80,15 @@ interface StreamStep {
 }
 
 export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleProps }) {
-  const { selectedAgentId, setSelectedAgent, inputMode, setInputMode, addToolResult, addLog } = useWorkspaceStore()
+  const {
+    selectedAgentId,
+    setSelectedAgent,
+    inputMode,
+    setInputMode,
+    setRightPanelTab,
+    addToolResult,
+    addLog,
+  } = useWorkspaceStore()
   const queryClient = useQueryClient()
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
@@ -608,7 +616,7 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleP
               }}
               onAgentCreated={(agentId) => {
                 setSelectedAgent(agentId)
-                setInputMode('chat')
+                setRightPanelTab('tasks')
               }}
             />
           </div>
@@ -676,7 +684,7 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleP
                 }}
                 onAgentCreated={(agentId) => {
                   setSelectedAgent(agentId)
-                  setInputMode('chat')
+                  setRightPanelTab('tasks')
                 }}
               />
             )}
@@ -693,14 +701,16 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleP
         <div className="flex items-center justify-between w-full">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 bg-primary/10 rounded-lg flex items-center justify-center border border-primary/20">
-              <Bot className="h-4 w-4 text-primary" />
+              <Sparkles className="h-4 w-4 text-primary" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-sm font-bold text-foreground">{agent?.name || 'Agent'}</span>
+                <span className="text-sm font-bold text-foreground">Workspace Execution</span>
                 <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shadow-sm shadow-emerald-500/50" />
               </div>
-              <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest">{agent?.model}</p>
+              <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest">
+                Agents, skills, MCP, and browser tools are selected internally
+              </p>
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -724,7 +734,7 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleP
               }`}
             >
               <MessageSquare className="h-3.5 w-3.5" />
-              Chat
+              Developer Chat
             </button>
             <div className="w-px h-5 bg-border" />
             <button
@@ -760,6 +770,7 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleP
         </div>
       </PanelHeader>
 
+      {settingsOpen && (
       <div className="px-6 py-3 border-b border-border bg-card/30 flex items-center gap-3 shrink-0 overflow-hidden">
         <div className="flex items-center gap-2 mr-1 text-[10px] font-bold uppercase tracking-widest text-muted-foreground shrink-0">
           <History className="h-3.5 w-3.5 text-primary" />
@@ -790,7 +801,9 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleP
           )}
         </div>
       </div>
+      )}
 
+      {settingsOpen && (
       <div className="px-6 py-3 border-b border-border bg-card/30 flex items-center gap-2 shrink-0">
         <div className="flex items-center gap-2 mr-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
           <Columns3 className="h-3.5 w-3.5 text-primary" />
@@ -812,6 +825,7 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleP
           ))}
         </div>
       </div>
+      )}
 
       {settingsOpen && (
         <div className="px-6 py-4 border-b border-border bg-card/70 shrink-0">

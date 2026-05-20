@@ -17,10 +17,7 @@ import {
   ShieldQuestion,
   ShieldCheck,
   BookOpen,
-  Bot,
   Server,
-  ScrollText,
-  Shield,
 } from 'lucide-react'
 import { api } from '@/shared/api/client'
 import { useAuthStore } from '@/features/auth/store'
@@ -55,12 +52,11 @@ interface TabGroup {
 const TAB_GROUPS: TabGroup[] = [
   {
     key: 'activity',
-    label: 'Activity',
+    label: 'Process',
     defaultOpen: false,
     tabs: [
       { key: 'approvals', label: 'Approvals', icon: ShieldQuestion, color: 'text-amber-500' },
-      { key: 'tasks', label: 'Tasks', icon: Clock, color: 'text-blue-500' },
-      { key: 'events', label: 'Events', icon: Activity, color: 'text-rose-500' },
+      { key: 'tasks', label: 'Long Tasks', icon: Clock, color: 'text-blue-500' },
     ],
   },
   {
@@ -74,20 +70,9 @@ const TAB_GROUPS: TabGroup[] = [
       { key: 'files', label: 'Files', icon: Folder, color: 'text-indigo-500' },
     ],
   },
-  {
-    key: 'system',
-    label: 'System',
-    defaultOpen: false,
-    tabs: [
-      { key: 'policy', label: 'Policy', icon: Shield, color: 'text-orange-500' },
-      { key: 'audit', label: 'Audit', icon: ScrollText, color: 'text-lime-500' },
-      { key: 'bots', label: 'Bots', icon: Bot, color: 'text-pink-500' },
-      { key: 'runtime', label: 'Runtime', icon: Server, color: 'text-teal-500' },
-      { key: 'logs', label: 'Logs', icon: Terminal, color: 'text-slate-500' },
-      { key: 'json', label: 'JSON', icon: FileJson, color: 'text-purple-500' },
-    ],
-  },
 ]
+
+const VISIBLE_TABS = new Set(TAB_GROUPS.flatMap((group) => group.tabs.map((tab) => tab.key)))
 
 interface TaskSummary {
   id: string
@@ -255,6 +240,12 @@ export function RightPanel({ dragHandleProps: _dragHandleProps }: { dragHandlePr
 
   const pendingCount = approvals.filter((a) => a.status === 'pending').length
 
+  useEffect(() => {
+    if (!VISIBLE_TABS.has(rightPanelTab)) {
+      setRightPanelTab('tasks')
+    }
+  }, [rightPanelTab, setRightPanelTab])
+
   if (!rightPanelOpen) {
     return (
       <button
@@ -353,7 +344,7 @@ export function RightPanel({ dragHandleProps: _dragHandleProps }: { dragHandlePr
                       {currentTabDef?.label || 'Panel'}
                     </h3>
                     <p className="text-[9px] text-muted-foreground font-medium uppercase tracking-wider">
-                      Workspace Output & System Status
+                      Process, approvals, long tasks, and outputs
                     </p>
                   </div>
                 </>
