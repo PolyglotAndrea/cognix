@@ -137,6 +137,20 @@ class OrchestrationSnapshotStore:
         )
 
 
+_orchestration_listeners: list[Any] = []
+
+
+def register_orchestration_listener(listener: Any) -> None:
+    """Register a callback for all emitted orchestration events."""
+    _orchestration_listeners.append(listener)
+
+
+def unregister_orchestration_listener(listener: Any) -> None:
+    """Unregister a callback for orchestration events."""
+    if listener in _orchestration_listeners:
+        _orchestration_listeners.remove(listener)
+
+
 def emit_orchestration_event(
     event: OrchestrationEvent,
     *,
@@ -148,6 +162,13 @@ def emit_orchestration_event(
     manager.append_event(event.workspace_id, event.to_workspace_event())
     if snapshot:
         OrchestrationSnapshotStore(home=home).upsert(event)
+
+    for listener in list(_orchestration_listeners):
+        try:
+            listener(event)
+        except Exception:
+            pass
+
 
 
 def emit_workspace_event(

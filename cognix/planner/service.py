@@ -51,6 +51,13 @@ Output ONLY valid JSON matching this schema:
   "recommended_mcp_tools": [
     {"server": "filesystem", "tool": "read_file", "reason": "why it is needed"}
   ],
+  "capability_recommendations": {
+    "skills": [],
+    "mcp_tools": [],
+    "cli_tools": [],
+    "connectors": [],
+    "memory": []
+  },
   "scheduling": {
     "needed": false,
     "kind": "once|interval|cron",
@@ -67,12 +74,19 @@ Actions:
 - configure_mcp: params = { name, command, args }
 
 Rules:
+- Agent Naming: Generate a descriptive semantic name for the agent(s) you create.
+  Summarize the user's intent into a brief prefix and combine it with a role suffix
+  such as `-task-agent`, `-research-agent`, or `-automation-agent`.
+  Examples: `write-blog-task-agent`, `每天发送邮件-automation-agent`.
+  Do not use generic names like `task-agent`.
 - Prefer one primary agent for simple work.
 - Use multiple agents only when distinct roles can run independently or sequentially.
 - Use create_task with schedule_type="once" for immediate execution.
 - Use create_task with schedule_type="cron" or "interval" only for explicitly recurring work.
 - Set expected_artifacts to useful user-facing outputs, never raw logs.
 - If a model is not listed as available, use the effective default model from context.
+- Treat MCP, skills, CLI, connectors, scheduler, and memory as internal capabilities.
+  Describe the user outcome and approval needs, not raw configuration steps.
 """
 
 
@@ -165,7 +179,7 @@ class PlannerService:
         self._cleanup_old_plans()
 
         # Load workspace context
-        context = self._build_workspace_context(workspace_id)
+        context = await self._build_workspace_context(workspace_id, user_id)
 
         # Call LLM to generate plan
         plan_json = await self._generate_plan_json(user_intent, context, workspace_id)
@@ -251,7 +265,7 @@ class PlannerService:
             "mcp_servers": [],
         }
 
-        ws_config = WorkspaceConfigStore(workspace_id)
+        ws_config = WorkspaceConfigStore(workspace_id, home=self.home)
         task_steps: list[tuple[str, dict, str]] = []
         agent_name_to_id: dict[str, str] = {}
         failed_steps: list[str] = []
@@ -276,6 +290,34 @@ class PlannerService:
         )
 
         for step in sorted_steps:
+            # Check if any dependencies failed
+            failed_deps = [dep for dep in step.depends_on if dep in failed_steps]
+            if failed_deps:
+                logger.warning(
+                    "Plan step %s skipped because dependencies failed: %s",
+                    step.id,
+                    failed_deps,
+                )
+                plan.step_statuses[step.id] = "failed"
+                failed_steps.append(step.id)
+                self._save_plan(plan)
+                emit_orchestration_event(
+                    OrchestrationEvent(
+                        workspace_id=workspace_id,
+                        type="plan.step.failed",
+                        stage="plan",
+                        status="failed",
+                        run_id=plan_id,
+                        plan_id=plan_id,
+                        step_id=step.id,
+                        data={
+                            "action": step.action,
+                            "error": f"Dependency step(s) failed: {', '.join(failed_deps)}",
+                        },
+                    )
+                )
+                continue
+
             plan.step_statuses[step.id] = "executing"
             self._save_plan(plan)
             emit_orchestration_event(
@@ -304,7 +346,13 @@ class PlannerService:
                             plan_id=plan_id,
                             step_id=step.id,
                             agent_id=agent_id,
-                            data={"name": step.params.get("name", "")},
+                            data={
+                                "name": step.params.get(
+                                    "_resolved_agent_name",
+                                    step.params.get("name", ""),
+                                ),
+                                "requested_name": step.params.get("name", ""),
+                            },
                         )
                     )
                     agent_name = step.params.get("name", "")
@@ -540,79 +588,11 @@ class PlannerService:
             )
         return error
 
-    def _build_workspace_context(self, workspace_id: str) -> dict:
+    async def _build_workspace_context(self, workspace_id: str, user_id: str | None = None) -> dict:
         """Load current workspace state for the planner."""
-        from cognix.config import get_settings
-        from cognix.providers.resolver import resolve_provider
-        from cognix.skills.manager import SkillsManager
+        from cognix.planner.capabilities import CapabilityResolver
 
-        ws_config = WorkspaceConfigStore(workspace_id)
-        provider = resolve_provider(workspace_id)
-
-        skills = []
-        installed_skills = []
-        try:
-            settings = ws_config.get_settings()
-            skills = settings.get("enabled_skills", [])
-        except Exception:
-            pass
-        try:
-            installed_skills = [
-                {
-                    "name": skill.get("name", ""),
-                    "description": skill.get("description", ""),
-                    "tags": skill.get("tags", ""),
-                    "enabled": skill.get("name") in skills,
-                }
-                for skill in SkillsManager(
-                    local_dir=get_settings().skills.local_dir
-                ).list_installed()
-            ]
-        except Exception:
-            pass
-
-        mcp_servers = []
-        try:
-            mcp_servers = [
-                {
-                    "id": s.id,
-                    "name": s.name,
-                    "command": s.command,
-                    "enabled": getattr(s, "enabled", True),
-                    "tool_count": len(getattr(s, "tools", []) or []),
-                    "tools": [
-                        {
-                            "name": tool.get("name", ""),
-                            "description": tool.get("description", ""),
-                        }
-                        for tool in (getattr(s, "tools", []) or [])[:8]
-                        if isinstance(tool, dict)
-                    ],
-                }
-                for s in ws_config.list_mcp_servers()
-            ]
-        except Exception:
-            pass
-
-        connectors = []
-        try:
-            connectors = [{"id": c.id, "platform": c.platform} for c in ws_config.list_connectors()]
-        except Exception:
-            pass
-
-        return {
-            "workspace_id": workspace_id,
-            "provider": {
-                "configured": bool(provider.api_key),
-                "base_url_configured": bool(provider.base_url),
-                "default_model": provider.default_model,
-            },
-            "enabled_skills": skills,
-            "installed_skills": installed_skills[:20],
-            "mcp_servers": mcp_servers,
-            "connectors": connectors,
-            "agents": [],
-        }
+        return await CapabilityResolver(home=self.home).resolve(workspace_id, user_id)
 
     @staticmethod
     def _compact_capability_snapshot(context: dict) -> dict:
@@ -623,6 +603,10 @@ class PlannerService:
             "installed_skill_count": len(context.get("installed_skills", [])),
             "mcp_server_count": len(context.get("mcp_servers", [])),
             "connector_count": len(context.get("connectors", [])),
+            "cli_tool_count": len(context.get("cli_tools", [])),
+            "agent_count": len(context.get("agents", [])),
+            "memory": context.get("memory", {}),
+            "policy": context.get("policy", {}),
             "mcp_servers": [
                 {
                     "name": server.get("name", ""),
@@ -632,6 +616,7 @@ class PlannerService:
                 for server in context.get("mcp_servers", [])[:10]
             ],
             "connectors": context.get("connectors", [])[:10],
+            "cli_tools": context.get("cli_tools", [])[:10],
         }
 
     async def _generate_plan_json(
@@ -793,13 +778,29 @@ class PlannerService:
                 }
             )
 
-        agent_name = (
-            "research-agent"
+        # Generate a descriptive semantic name from the user intent
+        import re
+        tokens = re.findall(r'[a-zA-Z0-9]+|[\u4e00-\u9fff]', user_intent)
+        semantic_prefix = ""
+        if tokens:
+            semantic_prefix = "-".join(tokens[:3]).lower()
+            # Clean and sanitize the prefix
+            semantic_prefix = re.sub(r'[^a-z0-9\u4e00-\u9fff-]', '', semantic_prefix)
+            semantic_prefix = semantic_prefix[:20].strip("-")
+
+        base_role = (
+            "research"
             if research
-            else "automation-agent"
+            else "automation"
             if scheduled or long_running
-            else "task-agent"
+            else "task"
         )
+        agent_name = (
+            f"{semantic_prefix}-{base_role}-agent"
+            if semantic_prefix
+            else f"{base_role}-agent"
+        )
+
         artifact = "research report" if research else "task result"
         schedule_expression = "every 24h" if scheduled else ""
         schedule_type = "interval" if scheduled else "once"
@@ -1019,20 +1020,66 @@ class PlannerService:
     @staticmethod
     async def _apply_create_agent(workspace_id: str, params: dict) -> str:
         """Create an agent from plan step params."""
+        from sqlalchemy import select
+
         from cognix.storage.database import get_session
         from cognix.storage.models import AgentModel
 
-        agent_id = uuid.uuid4().hex[:12]
-        agent = AgentModel(
-            id=agent_id,
-            workspace_id=workspace_id,
-            name=params.get("name", "plan-agent"),
-            model=params.get("model", "gpt-4o"),
-            system_prompt=params.get("system_prompt", ""),
-        )
+        requested_name = params.get("name", "plan-agent")
         async with get_session() as session:
+            stmt = select(AgentModel).where(
+                AgentModel.name == requested_name,
+                AgentModel.workspace_id == workspace_id,
+            )
+            res = await session.execute(stmt)
+            existing = res.scalar_one_or_none()
+            if existing:
+                logger.info(
+                    "Workspace agent '%s' already exists (ID: %s). Reusing.",
+                    requested_name,
+                    existing.id,
+                )
+                params["_resolved_agent_name"] = existing.name
+                return existing.id
+
+            name = await PlannerService._unique_agent_name(
+                session,
+                requested_name,
+                workspace_id,
+            )
+            agent_id = uuid.uuid4().hex[:12]
+            agent = AgentModel(
+                id=agent_id,
+                workspace_id=workspace_id,
+                name=name,
+                model=params.get("model", "gpt-4o"),
+                system_prompt=params.get("system_prompt", ""),
+            )
             session.add(agent)
+            params["_resolved_agent_name"] = name
         return agent_id
+
+    @staticmethod
+    async def _unique_agent_name(session: Any, requested_name: str, workspace_id: str) -> str:
+        """Return a DB-unique internal agent name without leaking collisions to users."""
+        from sqlalchemy import select
+
+        from cognix.storage.models import AgentModel
+
+        res = await session.execute(select(AgentModel).where(AgentModel.name == requested_name))
+        if res.scalar_one_or_none() is None:
+            return requested_name
+
+        suffix = workspace_id.rsplit("-", 1)[-1][:8] or uuid.uuid4().hex[:6]
+        base = f"{requested_name}-{suffix}"
+        candidate = base
+        counter = 2
+        while True:
+            res = await session.execute(select(AgentModel).where(AgentModel.name == candidate))
+            if res.scalar_one_or_none() is None:
+                return candidate
+            candidate = f"{base}-{counter}"
+            counter += 1
 
     @staticmethod
     async def _apply_create_task(
@@ -1056,6 +1103,11 @@ class PlannerService:
         agent_name = params.get("agent_name", "")
         if not agent_id and agent_name and agent_name_to_id:
             agent_id = agent_name_to_id.get(agent_name, "")
+        if not agent_id:
+            raise ValueError(
+                "Cannot create agent task because no agent_id was resolved. "
+                "Create or reuse an agent before creating an agent_call task."
+            )
         if agent_id:
             params["_resolved_agent_id"] = agent_id
 

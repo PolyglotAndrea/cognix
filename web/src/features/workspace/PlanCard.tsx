@@ -62,7 +62,7 @@ export function PlanCard({
             <div className="flex items-center gap-2 mb-1">
               <Zap className="h-4 w-4 text-primary" />
               <span className="text-[10px] font-bold uppercase tracking-widest text-primary">
-                Execution Plan
+                Recommended Approach
               </span>
             </div>
             <p className="text-sm font-semibold text-foreground">{plan.summary}</p>
@@ -88,27 +88,27 @@ export function PlanCard({
           {recommendedAgents.length > 0 && (
             <DecisionRow
               icon={Bot}
-              label="Agents"
+              label="Work mode"
               value={recommendedAgents
-                .map((agent) => String(agent.name || agent.role || 'agent'))
+                .map((agent) => String(agent.role || agent.name || 'workspace operator'))
                 .join(', ')}
             />
           )}
           {recommendedSkills.length > 0 && (
             <DecisionRow
               icon={Puzzle}
-              label="Skills"
+              label="Internal help"
               value={recommendedSkills
-                .map((skill) => `${String(skill.name || 'skill')}${skill.available === false ? ' (recommended)' : ''}`)
+                .map((skill) => `${String(skill.name || 'capability')}${skill.available === false ? ' (recommended)' : ''}`)
                 .join(', ')}
             />
           )}
           {recommendedMcpTools.length > 0 && (
             <DecisionRow
               icon={Cpu}
-              label="MCP"
+              label="Workspace tools"
               value={recommendedMcpTools
-                .map((tool) => `${String(tool.server || 'mcp')}/${String(tool.tool || 'tool')}`)
+                .map((tool) => String(tool.name || tool.tool || tool.server || 'tool'))
                 .join(', ')}
             />
           )}
@@ -125,7 +125,7 @@ export function PlanCard({
       {/* Steps */}
       <div className="px-6 py-4 space-y-3">
         <h4 className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/60">
-          Steps
+          What Cognix Will Do
         </h4>
         {plan.steps.map((step, i) => {
           const Icon = ACTION_ICONS[step.action] || FileText
@@ -163,7 +163,7 @@ export function PlanCard({
                     isStepExecuting ? 'text-primary bg-primary/10 border-primary/20' :
                     colorClass
                   }`}>
-                    {step.action.replace('_', ' ')}
+                    {actionLabel(step.action)}
                   </span>
                 </div>
                 <p className={`text-xs mt-0.5 ${isStepCompleted || isStepFailed ? 'text-foreground' : isExecuting ? 'text-foreground' : 'text-foreground'}`}>{step.description}</p>
@@ -222,7 +222,7 @@ export function PlanCard({
               ) : (
                 <>
                   <Play className="h-4 w-4" />
-                  Apply & Run
+                  Run this plan
                 </>
               )}
             </button>
@@ -251,6 +251,16 @@ function PlanPill({ label, muted = false }: { label: string; muted?: boolean }) 
       {label}
     </span>
   )
+}
+
+function actionLabel(action: string) {
+  const labels: Record<string, string> = {
+    create_agent: 'prepare',
+    create_task: 'run',
+    install_skill: 'enable help',
+    configure_mcp: 'prepare tool',
+  }
+  return labels[action] || action.replace('_', ' ')
 }
 
 function DecisionRow({

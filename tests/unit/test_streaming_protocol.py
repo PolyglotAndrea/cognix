@@ -18,6 +18,8 @@ def test_stream_payload_keeps_canonical_event_types() -> None:
         "approval_request",
         "error",
         "done",
+        "status",
+        "todo",
     }
 
     payload = stream_payload(AgentEvent("delta", {"delta": "hello"}), extra={"model": "echo"})

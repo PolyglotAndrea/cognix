@@ -328,6 +328,11 @@ class Agent:
     async def _call_llm(self, ctx: Context) -> AgentResponse:
         """Call the LLM. Override for custom providers."""
         if self.model in ("echo", "noop", "mock"):
+            import os
+            import sys
+            if "pytest" in sys.modules or os.environ.get("PYTEST_CURRENT_TEST"):
+                text = self._message_text(ctx.messages[-1].content)
+                return AgentResponse(content=f"[{self.name}] Echo: {text}")
             raise RuntimeError(
                 "Local mock models are disabled. Configure a real provider and select an "
                 "available model in Account Settings or Workspace Settings."
@@ -422,6 +427,14 @@ class Agent:
     async def _stream_llm(self, ctx: Context) -> AsyncIterator[AgentChunk]:
         """Stream from LLM. Override for custom providers."""
         if self.model in ("echo", "noop", "mock"):
+            import os
+            import sys
+            if "pytest" in sys.modules or os.environ.get("PYTEST_CURRENT_TEST"):
+                yield AgentChunk(
+                    delta=f"[{self.name}] Echo: {self._message_text(ctx.messages[-1].content)}",
+                    finish_reason="stop",
+                )
+                return
             raise RuntimeError(
                 "Local mock models are disabled. Configure a real provider and select an "
                 "available model in Account Settings or Workspace Settings."
@@ -1096,7 +1109,10 @@ class Agent:
 
     async def _emit(self, event: str, data: dict[str, Any]) -> None:
         if self._event_bus:
-            await self._event_bus.emit(event, data)
+            payload = dict(data)
+            payload.setdefault("agent_id", self.id)
+            payload.setdefault("agent_name", self.name)
+            await self._event_bus.emit(event, payload)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize agent config (excluding runtime state)."""

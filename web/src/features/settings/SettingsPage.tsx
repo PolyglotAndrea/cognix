@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Bot,
@@ -73,13 +73,19 @@ type SettingsScope = 'global' | 'workspace'
 export default function SettingsPage({
   scope = 'global',
   initialSection = 'memory',
+  hideSidebar = false,
 }: {
   scope?: SettingsScope
   initialSection?: SectionId
+  hideSidebar?: boolean
 }) {
   const queryClient = useQueryClient()
   const isWorkspaceScope = scope === 'workspace'
   const [activeSection, setActiveSection] = useState<SectionId>(initialSection)
+
+  useEffect(() => {
+    setActiveSection(initialSection)
+  }, [initialSection])
   
   // State for Memory
   const [keyName, setKeyName] = useState('')
@@ -349,44 +355,46 @@ export default function SettingsPage({
   return (
     <div className="flex h-[640px] -m-6 bg-background rounded-2xl overflow-hidden">
       {/* Sidebar Navigation */}
-      <aside className="w-64 border-r border-border bg-muted/30 flex flex-col p-4 gap-2 shrink-0">
-        <div className="px-3 py-2 mb-2">
-          <h2 className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground/40">Configuration</h2>
-        </div>
-        {SETTINGS_SECTIONS.map((section) => (
-          <button
-            key={section.id}
-            onClick={() => setActiveSection(section.id)}
-            className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 group ${
-              activeSection === section.id
-                ? 'bg-primary text-white shadow-lg shadow-primary/20 scale-[1.02]'
-                : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-            }`}
-          >
-            <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
-              activeSection === section.id ? 'bg-white/20' : 'bg-primary/10 group-hover:bg-primary/20'
-            }`}>
-               <section.icon className={`h-4 w-4 ${activeSection === section.id ? 'text-white' : 'text-primary'}`} />
-            </div>
-            <div className="text-left flex-1">
-              <div className="text-sm font-bold tracking-tight">{section.label}</div>
-              <div className={`text-[10px] font-medium opacity-60 ${activeSection === section.id ? 'text-white' : ''}`}>
-                {section.description}
-              </div>
-            </div>
-          </button>
-        ))}
-        
-        <div className="mt-auto p-4 rounded-2xl bg-gradient-to-br from-primary/10 to-indigo-500/10 border border-primary/10">
-          <div className="flex items-center gap-2 mb-2">
-            <RadioTower className="h-3.5 w-3.5 text-primary" />
-            <span className="text-[10px] font-bold uppercase tracking-widest text-primary">Runtime v0.8</span>
+      {!hideSidebar && (
+        <aside className="w-64 border-r border-border bg-muted/30 flex flex-col p-4 gap-2 shrink-0">
+          <div className="px-3 py-2 mb-2">
+            <h2 className="text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground/40">Configuration</h2>
           </div>
-          <p className="text-[10px] leading-relaxed text-muted-foreground font-medium">
-            Dynamic context injection and remote messaging bridges are operational.
-          </p>
-        </div>
-      </aside>
+          {SETTINGS_SECTIONS.map((section) => (
+            <button
+              key={section.id}
+              onClick={() => setActiveSection(section.id)}
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 group ${
+                activeSection === section.id
+                  ? 'bg-primary text-white shadow-lg shadow-primary/20 scale-[1.02]'
+                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+              }`}
+            >
+              <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${
+                activeSection === section.id ? 'bg-white/20' : 'bg-primary/10 group-hover:bg-primary/20'
+              }`}>
+                 <section.icon className={`h-4 w-4 ${activeSection === section.id ? 'text-white' : 'text-primary'}`} />
+              </div>
+              <div className="text-left flex-1">
+                <div className="text-sm font-bold tracking-tight">{section.label}</div>
+                <div className={`text-[10px] font-medium opacity-60 ${activeSection === section.id ? 'text-white' : ''}`}>
+                  {section.description}
+                </div>
+              </div>
+            </button>
+          ))}
+          
+          <div className="mt-auto p-4 rounded-2xl bg-gradient-to-br from-primary/10 to-indigo-500/10 border border-primary/10">
+            <div className="flex items-center gap-2 mb-2">
+              <RadioTower className="h-3.5 w-3.5 text-primary" />
+              <span className="text-[10px] font-bold uppercase tracking-widest text-primary">Runtime v0.8</span>
+            </div>
+            <p className="text-[10px] leading-relaxed text-muted-foreground font-medium">
+              Dynamic context injection and remote messaging bridges are operational.
+            </p>
+          </div>
+        </aside>
+      )}
 
       {/* Content Area */}
       <main className="flex-1 overflow-y-auto p-8 scrollbar-hide">

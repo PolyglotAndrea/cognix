@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, Suspense } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Search, Puzzle, Download, Settings, Clock, CreditCard, LogOut, Zap, Moon, Sun, Monitor, KeyRound, UserCircle, Plus } from 'lucide-react'
+import { Search, Puzzle, Download, Settings, Clock, CreditCard, LogOut, Zap, Moon, Sun, Monitor, KeyRound, UserCircle, Plus, Brain, Cpu, Bot } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '@/shared/api/client'
 import { useAuthStore } from '@/features/auth/store'
@@ -21,7 +21,15 @@ interface Skill {
   tags: string
 }
 
-type ModalType = 'tasks' | 'billing' | 'workspace-settings' | 'account-settings' | 'api-access' | null
+type ModalType =
+  | 'tasks'
+  | 'billing'
+  | 'settings-memory'
+  | 'settings-llm'
+  | 'settings-api'
+  | 'settings-bots'
+  | 'settings-global-llm'
+  | null
 
 export function TopBar() {
   const queryClient = useQueryClient()
@@ -279,17 +287,18 @@ export function TopBar() {
               </button>
 
               {settingsOpen && (
-                <div className="absolute top-full right-0 mt-3 w-56 bg-card border border-border rounded-2xl shadow-2xl z-[90] p-1.5 animate-in fade-in zoom-in-95 slide-in-from-top-2 duration-200">
+                <div className="absolute top-full right-0 mt-3 w-64 bg-card border border-border rounded-2xl shadow-2xl z-[90] p-1.5 animate-in fade-in zoom-in-95 slide-in-from-top-2 duration-200">
                   <div className="px-3 py-2 text-[10px] font-bold text-muted-foreground uppercase tracking-widest border-b border-border/50 mb-1">
-                    Workspace Tools
+                    Workspace Configuration
                   </div>
                   <div className="space-y-0.5">
+                    {/* Scheduled Tasks */}
                     <button
                       onClick={() => {
                         setActiveModal('tasks')
                         setSettingsOpen(false)
                       }}
-                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted transition-all group"
+                      className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted transition-all group"
                     >
                       <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-500 group-hover:bg-blue-500 group-hover:text-white transition-colors shadow-sm">
                         <Clock className="h-4 w-4" />
@@ -300,19 +309,54 @@ export function TopBar() {
                       </div>
                     </button>
 
+                    {/* Memory Studio */}
                     <button
                       onClick={() => {
-                        setActiveModal('workspace-settings')
+                        setActiveModal('settings-memory')
                         setSettingsOpen(false)
                       }}
-                      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted transition-all group"
+                      className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted transition-all group"
                     >
                       <div className="w-8 h-8 rounded-lg bg-indigo-500/10 flex items-center justify-center text-indigo-500 group-hover:bg-indigo-500 group-hover:text-white transition-colors shadow-sm">
-                        <Settings className="h-4 w-4" />
+                        <Brain className="h-4 w-4" />
                       </div>
                       <div className="flex-1 text-left">
-                        <div className="font-bold">Workspace Settings</div>
-                        <div className="text-[10px] font-medium opacity-60">Models & Memory</div>
+                        <div className="font-bold">Memory Studio</div>
+                        <div className="text-[10px] font-medium opacity-60">Knowledge & Context</div>
+                      </div>
+                    </button>
+
+                    {/* Model Providers */}
+                    <button
+                      onClick={() => {
+                        setActiveModal('settings-llm')
+                        setSettingsOpen(false)
+                      }}
+                      className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted transition-all group"
+                    >
+                      <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-500 group-hover:bg-emerald-500 group-hover:text-white transition-colors shadow-sm">
+                        <Cpu className="h-4 w-4" />
+                      </div>
+                      <div className="flex-1 text-left">
+                        <div className="font-bold">Model Providers</div>
+                        <div className="text-[10px] font-medium opacity-60">Workspace LLM Config</div>
+                      </div>
+                    </button>
+
+                    {/* Remote Integrations */}
+                    <button
+                      onClick={() => {
+                        setActiveModal('settings-bots')
+                        setSettingsOpen(false)
+                      }}
+                      className="w-full flex items-center gap-3 px-3 py-2 rounded-xl text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted transition-all group"
+                    >
+                      <div className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center text-amber-500 group-hover:bg-amber-500 group-hover:text-white transition-colors shadow-sm">
+                        <Bot className="h-4 w-4" />
+                      </div>
+                      <div className="flex-1 text-left">
+                        <div className="font-bold">Integrations</div>
+                        <div className="text-[10px] font-medium opacity-60">Lark & Feishu bridges</div>
                       </div>
                     </button>
                   </div>
@@ -352,7 +396,7 @@ export function TopBar() {
                 <div className="space-y-0.5">
                   <button
                     onClick={() => {
-                      setActiveModal('account-settings')
+                      setActiveModal('settings-global-llm')
                       setUserMenuOpen(false)
                     }}
                     className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted transition-all group"
@@ -362,13 +406,13 @@ export function TopBar() {
                     </div>
                     <div className="flex-1 text-left">
                       <div className="font-bold">Account Settings</div>
-                      <div className="text-[10px] font-medium opacity-60">Global defaults</div>
+                      <div className="text-[10px] font-medium opacity-60">Global default models</div>
                     </div>
                   </button>
 
                   <button
                     onClick={() => {
-                      setActiveModal('api-access')
+                      setActiveModal('settings-api')
                       setUserMenuOpen(false)
                     }}
                     className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-muted transition-all group"
@@ -440,35 +484,57 @@ export function TopBar() {
       </Modal>
 
       <Modal 
-        isOpen={activeModal === 'workspace-settings'} 
+        isOpen={activeModal === 'settings-memory'} 
         onClose={() => setActiveModal(null)} 
-        title="Workspace Settings"
+        title="Memory Studio"
         size="xl"
       >
-        <Suspense fallback={<div className="py-20 flex flex-col items-center gap-4 text-muted-foreground"><Spinner /><p className="text-sm animate-pulse">Accessing runtime settings...</p></div>}>
-          <SettingsPage scope="workspace" />
+        <Suspense fallback={<div className="py-20 flex flex-col items-center gap-4 text-muted-foreground"><Spinner /><p className="text-sm animate-pulse">Accessing memory workspace...</p></div>}>
+          <SettingsPage scope="workspace" initialSection="memory" hideSidebar={true} />
         </Suspense>
       </Modal>
 
       <Modal 
-        isOpen={activeModal === 'account-settings'} 
+        isOpen={activeModal === 'settings-llm'} 
         onClose={() => setActiveModal(null)} 
-        title="Account Settings"
+        title="Model Providers"
         size="xl"
       >
-        <Suspense fallback={<div className="py-20 flex flex-col items-center gap-4 text-muted-foreground"><Spinner /><p className="text-sm animate-pulse">Accessing account settings...</p></div>}>
-          <SettingsPage scope="global" initialSection="llm" />
+        <Suspense fallback={<div className="py-20 flex flex-col items-center gap-4 text-muted-foreground"><Spinner /><p className="text-sm animate-pulse">Loading model configuration...</p></div>}>
+          <SettingsPage scope="workspace" initialSection="llm" hideSidebar={true} />
         </Suspense>
       </Modal>
 
       <Modal 
-        isOpen={activeModal === 'api-access'} 
+        isOpen={activeModal === 'settings-bots'} 
         onClose={() => setActiveModal(null)} 
-        title="API Access"
+        title="Remote Integrations"
         size="xl"
       >
-        <Suspense fallback={<div className="py-20 flex flex-col items-center gap-4 text-muted-foreground"><Spinner /><p className="text-sm animate-pulse">Loading API access...</p></div>}>
-          <SettingsPage scope="global" initialSection="api" />
+        <Suspense fallback={<div className="py-20 flex flex-col items-center gap-4 text-muted-foreground"><Spinner /><p className="text-sm animate-pulse">Opening integration bridges...</p></div>}>
+          <SettingsPage scope="workspace" initialSection="bots" hideSidebar={true} />
+        </Suspense>
+      </Modal>
+
+      <Modal 
+        isOpen={activeModal === 'settings-global-llm'} 
+        onClose={() => setActiveModal(null)} 
+        title="Global Model Providers"
+        size="xl"
+      >
+        <Suspense fallback={<div className="py-20 flex flex-col items-center gap-4 text-muted-foreground"><Spinner /><p className="text-sm animate-pulse">Accessing account defaults...</p></div>}>
+          <SettingsPage scope="global" initialSection="llm" hideSidebar={true} />
+        </Suspense>
+      </Modal>
+
+      <Modal 
+        isOpen={activeModal === 'settings-api'} 
+        onClose={() => setActiveModal(null)} 
+        title="API Access & Keys"
+        size="xl"
+      >
+        <Suspense fallback={<div className="py-20 flex flex-col items-center gap-4 text-muted-foreground"><Spinner /><p className="text-sm animate-pulse">Loading authorization keys...</p></div>}>
+          <SettingsPage scope="global" initialSection="api" hideSidebar={true} />
         </Suspense>
       </Modal>
     </>

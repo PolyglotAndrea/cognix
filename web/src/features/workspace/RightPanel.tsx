@@ -14,7 +14,6 @@ import {
   Zap,
   ChevronRight,
   ChevronLeft,
-  ChevronDown,
   ShieldQuestion,
   ShieldCheck,
   BookOpen,
@@ -26,7 +25,7 @@ import {
 import { api } from '@/shared/api/client'
 import { useAuthStore } from '@/features/auth/store'
 import { useWorkspaceStore } from './store'
-import { Panel, PanelHeader, PanelBody, Badge } from '@/shared/ui'
+import { Panel, PanelBody, Badge } from '@/shared/ui'
 import { TaskDetailModal } from './TaskDetailModal'
 import { ArtifactPanel } from './ArtifactPanel'
 import { PolicyPanel } from './PolicyPanel'
@@ -145,7 +144,7 @@ interface ApprovalRequest {
   updated_at: string
 }
 
-export function RightPanel({ dragHandleProps }: { dragHandleProps?: DragHandleProps }) {
+export function RightPanel({ dragHandleProps: _dragHandleProps }: { dragHandleProps?: DragHandleProps }) {
   const queryClient = useQueryClient()
   const {
     rightPanelTab,
@@ -162,9 +161,6 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: DragHandlePr
   const [currentDir, setCurrentDir] = useState('')
   const [previewPath, setPreviewPath] = useState<string | null>(null)
   const [selectedTask, setSelectedTask] = useState<TaskSummary | null>(null)
-  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(TAB_GROUPS.map((g) => [g.key, g.defaultOpen]))
-  )
   
   const { workspaceId } = useCurrentWorkspace()
   
@@ -258,7 +254,6 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: DragHandlePr
   }, [executionLogs, rightPanelTab])
 
   const pendingCount = approvals.filter((a) => a.status === 'pending').length
-  const toggleGroup = (key: string) => setOpenGroups((s) => ({ ...s, [key]: !s[key] }))
 
   if (!rightPanelOpen) {
     return (
@@ -286,62 +281,92 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: DragHandlePr
   }
 
   return (
-    <Panel className="w-full min-w-0 shrink-0 border-l border-r-0 border-border bg-card/50 backdrop-blur-xl h-full flex flex-col shadow-2xl">
-      <PanelHeader dragHandleProps={dragHandleProps} className="justify-between px-4 h-14 border-b border-border/50 shrink-0">
-        <span className="text-xs font-black uppercase tracking-widest text-foreground">Panel</span>
-        <button onClick={toggleRightPanel} className="p-2 rounded-xl hover:bg-muted text-muted-foreground hover:text-foreground transition-all shrink-0">
-          <ChevronRight className="h-4 w-4" />
-        </button>
-      </PanelHeader>
+    <Panel className="w-full min-w-0 shrink-0 border-l border-r-0 border-border bg-card/50 backdrop-blur-xl h-full flex flex-row shadow-2xl overflow-hidden p-0">
+      {/* Thin Vertical Navigation Bar */}
+      <div className="w-14 border-r border-border bg-card flex flex-col items-center py-4 gap-4 shrink-0 justify-between h-full relative z-10">
+        {/* Top: Toggle back/close button & active groups */}
+        <div className="flex flex-col items-center gap-4 w-full">
+          <button 
+            onClick={toggleRightPanel} 
+            className="p-2 rounded-xl hover:bg-muted text-muted-foreground hover:text-foreground transition-all shrink-0 mb-2"
+            title="Collapse panel"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
 
-      <div className="border-b border-border/50 shrink-0 bg-card/80">
-        {TAB_GROUPS.map((group) => (
-          <div key={group.key}>
-            <button
-              onClick={() => toggleGroup(group.key)}
-              className="flex items-center justify-between w-full px-4 py-2 text-[10px] font-black uppercase tracking-widest text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
-            >
-              <span className="flex items-center gap-2">
-                {openGroups[group.key] ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-                {group.label}
-              </span>
-              {group.key === 'activity' && pendingCount > 0 && (
-                <span className="min-w-4 h-4 px-1 rounded-full bg-amber-500 text-white text-[8px] font-bold flex items-center justify-center">
-                  {pendingCount}
-                </span>
-              )}
-            </button>
-            {openGroups[group.key] && (
-              <div className="grid grid-cols-2 gap-1 px-3 pb-2">
-                {group.tabs.map((tab) => (
+          {/* Tab Icons organized by groups */}
+          {TAB_GROUPS.map((group, groupIdx) => (
+            <div key={group.key} className="flex flex-col items-center gap-2 w-full">
+              {groupIdx > 0 && <div className="w-8 h-px bg-border/60 my-1" />}
+              {group.tabs.map((tab) => {
+                const isActive = rightPanelTab === tab.key
+                const isApprovalPending = tab.key === 'approvals' && pendingCount > 0
+                return (
                   <button
                     key={tab.key}
                     onClick={() => setRightPanelTab(tab.key)}
-                    className={`min-w-0 flex items-center gap-2 rounded-lg px-2.5 py-2 text-[11px] font-semibold transition-all ${
-                      rightPanelTab === tab.key
-                        ? 'bg-primary/10 text-foreground ring-1 ring-primary/20'
-                        : 'text-muted-foreground hover:text-foreground hover:bg-muted/30'
+                    className={`relative p-2.5 rounded-xl transition-all duration-200 group/tab hover:scale-105 ${
+                      isActive
+                        ? 'bg-primary text-white shadow-lg shadow-primary/20'
+                        : 'text-muted-foreground hover:bg-muted hover:text-foreground'
                     }`}
+                    title={tab.label}
                   >
-                    <tab.icon className={`h-3.5 w-3.5 shrink-0 ${rightPanelTab === tab.key ? tab.color : ''}`} />
-                    <span className="min-w-0 truncate">{tab.label}</span>
-                    {tab.key === 'approvals' && pendingCount > 0 && (
-                      <span className="ml-auto min-w-4 h-4 px-1 rounded-full bg-amber-500 text-white text-[8px] font-bold flex items-center justify-center shrink-0">
+                    <tab.icon className="h-4 w-4" />
+                    {isApprovalPending && (
+                      <span className="absolute -top-1 -right-1 w-4 h-4 bg-amber-500 text-white text-[8px] font-black rounded-full flex items-center justify-center border border-card shadow-sm animate-pulse">
                         {pendingCount}
                       </span>
                     )}
+                    {/* Tooltip */}
+                    <div className="absolute left-full ml-3 px-2 py-1 rounded bg-popover border border-border text-[10px] font-bold text-popover-foreground uppercase tracking-wider whitespace-nowrap shadow-md opacity-0 pointer-events-none group-hover/tab:opacity-100 transition-opacity z-50">
+                      {tab.label}
+                    </div>
                   </button>
-                ))}
-              </div>
-            )}
-          </div>
-        ))}
+                )
+              })}
+            </div>
+          ))}
+        </div>
+
+        {/* Bottom indicator or minor action */}
+        <div className="flex flex-col items-center">
+          <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" title="System Operational" />
+        </div>
       </div>
 
-      <PanelBody className="flex-1 overflow-hidden p-0 bg-transparent">
-        <div className="h-full overflow-y-auto scrollbar-hide">
-        {/* Approvals Tab */}
-        {rightPanelTab === 'approvals' && (
+      {/* Main Content Pane */}
+      <div className="flex-1 flex flex-col min-w-0 bg-transparent h-full overflow-hidden">
+        {/* Header */}
+        <div className="h-14 border-b border-border/50 px-6 flex items-center justify-between bg-card shrink-0">
+          <div className="flex items-center gap-3">
+            {(() => {
+              const currentTabDef = TAB_GROUPS.flatMap(g => g.tabs).find(t => t.key === rightPanelTab)
+              const Icon = currentTabDef?.icon || Activity
+              return (
+                <>
+                  <div className="p-1.5 rounded-lg bg-primary/10 text-primary">
+                    <Icon className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-xs font-black uppercase tracking-widest text-foreground">
+                      {currentTabDef?.label || 'Panel'}
+                    </h3>
+                    <p className="text-[9px] text-muted-foreground font-medium uppercase tracking-wider">
+                      Workspace Output & System Status
+                    </p>
+                  </div>
+                </>
+              )
+            })()}
+          </div>
+        </div>
+
+        {/* Content Body */}
+        <PanelBody className="flex-1 overflow-hidden p-0 bg-transparent">
+          <div className="h-full overflow-y-auto scrollbar-hide">
+            {/* Approvals Tab */}
+            {rightPanelTab === 'approvals' && (
           <div className="p-4 space-y-3">
             {approvalsLoading ? (
               <div className="py-20 text-center">
@@ -608,6 +633,7 @@ export function RightPanel({ dragHandleProps }: { dragHandleProps?: DragHandlePr
         )}
         </div>
       </PanelBody>
+      </div>
 
       {selectedTask && (
         <TaskDetailModal

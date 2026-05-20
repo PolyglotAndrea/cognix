@@ -128,6 +128,12 @@ class SendChatMessageRequest(BaseModel):
     attachments: list[AttachmentRequest] = Field(default_factory=list)
 
 
+class AppendRawMessageRequest(BaseModel):
+    role: str
+    content: str
+    metadata: dict = Field(default_factory=dict)
+
+
 @router.get("")
 async def list_workspaces(user: CurrentUser = Depends(get_current_user)) -> list[dict]:
     manager = WorkspaceManager()
@@ -866,6 +872,27 @@ async def send_chat_message(
         "user_message": _message_to_dict(user_message),
         "assistant_messages": responses,
     }
+
+
+@router.post("/{workspace_id}/chats/{chat_id}/messages/raw")
+async def append_raw_chat_message(
+    workspace_id: str,
+    chat_id: str,
+    body: AppendRawMessageRequest,
+    user: CurrentUser = Depends(require_agents_write),
+) -> dict:
+    store = _chat_store(workspace_id)
+    chat = store.get(chat_id)
+    if not chat:
+        raise HTTPException(404, "Chat not found")
+
+    message = store.append_message(
+        chat_id,
+        role=body.role,
+        content=body.content,
+        metadata=body.metadata,
+    )
+    return _message_to_dict(message)
 
 
 @router.post("/{workspace_id}/chats/{chat_id}/messages/stream")
