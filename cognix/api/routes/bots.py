@@ -242,6 +242,29 @@ async def get_all_bot_health(
     return get_health_monitor().get_all_health()
 
 
+@router.get("/dead-letters")
+async def get_all_bot_dead_letters(
+    status: str | None = None,
+    limit: int = 50,
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    """Get recent dead letter queue entries across all bots."""
+    from sqlalchemy import select
+
+    from cognix.storage.database import get_session
+    from cognix.storage.models import BotDeadLetterModel
+
+    async with get_session() as session:
+        stmt = select(BotDeadLetterModel)
+        if status:
+            stmt = stmt.where(BotDeadLetterModel.status == status)
+        stmt = stmt.order_by(BotDeadLetterModel.created_at.desc()).limit(limit)
+        result = await session.execute(stmt)
+        rows = result.scalars().all()
+
+    return [_dead_letter_to_dict(row) for row in rows]
+
+
 @router.get("/{bot_id}/dead-letters")
 async def get_bot_dead_letters(
     bot_id: str,
@@ -263,21 +286,7 @@ async def get_bot_dead_letters(
         result = await session.execute(stmt)
         rows = result.scalars().all()
 
-    return [
-        {
-            "id": r.id,
-            "bot_id": r.bot_id,
-            "provider": r.provider,
-            "sender": r.sender,
-            "chat_id": r.chat_id,
-            "message_text": r.message_text[:500],
-            "error": r.error,
-            "attempts": r.attempts,
-            "status": r.status,
-            "created_at": r.created_at.isoformat() if r.created_at else None,
-        }
-        for r in rows
-    ]
+    return [_dead_letter_to_dict(row) for row in rows]
 
 
 @router.post("/dead-letters/{dlq_id}/retry")
@@ -290,3 +299,18 @@ async def retry_dead_letter(
         return await BotBridgeService.retry_dead_letter(dlq_id)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+
+
+def _dead_letter_to_dict(row) -> dict:
+    return {
+        "id": row.id,
+        "bot_id": row.bot_id,
+        "provider": row.provider,
+        "sender": row.sender,
+        "chat_id": row.chat_id,
+        "message_text": row.message_text[:500],
+        "error": row.error,
+        "attempts": row.attempts,
+        "status": row.status,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
