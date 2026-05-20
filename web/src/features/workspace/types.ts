@@ -44,6 +44,7 @@ export interface ApplyResult {
   created: Record<string, string[]>
   execution_results?: ExecutionResult[]
   artifacts?: string[]
+  code_projects?: string[]
   plan?: WorkspacePlan
 }
 

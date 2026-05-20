@@ -293,6 +293,18 @@ export function SimpleMode({ workspaceId, onSwitchToAdvanced }: SimpleModeProps)
             } else if (event.type === 'task.created') {
               stepId = `task-${event.task_id || 'new'}`
               stepLabel = 'Prepared the execution task'
+            } else if (event.type === 'code_project.created') {
+              const projectId = event.data?.id || 'new'
+              stepId = `code-project-${projectId}`
+              stepLabel = event.data?.preview_url
+                ? 'Created and started a runnable app preview'
+                : 'Created a sandbox code project'
+              status = event.data?.status === 'failed' ? 'failed' : 'done'
+            } else if (event.type === 'code_project.started') {
+              const projectId = event.data?.id || 'new'
+              stepId = `code-project-${projectId}`
+              stepLabel = 'Started the app preview'
+              status = event.data?.status === 'failed' ? 'failed' : 'done'
             } else if (event.type === 'task.started') {
               stepId = `task-run-${event.task_id || 'run'}`
               stepLabel = 'Running the task'
@@ -364,6 +376,7 @@ export function SimpleMode({ workspaceId, onSwitchToAdvanced }: SimpleModeProps)
         created: finalApplyResultFromStream?.created || {},
         execution_results: finalApplyResultFromStream?.execution_results || [],
         artifacts: finalApplyResultFromStream?.artifacts || [],
+        code_projects: finalApplyResultFromStream?.created?.code_projects || [],
         plan: finalApplyResultFromStream?.plan || updatedPlan,
       }
       const failed = finalApplyResult.status === 'failed'
@@ -398,9 +411,14 @@ export function SimpleMode({ workspaceId, onSwitchToAdvanced }: SimpleModeProps)
         })
       )
       queryClient.invalidateQueries({ queryKey: ['artifacts', workspaceId] })
+      queryClient.invalidateQueries({ queryKey: ['code-projects', workspaceId] })
       if (finalApplyResult.artifacts && finalApplyResult.artifacts.length > 0) {
         const workspaceStore = useWorkspaceStore.getState()
         workspaceStore.setRightPanelTab('artifacts')
+        workspaceStore.setRightPanelOpen(true)
+      } else if (finalApplyResult.code_projects && finalApplyResult.code_projects.length > 0) {
+        const workspaceStore = useWorkspaceStore.getState()
+        workspaceStore.setRightPanelTab('apps')
         workspaceStore.setRightPanelOpen(true)
       }
     } catch (err: any) {

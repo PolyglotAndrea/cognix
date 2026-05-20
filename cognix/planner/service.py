@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from cognix.local.code_sandbox import CodeSandboxStore
 from cognix.local.home import CognixHome
 from cognix.local.workspace_config import WorkspaceConfigStore
 from cognix.orchestrator.protocol import OrchestrationEvent, emit_orchestration_event
@@ -32,7 +33,7 @@ Output ONLY valid JSON matching this schema:
   "steps": [
     {
       "id": "step_1",
-      "action": "create_agent|create_task|install_skill|configure_mcp",
+      "action": "create_agent",
       "description": "Human-readable description",
       "params": { ... },
       "depends_on": []
@@ -72,6 +73,8 @@ Actions:
 - create_task: params = { name, agent_name, schedule_type, cron_or_interval, input }
 - install_skill: params = { skill_name }
 - configure_mcp: params = { name, command, args }
+- create_code_project: params = { name, description, files, start_command, auto_start }
+- start_code_project: params = { project_id, project_name, command }
 
 Rules:
 - Agent Naming: Generate a descriptive semantic name for the agent(s) you create.
@@ -83,6 +86,8 @@ Rules:
 - Use multiple agents only when distinct roles can run independently or sequentially.
 - Use create_task with schedule_type="once" for immediate execution.
 - Use create_task with schedule_type="cron" or "interval" only for explicitly recurring work.
+- For code app/page/prototype/build requests, prefer create_code_project with runnable files
+  and auto_start=true instead of returning code snippets in chat.
 - Set expected_artifacts to useful user-facing outputs, never raw logs.
 - If a model is not listed as available, use the effective default model from context.
 - Treat MCP, skills, CLI, connectors, scheduler, and memory as internal capabilities.
@@ -263,11 +268,13 @@ class PlannerService:
             "tasks": [],
             "skills": [],
             "mcp_servers": [],
+            "code_projects": [],
         }
 
         ws_config = WorkspaceConfigStore(workspace_id, home=self.home)
         task_steps: list[tuple[str, dict, str]] = []
         agent_name_to_id: dict[str, str] = {}
+        code_project_name_to_id: dict[str, str] = {}
         failed_steps: list[str] = []
 
         # Topological sort: ensures create_agent runs before create_task that depends on it
@@ -396,6 +403,44 @@ class PlannerService:
                         env=step.params.get("env", {}),
                     )
                     created["mcp_servers"].append(server.id)
+                elif step.action == "create_code_project":
+                    project = await self._apply_create_code_project(workspace_id, step.params)
+                    created["code_projects"].append(project["id"])
+                    project_name = str(step.params.get("name") or "")
+                    if project_name:
+                        code_project_name_to_id[project_name] = project["id"]
+                    emit_orchestration_event(
+                        OrchestrationEvent(
+                            workspace_id=workspace_id,
+                            type="code_project.created",
+                            stage="execution",
+                            status=project.get("status", "created"),
+                            run_id=plan_id,
+                            plan_id=plan_id,
+                            step_id=step.id,
+                            data=project,
+                        )
+                    )
+                elif step.action == "start_code_project":
+                    project = await self._apply_start_code_project(
+                        workspace_id,
+                        step.params,
+                        code_project_name_to_id,
+                    )
+                    if project["id"] not in created["code_projects"]:
+                        created["code_projects"].append(project["id"])
+                    emit_orchestration_event(
+                        OrchestrationEvent(
+                            workspace_id=workspace_id,
+                            type="code_project.started",
+                            stage="execution",
+                            status=project.get("status", "running"),
+                            run_id=plan_id,
+                            plan_id=plan_id,
+                            step_id=step.id,
+                            data=project,
+                        )
+                    )
                 else:
                     raise ValueError(f"Unknown plan step action: {step.action}")
                 plan.step_statuses[step.id] = "completed"
@@ -745,6 +790,27 @@ class PlannerService:
         needs_web = any(
             token in text for token in ("web", "search", "news", "联网", "搜索", "新闻", "最新")
         )
+        code_project = any(
+            token in text
+            for token in (
+                "app",
+                "website",
+                "web app",
+                "page",
+                "prototype",
+                "component",
+                "代码工程",
+                "项目",
+                "页面",
+                "网站",
+                "小程序",
+                "应用",
+                "原型",
+                "落项目",
+                "运行",
+                "预览",
+            )
+        )
 
         intent_type = (
             "scheduled"
@@ -800,6 +866,72 @@ class PlannerService:
             if semantic_prefix
             else f"{base_role}-agent"
         )
+        project_name = f"{semantic_prefix}-app" if semantic_prefix else "generated-app"
+
+        if code_project and not scheduled:
+            safe_title = user_intent[:80].replace("<", "").replace(">", "")
+            fallback_html = "".join(
+                [
+                    "<!doctype html><html><head><meta charset='utf-8'>",
+                    "<meta name='viewport' content='width=device-width,initial-scale=1'>",
+                    f"<title>{safe_title}</title>",
+                    "<style>",
+                    "body{font-family:Inter,system-ui,sans-serif;margin:0;",
+                    "background:#f7f7f8;color:#161616}",
+                    ".wrap{max-width:900px;margin:0 auto;padding:56px 24px}",
+                    ".card{background:white;border:1px solid #e7e7ec;",
+                    "border-radius:18px;padding:28px;box-shadow:0 12px 40px #0001}",
+                    "h1{font-size:32px;margin:0 0 16px}",
+                    "p{line-height:1.7;color:#555}",
+                    "</style></head><body><main class='wrap'><section class='card'>",
+                    f"<h1>{safe_title}</h1>",
+                    "<p>This sandbox project was generated from your request. ",
+                    "Use the Apps panel to open the live preview and iterate.</p>",
+                    "</section></main></body></html>",
+                ]
+            )
+            return {
+                "summary": f"Create and run a sandbox app for: {user_intent[:100]}",
+                "intent_type": "file_operation",
+                "execution_mode": "once",
+                "steps": [
+                    {
+                        "id": "step_1",
+                        "action": "create_code_project",
+                        "description": "Create a runnable sandbox project",
+                        "params": {
+                            "name": project_name,
+                            "description": user_intent[:240],
+                            "auto_start": True,
+                            "files": [
+                                {
+                                    "path": "index.html",
+                                    "content": fallback_html,
+                                }
+                            ],
+                            "metadata": {
+                                "intent": user_intent,
+                                "planner_fallback": True,
+                            },
+                        },
+                        "depends_on": [],
+                    }
+                ],
+                "required_skills": [],
+                "required_connectors": [],
+                "sandbox_permissions": ["workspace_write", "command_execution"],
+                "expected_artifacts": ["running app preview"],
+                "recommended_agents": [],
+                "recommended_skills": recommended_skills,
+                "recommended_mcp_tools": recommended_mcp_tools,
+                "scheduling": {
+                    "needed": False,
+                    "kind": "once",
+                    "expression": "",
+                    "reason": "",
+                },
+                "estimated_cost": "low",
+            }
 
         artifact = "research report" if research else "task result"
         schedule_expression = "every 24h" if scheduled else ""
@@ -1046,6 +1178,46 @@ class PlannerService:
             )
         )
         return artifact_id
+
+    async def _apply_create_code_project(self, workspace_id: str, params: dict) -> dict[str, Any]:
+        """Create a runnable code project in the workspace sandbox."""
+        store = CodeSandboxStore(workspace_id, home=self.home)
+        project = store.create_project(
+            name=str(params.get("name") or "Generated App"),
+            description=str(params.get("description") or ""),
+            files=list(params.get("files") or []),
+            start_command=str(params.get("start_command") or ""),
+            metadata={
+                **dict(params.get("metadata") or {}),
+                "source": "planner",
+            },
+        )
+        if params.get("auto_start", True):
+            project = await store.start_project(project.id)
+        return store.to_dict(project)
+
+    async def _apply_start_code_project(
+        self,
+        workspace_id: str,
+        params: dict,
+        project_name_to_id: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """Start a previously created code project and return its preview metadata."""
+        store = CodeSandboxStore(workspace_id, home=self.home)
+        project_id = str(params.get("project_id") or "")
+        project_name = str(params.get("project_name") or params.get("name") or "")
+        if not project_id and project_name and project_name_to_id:
+            project_id = project_name_to_id.get(project_name, "")
+        if not project_id and project_name:
+            existing = next(
+                (project for project in store.list_all() if project.name == project_name),
+                None,
+            )
+            project_id = existing.id if existing else ""
+        if not project_id:
+            raise ValueError("Cannot start code project because no project_id was resolved.")
+        project = await store.start_project(project_id, command=str(params.get("command") or ""))
+        return store.to_dict(project)
 
     @staticmethod
     async def _apply_create_agent(workspace_id: str, params: dict) -> str:

@@ -190,6 +190,74 @@ async def test_planner_dependency_failure_propagation(tmp_path, monkeypatch) -> 
         await close_db()
 
 
+@pytest.mark.asyncio
+async def test_planner_applies_code_project_actions(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("COGNIX_HOME", str(tmp_path))
+
+    home = CognixHome(root=tmp_path).ensure()
+    workspace = WorkspaceManager(home).create("CodeWorkspace")
+    planner = PlannerService(home=home)
+
+    plan = WorkspacePlan(
+        id="code-plan-id",
+        workspace_id=workspace.id,
+        summary="Create runnable app",
+        steps=[
+            PlanStep(
+                id="step_1",
+                action="create_code_project",
+                description="Create project",
+                params={
+                    "name": "demo-app",
+                    "description": "Demo app",
+                    "auto_start": False,
+                    "files": [
+                        {
+                            "path": "index.html",
+                            "content": "<!doctype html><h1>Demo</h1>",
+                        }
+                    ],
+                },
+            ),
+            PlanStep(
+                id="step_2",
+                action="start_code_project",
+                description="Start preview",
+                params={"project_name": "demo-app"},
+                depends_on=["step_1"],
+            ),
+        ],
+        status="confirmed",
+    )
+    planner._save_plan(plan)
+
+    result = await planner.apply_plan(
+        workspace_id=workspace.id,
+        plan_id="code-plan-id",
+        user_id="test-user",
+    )
+
+    project_ids = result["created"]["code_projects"]
+    assert result["status"] == "applied"
+    assert len(project_ids) == 1
+    project_id = project_ids[0]
+    project_path = (
+        WorkspaceManager(home).workspace_path(workspace.id) / "sandbox/projects" / project_id
+    )
+    assert (project_path / "index.html").read_text(
+        encoding="utf-8"
+    ) == "<!doctype html><h1>Demo</h1>"
+
+    from cognix.local.code_sandbox import CodeSandboxStore
+
+    store = CodeSandboxStore(workspace.id, home=home)
+    project = store.get(project_id)
+    assert project is not None
+    assert project.status == "running"
+    assert project.preview_url.startswith("http://127.0.0.1:")
+    store.stop_project(project_id)
+
+
 def test_orchestration_listener_streaming(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("COGNIX_HOME", str(tmp_path))
     from cognix.local.home import CognixHome

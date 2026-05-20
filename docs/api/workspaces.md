@@ -193,3 +193,13 @@ Code projects are written under the workspace sandbox directory. Static projects
 run through a local Python preview server. Node projects with `package.json` use
 `npm run dev -- --host 127.0.0.1 --port <port>` by default. The frontend shows
 running previews in the workspace `Apps` output panel.
+
+Planner apply can also create and start code projects with these internal
+actions:
+
+- `create_code_project`: writes files into the workspace sandbox and can
+  auto-start a preview.
+- `start_code_project`: starts an existing sandbox project by id or name.
+
+These actions are intended for code app, page, prototype, and runnable artifact
+requests so the user sees a live preview instead of only receiving code snippets.
