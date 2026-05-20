@@ -6,7 +6,7 @@ import json
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from cognix.api.state import agent_registry, get_scheduler_engine, schedule_task_in_engine
@@ -74,13 +74,20 @@ async def create_task(
 @router.get("")
 async def list_tasks(
     state: str | None = None,
+    workspace_id: str | None = Query(default=None),
     user: CurrentUser = Depends(require_tasks_read),
 ) -> list[dict]:
     store = TaskStore()
     filter_state = TaskState(state) if state else None
     tasks = await store.list_all(state=filter_state)
 
-    return [
+    rows = []
+    for t in tasks:
+        payload = _payload_dict(t.payload)
+        task_workspace_id = payload.get("workspace_id")
+        if workspace_id is not None and task_workspace_id != workspace_id:
+            continue
+        rows.append(
         {
             "id": t.id,
             "name": t.name,
@@ -89,14 +96,14 @@ async def list_tasks(
             "state": t.state.value,
             "run_count": t.run_count,
             "max_execution_seconds": t.max_execution_seconds,
-            "workspace_id": _payload_dict(t.payload).get("workspace_id"),
+            "workspace_id": task_workspace_id,
             "last_run": t.last_run.isoformat() if t.last_run else None,
             "lease_owner": t.lease_owner,
             "lease_expires_at": t.lease_expires_at.isoformat() if t.lease_expires_at else None,
             "created_at": t.created_at.isoformat() if t.created_at else None,
         }
-        for t in tasks
-    ]
+        )
+    return rows
 
 
 @router.get("/{task_id}")

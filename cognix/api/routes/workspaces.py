@@ -9,6 +9,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy import delete, select
 from starlette.responses import StreamingResponse
 
 from cognix.auth.dependencies import (
@@ -18,6 +19,7 @@ from cognix.auth.dependencies import (
     require_skills_read,
     require_skills_write,
 )
+from cognix.config import get_settings
 from cognix.core.agent import Agent, AgentEvent
 from cognix.core.context import Context
 from cognix.core.streaming import encode_sse_event
@@ -28,6 +30,14 @@ from cognix.local.workflows import WorkspaceWorkflowStore
 from cognix.local.workspace import WorkspaceManager
 from cognix.local.workspace_config import WorkspaceConfigStore
 from cognix.providers.resolver import normalize_openai_base_url
+from cognix.storage.database import get_session
+from cognix.storage.models import (
+    ArtifactModel,
+    ArtifactType,
+    ScheduledTaskModel,
+    TaskRunModel,
+    TaskState,
+)
 
 router = APIRouter(prefix="/api/v1/workspaces", tags=["workspaces"])
 
@@ -1256,6 +1266,15 @@ def _workflow_store(workspace_id: str) -> WorkspaceWorkflowStore:
         raise HTTPException(404, "Workspace not found") from None
 
 
+def _payload_dict(payload) -> dict:
+    if isinstance(payload, str):
+        try:
+            return json.loads(payload)
+        except json.JSONDecodeError:
+            return {}
+    return payload or {}
+
+
 def _file_store(workspace_id: str) -> WorkspaceFileStore:
     try:
         return WorkspaceFileStore(workspace_id)
@@ -1477,6 +1496,55 @@ async def complete_onboarding(
     return {"workspace_id": workspace_id, "onboarding_completed": True}
 
 
+@router.delete("/{workspace_id}/dev/history")
+async def clear_workspace_dev_history(
+    workspace_id: str,
+    failed_only: bool = True,
+    user: CurrentUser = Depends(require_agents_write),
+) -> dict:
+    """Dev-only cleanup for stale local task/artifact output in the current workspace."""
+    if not get_settings().debug:
+        raise HTTPException(404, "Not found")
+    if not WorkspaceManager().get(workspace_id):
+        raise HTTPException(404, "Workspace not found")
+
+    artifact_ids: list[str] = []
+    task_ids: list[str] = []
+    async with get_session() as session:
+        artifact_stmt = select(ArtifactModel).where(ArtifactModel.workspace_id == workspace_id)
+        if failed_only:
+            artifact_stmt = artifact_stmt.where(
+                (ArtifactModel.artifact_type == ArtifactType.LOG)
+                | (ArtifactModel.title.ilike("%error%"))
+                | (ArtifactModel.title.ilike("%failed%"))
+            )
+        artifact_rows = (await session.execute(artifact_stmt)).scalars().all()
+        artifact_ids = [row.id for row in artifact_rows]
+        if artifact_ids:
+            await session.execute(delete(ArtifactModel).where(ArtifactModel.id.in_(artifact_ids)))
+
+        task_rows = (await session.execute(select(ScheduledTaskModel))).scalars().all()
+        for task in task_rows:
+            payload = _payload_dict(task.payload)
+            if payload.get("workspace_id") != workspace_id:
+                continue
+            if failed_only and task.state not in (TaskState.FAILED, TaskState.CANCELED):
+                continue
+            task_ids.append(task.id)
+        if task_ids:
+            await session.execute(delete(TaskRunModel).where(TaskRunModel.task_id.in_(task_ids)))
+            await session.execute(
+                delete(ScheduledTaskModel).where(ScheduledTaskModel.id.in_(task_ids))
+            )
+
+    return {
+        "workspace_id": workspace_id,
+        "failed_only": failed_only,
+        "deleted_artifacts": len(artifact_ids),
+        "deleted_tasks": len(task_ids),
+    }
+
+
 @router.get("/{workspace_id}/audit-log")
 async def get_policy_audit_log(
     workspace_id: str,
@@ -1486,9 +1554,6 @@ async def get_policy_audit_log(
     user: CurrentUser = Depends(get_current_user),
 ) -> list[dict]:
     """Get policy audit log for a workspace."""
-    from sqlalchemy import select
-
-    from cognix.storage.database import get_session
     from cognix.storage.models import PolicyAuditLogModel
 
     async with get_session() as session:
