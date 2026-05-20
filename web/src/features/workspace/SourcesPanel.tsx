@@ -14,6 +14,9 @@ import { api } from '@/shared/api/client'
 import { cn } from '@/shared/lib/cn'
 import { useWorkspaceStore, type NotebookSource } from './store'
 
+const EMPTY_FILES: WorkspaceFile[] = []
+const EMPTY_ARTIFACTS: ArtifactSource[] = []
+
 interface WorkspaceFile {
   name: string
   path: string
@@ -45,13 +48,13 @@ export function SourcesPanel({ workspaceId }: { workspaceId: string }) {
   const [urlSources, setUrlSources] = useState<SourceItem[]>([])
   const [urlInput, setUrlInput] = useState('')
 
-  const { data: files = [] } = useQuery<WorkspaceFile[]>({
+  const { data: files = EMPTY_FILES } = useQuery<WorkspaceFile[]>({
     queryKey: ['workspace-files', workspaceId, 'notebook-sources'],
     queryFn: () => api.get(`/workspaces/${workspaceId}/files`, { params: { path: '' } }).then((r) => r.data),
     enabled: !!workspaceId,
   })
 
-  const { data: artifacts = [] } = useQuery<ArtifactSource[]>({
+  const { data: artifacts = EMPTY_ARTIFACTS } = useQuery<ArtifactSource[]>({
     queryKey: ['artifacts', workspaceId],
     queryFn: () => api.get(`/workspaces/${workspaceId}/artifacts`).then((r) => r.data),
     enabled: !!workspaceId,
@@ -101,6 +104,8 @@ export function SourcesPanel({ workspaceId }: { workspaceId: string }) {
         title: source.title,
         subtitle: source.subtitle,
       }))
+    const currentSources = useWorkspaceStore.getState().notebookSources
+    if (sameNotebookSources(currentSources, activeSources)) return
     setNotebookSources(activeSources)
   }, [setNotebookSources, sources])
 
@@ -205,6 +210,19 @@ export function SourcesPanel({ workspaceId }: { workspaceId: string }) {
       </div>
     </aside>
   )
+}
+
+function sameNotebookSources(a: NotebookSource[], b: NotebookSource[]) {
+  if (a.length !== b.length) return false
+  return a.every((source, index) => {
+    const other = b[index]
+    return (
+      source.id === other.id &&
+      source.kind === other.kind &&
+      source.title === other.title &&
+      source.subtitle === other.subtitle
+    )
+  })
 }
 
 function SourceIcon({ kind }: { kind: SourceItem['kind'] }) {
