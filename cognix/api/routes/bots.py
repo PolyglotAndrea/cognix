@@ -20,8 +20,6 @@ BotProvider = Literal["lark", "feishu", "dingtalk", "wechat"]
 class CreateBotRequest(BaseModel):
     name: str
     provider: BotProvider
-    workspace_id: str
-    agent_id: str
     secret: str = Field(min_length=6)
     enabled: bool = True
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -29,11 +27,15 @@ class CreateBotRequest(BaseModel):
 
 class UpdateBotRequest(BaseModel):
     name: str | None = None
-    workspace_id: str | None = None
-    agent_id: str | None = None
     secret: str | None = None
     enabled: bool | None = None
     metadata: dict[str, Any] | None = None
+
+
+class UpsertBotRouteRequest(BaseModel):
+    workspace_id: str
+    agent_id: str
+    enabled: bool = True
 
 
 @router.get("")
@@ -49,8 +51,6 @@ async def create_bot(
     bot = BotConfigStore().create(
         name=body.name,
         provider=body.provider,
-        workspace_id=body.workspace_id,
-        agent_id=body.agent_id,
         secret=body.secret,
         enabled=body.enabled,
         metadata=body.metadata,
@@ -68,6 +68,46 @@ async def update_bot(
         bot = BotConfigStore().update(bot_id, body.model_dump(exclude_unset=True))
     except FileNotFoundError:
         raise HTTPException(404, "Bot bridge not found") from None
+    return bot.public_dict()
+
+
+@router.post("/{bot_id}/routes")
+async def upsert_bot_route(
+    bot_id: str,
+    body: UpsertBotRouteRequest,
+    user: CurrentUser = Depends(require_agents_write),
+) -> dict:
+    store = BotConfigStore()
+    bot = store.get(bot_id)
+    if not bot:
+        raise HTTPException(404, "Bot bridge not found")
+    metadata = dict(bot.metadata)
+    routes = dict(metadata.get("routes") or {})
+    routes[body.workspace_id] = {
+        "workspace_id": body.workspace_id,
+        "agent_id": body.agent_id,
+        "enabled": body.enabled,
+    }
+    metadata["routes"] = routes
+    bot = store.update(bot_id, {"metadata": metadata})
+    return bot.public_dict()
+
+
+@router.delete("/{bot_id}/routes/{workspace_id}")
+async def delete_bot_route(
+    bot_id: str,
+    workspace_id: str,
+    user: CurrentUser = Depends(require_agents_write),
+) -> dict:
+    store = BotConfigStore()
+    bot = store.get(bot_id)
+    if not bot:
+        raise HTTPException(404, "Bot bridge not found")
+    metadata = dict(bot.metadata)
+    routes = dict(metadata.get("routes") or {})
+    routes.pop(workspace_id, None)
+    metadata["routes"] = routes
+    bot = store.update(bot_id, {"metadata": metadata})
     return bot.public_dict()
 
 
@@ -96,6 +136,9 @@ async def bot_webhook(
 
     body = await request.body()
     secret = request.query_params.get("secret") or request.headers.get("X-Cognix-Bot-Secret", "")
+    workspace_id = request.query_params.get("workspace_id") or request.headers.get(
+        "X-Cognix-Workspace-ID", ""
+    )
     timestamp, signature = _signature_parts(provider, request)
     require_signature = bool(bot.metadata.get("require_signature", False))
     if require_signature and not signature:
@@ -129,6 +172,7 @@ async def bot_webhook(
             bot_id=bot_id,
             secret=secret,
             payload=payload,
+            workspace_id=workspace_id,
         )
         return {"ok": True, "queued": True}
 
@@ -138,6 +182,7 @@ async def bot_webhook(
             bot_id=bot_id,
             secret=secret,
             payload=payload,
+            workspace_id=workspace_id,
         )
     except FileNotFoundError:
         raise HTTPException(404, "Bot bridge not found") from None

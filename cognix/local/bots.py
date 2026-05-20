@@ -21,8 +21,6 @@ class BotConfig:
     id: str
     name: str
     provider: BotProvider
-    workspace_id: str
-    agent_id: str
     secret_hash: str
     signing_secret: str = ""
     enabled: bool = True
@@ -54,8 +52,6 @@ class BotConfigStore:
         *,
         name: str,
         provider: BotProvider,
-        workspace_id: str,
-        agent_id: str,
         secret: str,
         enabled: bool = True,
         metadata: dict[str, Any] | None = None,
@@ -65,8 +61,6 @@ class BotConfigStore:
             id=uuid.uuid4().hex[:12],
             name=name,
             provider=provider,
-            workspace_id=workspace_id,
-            agent_id=agent_id,
             secret_hash=self.hash_secret(secret),
             signing_secret=secret,
             enabled=enabled,

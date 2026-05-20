@@ -83,6 +83,7 @@ export default function SettingsPage({ scope = 'global' }: { scope?: SettingsSco
   const [botSecret, setBotSecret] = useState('')
   const [botResponseUrl, setBotResponseUrl] = useState('')
   const [botRequireSignature, setBotRequireSignature] = useState(false)
+  const [selectedBotId, setSelectedBotId] = useState('')
   const [selectedAgentId, setSelectedAgentId] = useState('')
   const [hotDraft, setHotDraft] = useState<HotMemory | null>(null)
   const [deepDraft, setDeepDraft] = useState<string | null>(null)
@@ -249,8 +250,6 @@ export default function SettingsPage({ scope = 'global' }: { scope?: SettingsSco
       api.post('/bots', {
         name: botName.trim(),
         provider: botProvider,
-        workspace_id: workspace?.id,
-        agent_id: selectedAgentId || agents[0]?.id,
         secret: botSecret,
         enabled: true,
         metadata: {
@@ -265,6 +264,23 @@ export default function SettingsPage({ scope = 'global' }: { scope?: SettingsSco
       setBotRequireSignature(false)
       queryClient.invalidateQueries({ queryKey: ['remote-bots'] })
     },
+  })
+
+  const upsertBotRouteMutation = useMutation({
+    mutationFn: () =>
+      api.post(`/bots/${selectedBotId}/routes`, {
+        workspace_id: workspace?.id,
+        agent_id: selectedAgentId,
+        enabled: true,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['remote-bots'] })
+    },
+  })
+
+  const deleteBotRouteMutation = useMutation({
+    mutationFn: (botId: string) => api.delete(`/bots/${botId}/routes/${workspace!.id}`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['remote-bots'] }),
   })
 
   const deleteBotMutation = useMutation({
@@ -764,29 +780,28 @@ export default function SettingsPage({ scope = 'global' }: { scope?: SettingsSco
           <div className="space-y-8 animate-in fade-in slide-in-from-right-4 duration-300">
              <div>
                 <h3 className="text-2xl font-bold tracking-tight text-foreground">Message Bridge Gateways</h3>
-                <p className="text-sm text-muted-foreground mt-1">Connect your local agents to corporate messaging systems via secure webhooks.</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {isWorkspaceScope
+                    ? 'Select an account-level gateway and bind it to an agent in this workspace.'
+                    : 'Create account-level bridge gateways for external messaging platforms.'}
+                </p>
              </div>
 
              <div className="rounded-2xl border border-border bg-card p-6 shadow-sm">
+                {!isWorkspaceScope ? (
+                <>
                 <div className="grid grid-cols-2 gap-6 mb-8">
                    <div className="space-y-4">
                       <div className="space-y-2">
                         <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 px-1">Gateway Identity</label>
                         <Input placeholder="e.g. Slack Operations Bot" value={botName} onChange={(e) => setBotName(e.target.value)} />
                       </div>
-                      <div className="grid grid-cols-2 gap-3">
+                      <div className="grid grid-cols-1 gap-3">
                          <div className="space-y-2">
                            <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 px-1">Provider</label>
                            <select value={botProvider} onChange={(e) => setBotProvider(e.target.value)} className="w-full h-10 rounded-xl border border-border bg-muted px-3 py-2 text-sm outline-none focus:border-primary transition-colors appearance-none">
                               {PROVIDERS.map(p => <option key={p} value={p}>{p}</option>)}
                            </select>
-                         </div>
-                         <div className="space-y-2">
-                            <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 px-1">Target Agent</label>
-                            <select value={selectedAgentId} onChange={(e) => setSelectedAgentId(e.target.value)} className="w-full h-10 rounded-xl border border-border bg-muted px-3 py-2 text-sm outline-none focus:border-primary transition-colors appearance-none">
-                               <option value="">Select Target...</option>
-                               {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-                            </select>
                          </div>
                       </div>
                    </div>
@@ -798,16 +813,47 @@ export default function SettingsPage({ scope = 'global' }: { scope?: SettingsSco
                       <div className="pt-6">
                         <Button className="w-full h-11 shadow-lg shadow-indigo-500/20 bg-indigo-600 hover:bg-indigo-700" disabled={!botName.trim() || !botSecret} onClick={() => createBotMutation.mutate()}>
                            <Zap className="h-4 w-4 mr-2" />
-                           Establish Gateway Bridge
+                           Create Account Gateway
                         </Button>
                       </div>
                    </div>
                 </div>
+                </>
+                ) : (
+                <div className="grid grid-cols-3 gap-4 mb-8">
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 px-1">Gateway</label>
+                    <select value={selectedBotId} onChange={(e) => setSelectedBotId(e.target.value)} className="w-full h-10 rounded-xl border border-border bg-muted px-3 py-2 text-sm outline-none focus:border-primary transition-colors appearance-none">
+                      <option value="">Select Gateway...</option>
+                      {bots.map(bot => <option key={bot.id} value={bot.id}>{bot.name} ({bot.provider})</option>)}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 px-1">Target Agent</label>
+                    <select value={selectedAgentId} onChange={(e) => setSelectedAgentId(e.target.value)} className="w-full h-10 rounded-xl border border-border bg-muted px-3 py-2 text-sm outline-none focus:border-primary transition-colors appearance-none">
+                      <option value="">Select Target...</option>
+                      {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60 px-1">Workspace Route</label>
+                    <Button
+                      className="w-full h-10 shadow-lg shadow-indigo-500/20 bg-indigo-600 hover:bg-indigo-700"
+                      disabled={!workspace?.id || !selectedBotId || !selectedAgentId || upsertBotRouteMutation.isPending}
+                      onClick={() => upsertBotRouteMutation.mutate()}
+                    >
+                      Bind Gateway
+                    </Button>
+                  </div>
+                </div>
+                )}
 
                 <div className="space-y-4">
-                   <h4 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/40 px-1 mb-1">Active Gateway Integrations</h4>
+                   <h4 className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/40 px-1 mb-1">
+                    {isWorkspaceScope ? 'Workspace Gateway Routes' : 'Account Gateways'}
+                   </h4>
                    {bots.length === 0 ? (
-                      <EmptyRow icon={Bot} text="No messaging bridges active" />
+                      <EmptyRow icon={Bot} text={isWorkspaceScope ? 'No account gateways available' : 'No account gateways created'} />
                    ) : (
                      <div className="grid grid-cols-1 gap-4">
                         {bots.map((bot) => (
@@ -823,11 +869,29 @@ export default function SettingsPage({ scope = 'global' }: { scope?: SettingsSco
                                           <Badge variant={bot.enabled ? 'success' : 'default'} className="text-[10px] font-black uppercase tracking-widest">{bot.provider}</Badge>
                                        </div>
                                        <div className="text-[11px] text-muted-foreground mt-1 flex items-center gap-1.5">
-                                          Routing to Agent: <span className="text-indigo-500 font-bold bg-indigo-500/10 px-1.5 py-0.5 rounded uppercase">{bot.agent_id}</span>
+                                          {isWorkspaceScope ? (
+                                            <>
+                                              Route: <span className="text-indigo-500 font-bold bg-indigo-500/10 px-1.5 py-0.5 rounded uppercase">
+                                                {String((bot.metadata?.routes as any)?.[workspace?.id || '']?.agent_id || 'not bound')}
+                                              </span>
+                                            </>
+                                          ) : (
+                                            <>Account-level gateway. Configure workspace routes from Workspace Settings.</>
+                                          )}
                                        </div>
                                     </div>
                                  </div>
-                                 <button onClick={() => deleteBotMutation.mutate(bot.id)} className="p-2.5 rounded-xl text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 transition-all" title="Delete Bridge"><Trash2 className="h-4.5 w-4.5" /></button>
+                                 <button
+                                  onClick={() =>
+                                    isWorkspaceScope
+                                      ? deleteBotRouteMutation.mutate(bot.id)
+                                      : deleteBotMutation.mutate(bot.id)
+                                  }
+                                  className="p-2.5 rounded-xl text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 transition-all"
+                                  title={isWorkspaceScope ? 'Remove Workspace Route' : 'Delete Gateway'}
+                                >
+                                  <Trash2 className="h-4.5 w-4.5" />
+                                </button>
                               </div>
                               <div className="flex items-center gap-3 bg-background/80 border border-border/50 p-3 rounded-xl shadow-inner">
                                  <div className="flex items-center gap-2 px-2 py-1 rounded bg-muted/50 text-[9px] font-bold text-muted-foreground uppercase border border-border/50">Endpoint</div>

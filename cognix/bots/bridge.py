@@ -29,11 +29,49 @@ class BotMessage:
     raw: dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class BotRoute:
+    workspace_id: str
+    agent_id: str
+    enabled: bool = True
+
+
 class BotBridgeService:
     """Routes remote robot messages into local Agent workflows."""
 
     def __init__(self, *, store: BotConfigStore | None = None) -> None:
         self.store = store or BotConfigStore()
+
+    @staticmethod
+    def resolve_route(bot: BotConfig, *, workspace_id: str = "") -> BotRoute:
+        routes = bot.metadata.get("routes") or {}
+        if not isinstance(routes, dict):
+            routes = {}
+
+        if workspace_id:
+            route = routes.get(workspace_id)
+            if not route or not route.get("enabled", True):
+                raise ValueError(f"Bot bridge route not configured for workspace '{workspace_id}'")
+            return BotRoute(
+                workspace_id=str(route.get("workspace_id") or workspace_id),
+                agent_id=str(route.get("agent_id") or ""),
+                enabled=bool(route.get("enabled", True)),
+            )
+
+        enabled_routes = [
+            BotRoute(
+                workspace_id=str(route.get("workspace_id") or key),
+                agent_id=str(route.get("agent_id") or ""),
+                enabled=bool(route.get("enabled", True)),
+            )
+            for key, route in routes.items()
+            if isinstance(route, dict) and route.get("enabled", True)
+        ]
+        if len(enabled_routes) == 1:
+            return enabled_routes[0]
+        if not enabled_routes:
+            raise ValueError("Bot bridge has no enabled workspace route")
+        raise ValueError("Bot bridge has multiple workspace routes; provide workspace_id")
 
     async def handle_webhook(
         self,
@@ -42,6 +80,7 @@ class BotBridgeService:
         bot_id: str,
         secret: str,
         payload: dict[str, Any],
+        workspace_id: str = "",
     ) -> dict[str, Any]:
         bot = self.store.get(bot_id)
         if not bot or bot.provider != provider:
@@ -59,23 +98,24 @@ class BotBridgeService:
         if not message.text.strip():
             return self.format_response(provider, "No message text found.")
 
+        route = self.resolve_route(bot, workspace_id=workspace_id)
         if str(bot.metadata.get("dispatch_mode", "")).lower() in {"task", "async_task"}:
-            task_id = await self.enqueue_task(bot, message)
+            task_id = await self.enqueue_task(bot, message, route)
             return self.format_response(provider, f"Task queued: {task_id}")
 
-        response = await self.dispatch(bot, message)
+        response = await self.dispatch(bot, message, route)
         return self.format_response(provider, response)
 
-    async def enqueue_task(self, bot: BotConfig, message: BotMessage) -> str:
+    async def enqueue_task(self, bot: BotConfig, message: BotMessage, route: BotRoute) -> str:
         """Queue a remote bot message as a one-shot scheduled Agent task."""
         result = await MessageRouter().route(
-            self.channel_event(bot, message),
-            self.route_target(bot),
+            self.channel_event(bot, message, route),
+            self.route_target(bot, route),
             dispatch_mode="task",
         )
         return result.task_id
 
-    async def dispatch(self, bot: BotConfig, message: BotMessage) -> str:
+    async def dispatch(self, bot: BotConfig, message: BotMessage, route: BotRoute) -> str:
         from cognix.bots.health import get_health_monitor
 
         max_attempts = int(bot.metadata.get("dispatch_max_retries", _RETRY_MAX_ATTEMPTS))
@@ -83,7 +123,7 @@ class BotBridgeService:
         start_time = time.monotonic()
         for attempt in range(1, max_attempts + 1):
             try:
-                result = await self._dispatch_once(bot, message)
+                result = await self._dispatch_once(bot, message, route)
                 latency_ms = (time.monotonic() - start_time) * 1000
                 get_health_monitor().record_success(bot.id, latency_ms)
                 return result
@@ -104,22 +144,23 @@ class BotBridgeService:
         # All retries exhausted — record error and write to DLQ
         get_health_monitor().record_error(bot.id, str(last_exc))
         logger.error("Bot dispatch failed after %s attempts for %s", max_attempts, bot.id)
-        await self._write_to_dlq(bot, message, str(last_exc), max_attempts)
+        await self._write_to_dlq(bot, message, route, str(last_exc), max_attempts)
         raise last_exc  # type: ignore[misc]
 
-    async def _dispatch_once(self, bot: BotConfig, message: BotMessage) -> str:
+    async def _dispatch_once(self, bot: BotConfig, message: BotMessage, route: BotRoute) -> str:
         result = await MessageRouter().route(
-            self.channel_event(bot, message),
-            self.route_target(bot),
+            self.channel_event(bot, message, route),
+            self.route_target(bot, route),
             dispatch_mode="direct",
         )
-        await self.post_response_callback(bot, message, result.response)
+        await self.post_response_callback(bot, message, route, result.response)
         return result.response
 
     async def post_response_callback(
         self,
         bot: BotConfig,
         message: BotMessage,
+        route: BotRoute,
         response_text: str,
     ) -> None:
         """Write the Agent response back to an external bot callback URL when configured."""
@@ -133,7 +174,7 @@ class BotBridgeService:
             headers = {}
         timeout = float(bot.metadata.get("response_timeout", 10))
         max_attempts = int(bot.metadata.get("callback_max_retries", _RETRY_MAX_ATTEMPTS))
-        payload = self.callback_payload(bot, message, response_text)
+        payload = self.callback_payload(bot, message, route, response_text)
         clean_headers = {str(key): str(value) for key, value in headers.items()}
 
         last_exc: Exception | None = None
@@ -147,7 +188,7 @@ class BotBridgeService:
                         json=payload,
                     )
                     resp.raise_for_status()
-                self._append_callback_event(bot, message, ok=True)
+                self._append_callback_event(bot, message, route, ok=True)
                 return
             except Exception as exc:
                 last_exc = exc
@@ -169,7 +210,7 @@ class BotBridgeService:
             bot.id,
             last_exc,
         )
-        self._append_callback_event(bot, message, ok=False, error=str(last_exc))
+        self._append_callback_event(bot, message, route, ok=False, error=str(last_exc))
 
     @staticmethod
     def extract_message(provider: str, payload: dict[str, Any]) -> BotMessage:
@@ -210,24 +251,29 @@ class BotBridgeService:
         return BotMessage(text=str(payload.get("text", "")), raw=payload)
 
     @staticmethod
-    def session_key(bot: BotConfig, message: BotMessage) -> str:
-        return BotBridgeService.channel_event(bot, message).session_key
+    def session_key(bot: BotConfig, message: BotMessage, route: BotRoute) -> str:
+        return BotBridgeService.channel_event(bot, message, route).session_key
 
     @staticmethod
-    def channel_event(bot: BotConfig, message: BotMessage) -> ChannelEvent:
-        session_key = f"{bot.provider}:{bot.id}:{message.chat_id or message.sender or 'direct'}"
+    def channel_event(bot: BotConfig, message: BotMessage, route: BotRoute) -> ChannelEvent:
+        session_key = (
+            f"{bot.provider}:{bot.id}:{route.workspace_id}:"
+            f"{message.chat_id or message.sender or 'direct'}"
+        )
         return ChannelEvent(
             channel=bot.provider,
-            workspace_id=bot.workspace_id,
+            workspace_id=route.workspace_id,
             text=message.text,
             sender_id=message.sender,
             thread_id=message.chat_id,
             raw=message.raw,
             metadata={
                 "source": "bot",
-                "source_id": bot.id,
+                "source_id": f"{bot.id}:{route.workspace_id}",
                 "bot_id": bot.id,
-                "bot_name": bot.name,
+                    "bot_name": bot.name,
+                    "workspace_id": route.workspace_id,
+                    "agent_id": route.agent_id,
                 "remote_bot": {
                     "provider": bot.provider,
                     "bot_id": bot.id,
@@ -239,10 +285,10 @@ class BotBridgeService:
         )
 
     @staticmethod
-    def route_target(bot: BotConfig) -> ChannelRouteTarget:
+    def route_target(bot: BotConfig, route: BotRoute) -> ChannelRouteTarget:
         return ChannelRouteTarget(
-            workspace_id=bot.workspace_id,
-            agent_id=bot.agent_id,
+            workspace_id=route.workspace_id,
+            agent_id=route.agent_id,
             target_id=bot.id,
             name=bot.name,
             event_prefix="bot",
@@ -263,28 +309,30 @@ class BotBridgeService:
     def callback_payload(
         bot: BotConfig,
         message: BotMessage,
+        route: BotRoute,
         response_text: str,
     ) -> dict[str, Any]:
         return {
             "provider": bot.provider,
             "bot_id": bot.id,
-            "agent_id": bot.agent_id,
-            "workspace_id": bot.workspace_id,
+            "agent_id": route.agent_id,
+            "workspace_id": route.workspace_id,
             "sender": message.sender,
             "chat_id": message.chat_id,
-            "session_key": BotBridgeService.session_key(bot, message),
+            "session_key": BotBridgeService.session_key(bot, message, route),
             "message": message.text,
             "response": response_text,
             "formatted_response": BotBridgeService.format_response(bot.provider, response_text),
         }
 
     @staticmethod
-    def remote_user_content(bot: BotConfig, message: BotMessage) -> str:
+    def remote_user_content(bot: BotConfig, message: BotMessage, route: BotRoute) -> str:
         """Build the user message seen by the Agent with remote chat context."""
         return "\n".join(
             [
                 f"[remote_bot provider={bot.provider} bot_id={bot.id}]",
-                f"[session_key={BotBridgeService.session_key(bot, message)}]",
+                f"[workspace_id={route.workspace_id} agent_id={route.agent_id}]",
+                f"[session_key={BotBridgeService.session_key(bot, message, route)}]",
                 f"[sender={message.sender or 'unknown'} chat_id={message.chat_id or 'direct'}]",
                 message.text,
             ]
@@ -306,6 +354,7 @@ class BotBridgeService:
     async def _write_to_dlq(
         bot: BotConfig,
         message: BotMessage,
+        route: BotRoute,
         error: str,
         attempts: int,
     ) -> None:
@@ -368,7 +417,8 @@ class BotBridgeService:
         # Attempt dispatch
         bridge = BotBridgeService()
         try:
-            response = await bridge.dispatch(bot, message)
+            route = bridge.resolve_route(bot)
+            response = await bridge.dispatch(bot, message, route)
             return {"status": "success", "response": response}
         except Exception as exc:
             # Mark as failed again
@@ -386,20 +436,21 @@ class BotBridgeService:
     def _append_callback_event(
         bot: BotConfig,
         message: BotMessage,
+        route: BotRoute,
         *,
         ok: bool,
         error: str = "",
     ) -> None:
         try:
             WorkspaceManager().append_event(
-                bot.workspace_id,
+                route.workspace_id,
                 {
                     "type": "bot.callback",
                     "provider": bot.provider,
                     "bot_id": bot.id,
-                    "agent_id": bot.agent_id,
+                    "agent_id": route.agent_id,
                     "chat_id": message.chat_id,
-                    "session_key": BotBridgeService.session_key(bot, message),
+                    "session_key": BotBridgeService.session_key(bot, message, route),
                     "ok": ok,
                     "error": error,
                 },

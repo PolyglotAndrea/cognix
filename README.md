@@ -274,10 +274,27 @@ Scheduled tasks are stored in the database and coordinated with runtime leases:
 
 ### Remote Bot Callbacks
 
-Bot bridge configs can include metadata for asynchronous response writeback:
+Bot bridge gateways are account-level resources. A gateway stores provider identity, webhook
+secret, callback settings, and provider metadata. Workspaces do not create their own gateway
+credentials; instead, each workspace binds an available gateway to a target Agent through a
+workspace route.
+
+The main endpoints are:
+
+- `POST /api/v1/bots` creates an account-level gateway.
+- `POST /api/v1/bots/{bot_id}/routes` binds that gateway to a workspace and Agent.
+- `DELETE /api/v1/bots/{bot_id}/routes/{workspace_id}` removes a workspace route.
+
+Webhook dispatch resolves `workspace_id` from `?workspace_id=` or `X-Cognix-Workspace-ID` when a
+gateway has multiple enabled routes. If exactly one route is enabled, it is used automatically.
+
+Gateway metadata can include asynchronous response writeback options:
 
 ```json
 {
+  "routes": {
+    "workspace-1": {"workspace_id": "workspace-1", "agent_id": "agent-1", "enabled": true}
+  },
   "dispatch_mode": "task",
   "task_max_retries": 1,
   "response_url": "https://example.com/bot/callback",

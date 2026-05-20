@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from cognix.bots.bridge import BotBridgeService
+from cognix.bots.bridge import BotBridgeService, BotRoute
 from cognix.local.bots import BotConfig, BotConfigStore
 from cognix.local.home import CognixHome
 
@@ -21,8 +21,6 @@ def test_bot_config_store_hides_and_verifies_secret(tmp_path):
     bot = store.create(
         name="Lark",
         provider="lark",
-        workspace_id="workspace-1",
-        agent_id="agent-1",
         secret="secret-token",
     )
 
@@ -90,17 +88,16 @@ def test_bot_bridge_session_key_uses_chat_or_sender(tmp_path):
     bot = store.create(
         name="Ding",
         provider="dingtalk",
-        workspace_id="workspace-1",
-        agent_id="agent-1",
         secret="secret-token",
     )
+    route = BotRoute(workspace_id="workspace-1", agent_id="agent-1")
     message = BotBridgeService.extract_message(
         "dingtalk",
         {"senderNick": "Ada", "conversationId": "cid", "text": {"content": "hi"}},
     )
 
-    assert BotBridgeService.session_key(bot, message) == f"dingtalk:{bot.id}:cid"
-    remote_content = BotBridgeService.remote_user_content(bot, message)
+    assert BotBridgeService.session_key(bot, message, route) == f"dingtalk:{bot.id}:workspace-1:cid"
+    remote_content = BotBridgeService.remote_user_content(bot, message, route)
     assert "session_key=dingtalk:" in remote_content
     assert "sender=Ada chat_id=cid" in remote_content
     assert remote_content.endswith("hi")
@@ -126,10 +123,9 @@ def test_bot_bridge_builds_callback_payload():
         id="bot-1",
         name="Lark",
         provider="lark",
-        workspace_id="workspace-1",
-        agent_id="agent-1",
         secret_hash="hash",
     )
+    route = BotRoute(workspace_id="workspace-1", agent_id="agent-1")
     message = BotBridgeService.extract_message(
         "lark",
         {
@@ -140,9 +136,9 @@ def test_bot_bridge_builds_callback_payload():
         },
     )
 
-    payload = BotBridgeService.callback_payload(bot, message, "ok")
+    payload = BotBridgeService.callback_payload(bot, message, route, "ok")
 
-    assert payload["session_key"] == "lark:bot-1:oc_1"
+    assert payload["session_key"] == "lark:bot-1:workspace-1:oc_1"
     assert payload["response"] == "ok"
     assert payload["formatted_response"] == {
         "msg_type": "text",
@@ -191,8 +187,6 @@ async def test_bot_bridge_posts_response_callback(tmp_path, monkeypatch):
         id="bot-1",
         name="Ding",
         provider="dingtalk",
-        workspace_id="workspace-1",
-        agent_id="agent-1",
         secret_hash="hash",
         metadata={
             "response_url": "https://example.test/callback",
@@ -200,20 +194,21 @@ async def test_bot_bridge_posts_response_callback(tmp_path, monkeypatch):
             "response_timeout": 3,
         },
     )
+    route = BotRoute(workspace_id="workspace-1", agent_id="agent-1")
     message = BotBridgeService.extract_message(
         "dingtalk",
         {"senderNick": "Ada", "conversationId": "cid", "text": {"content": "hi"}},
     )
 
     store = BotConfigStore(home=CognixHome(tmp_path / ".cognix").ensure())
-    await BotBridgeService(store=store).post_response_callback(bot, message, "ok")
+    await BotBridgeService(store=store).post_response_callback(bot, message, route, "ok")
 
     assert requests == [
         {
             "method": "POST",
             "url": "https://example.test/callback",
             "headers": {"Authorization": "Bearer token"},
-            "json": BotBridgeService.callback_payload(bot, message, "ok"),
+            "json": BotBridgeService.callback_payload(bot, message, route, "ok"),
             "timeout": 3.0,
         }
     ]
@@ -226,7 +221,7 @@ async def test_bot_bridge_posts_response_callback(tmp_path, monkeypatch):
                 "bot_id": "bot-1",
                 "agent_id": "agent-1",
                 "chat_id": "cid",
-                "session_key": "dingtalk:bot-1:cid",
+                "session_key": "dingtalk:bot-1:workspace-1:cid",
                 "ok": True,
                 "error": "",
             },
