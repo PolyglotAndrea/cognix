@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Settings, Send, Loader2 } from 'lucide-react'
 import { api } from '@/shared/api/client'
 import { useAuthStore } from '@/features/auth/store'
+import { RichMessage } from '@/shared/ui'
 
 interface SimpleModeProps {
   workspaceId: string
@@ -187,7 +188,19 @@ export function SimpleMode({ workspaceId, onSwitchToAdvanced }: SimpleModeProps)
                   : 'bg-muted border border-border text-foreground'
               }`}
             >
-              {msg.content || (streaming && i === messages.length - 1 ? '...' : '')}
+              {msg.content ? (
+                msg.role === 'assistant' ? (
+                  <RichMessage content={msg.content} compact />
+                ) : (
+                  <div className="whitespace-pre-wrap break-words">{msg.content}</div>
+                )
+              ) : streaming && i === messages.length - 1 ? (
+                <div className="flex gap-1.5 py-1">
+                  <div className="h-2 w-2 animate-bounce rounded-full bg-current opacity-40" />
+                  <div className="h-2 w-2 animate-bounce rounded-full bg-current opacity-40 [animation-delay:0.2s]" />
+                  <div className="h-2 w-2 animate-bounce rounded-full bg-current opacity-40 [animation-delay:0.4s]" />
+                </div>
+              ) : null}
             </div>
           </div>
         ))}
