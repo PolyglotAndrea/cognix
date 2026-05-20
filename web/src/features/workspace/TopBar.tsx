@@ -92,15 +92,19 @@ export function TopBar() {
           <span className="font-bold text-foreground text-base tracking-tight">Cognix</span>
         </Link>
 
-        <div className="hidden lg:flex min-w-0 max-w-xs flex-col gap-1 shrink-0">
-          <label className="text-[9px] font-black uppercase tracking-[0.18em] text-muted-foreground/50 px-1">
+        <div
+          className="hidden lg:flex h-10 min-w-0 max-w-sm items-center gap-2 rounded-xl border border-border bg-muted/50 px-3 shadow-sm shadow-black/5 shrink-0"
+          title={workspace?.path || 'No workspace selected'}
+        >
+          <span className="text-[9px] font-black uppercase tracking-[0.18em] text-muted-foreground/50">
             Workspace
-          </label>
+          </span>
+          <div className="h-4 w-px bg-border/70" />
           <select
             value={workspace?.id || ''}
             onChange={(event) => setSelectedWorkspace(event.target.value || null)}
-            className="h-8 max-w-xs rounded-lg border border-border bg-muted/50 px-2.5 text-xs font-semibold text-foreground outline-none transition-all hover:bg-muted focus:border-primary/40 focus:ring-2 focus:ring-primary/20"
-            title={workspace?.path || 'No workspace selected'}
+            className="h-8 min-w-0 max-w-44 bg-transparent pr-7 text-xs font-semibold text-foreground outline-none"
+            aria-label="Current workspace"
           >
             {workspaces.length === 0 ? (
               <option value="">No workspace</option>
