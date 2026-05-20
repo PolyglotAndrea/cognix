@@ -119,18 +119,15 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleP
     isLoading: chatsLoading,
     refetch: refetchChats,
   } = useQuery<ChatSession[]>({
-    queryKey: ['workspace-chats', workspaceId, selectedAgentId],
+    queryKey: ['workspace-chats', workspaceId],
     queryFn: () => api.get(`/workspaces/${workspaceId}/chats`).then((r) => r.data),
-    enabled: !!workspaceId && !!selectedAgentId,
+    enabled: !!workspaceId,
   })
 
-  const agentChats = useMemo(() => 
-    (chats || []).filter((chat) => chat.metadata?.agent_id === selectedAgentId),
-    [chats, selectedAgentId]
-  )
+  const workspaceChats = useMemo(() => chats || [], [chats])
   const activeChat = useMemo(() => 
-    agentChats.find((chat) => chat.id === chatId) || null,
-    [agentChats, chatId]
+    workspaceChats.find((chat) => chat.id === chatId) || null,
+    [workspaceChats, chatId]
   )
 
   const { data: storedMessages } = useQuery<StoredMessage[]>({
@@ -170,13 +167,13 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleP
 
   useEffect(() => {
     if (!agent || !workspaceId || chatsLoading || chatId) return
-    const latest = agentChats[0]
+    const latest = workspaceChats[0]
     if (latest) {
       activateChat(latest)
       return
     }
     createChat()
-  }, [agent, agentChats, chatId, chatsLoading, workspaceId])
+  }, [agent, chatId, chatsLoading, workspaceChats, workspaceId])
 
   useEffect(() => {
     if (isStreaming || !storedMessages) return
@@ -322,7 +319,7 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleP
           },
         ])
         queryClient.invalidateQueries({ queryKey: ['workspace-chat-messages', workspaceId, chatId] })
-        queryClient.invalidateQueries({ queryKey: ['workspace-chats', workspaceId, selectedAgentId] })
+        queryClient.invalidateQueries({ queryKey: ['workspace-chats', workspaceId] })
         return
       }
 
@@ -477,7 +474,7 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleP
       }
       if (streamError) return
       queryClient.invalidateQueries({ queryKey: ['workspace-chat-messages', workspaceId, chatId] })
-      queryClient.invalidateQueries({ queryKey: ['workspace-chats', workspaceId, selectedAgentId] })
+      queryClient.invalidateQueries({ queryKey: ['workspace-chats', workspaceId] })
     } catch (err) {
       addLog({
         id: '',
@@ -769,7 +766,7 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleP
           Chats
         </div>
         <div className="flex gap-2 overflow-x-auto scrollbar-hide min-w-0">
-          {agentChats.map((chat) => (
+          {workspaceChats.map((chat) => (
             <button
               key={chat.id}
               onClick={() => activateChat(chat)}
@@ -781,9 +778,12 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleP
               title={chat.title}
             >
               {chat.title}
+              {!chat.metadata?.agent_id && (
+                <span className="ml-1 text-muted-foreground/70">· workspace</span>
+              )}
             </button>
           ))}
-          {agentChats.length === 0 && (
+          {workspaceChats.length === 0 && (
             <span className="px-3 py-1.5 rounded-lg border border-dashed border-border text-[11px] font-bold text-muted-foreground">
               {chatsLoading ? 'Loading...' : 'New session'}
             </span>

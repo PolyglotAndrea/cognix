@@ -1,6 +1,6 @@
-import { useState } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Settings, Send, Loader2 } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { MessageSquarePlus, Settings, Send, Loader2 } from 'lucide-react'
 import { api } from '@/shared/api/client'
 import { useAuthStore } from '@/features/auth/store'
 import { RichMessage } from '@/shared/ui'
@@ -16,12 +16,40 @@ interface StreamStep {
   status: 'pending' | 'running' | 'done' | 'failed'
 }
 
+interface ChatSession {
+  id: string
+  title: string
+  system_prompt: string
+  model_profiles: string[]
+  metadata: Record<string, unknown>
+}
+
+interface StoredMessage {
+  id: string
+  role: 'system' | 'user' | 'assistant' | 'tool'
+  content: string
+}
+
 export function SimpleMode({ workspaceId, onSwitchToAdvanced }: SimpleModeProps) {
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState<Array<{ role: string; content: string }>>([])
   const [streaming, setStreaming] = useState(false)
   const [streamSteps, setStreamSteps] = useState<StreamStep[]>([])
+  const [activeChatId, setActiveChatId] = useState<string | null>(null)
   const queryClient = useQueryClient()
+
+  const { data: chats = [], isLoading: chatsLoading } = useQuery<ChatSession[]>({
+    queryKey: ['workspace-chats', workspaceId],
+    queryFn: () => api.get(`/workspaces/${workspaceId}/chats`).then((r) => r.data),
+    enabled: !!workspaceId,
+  })
+
+  const { data: storedMessages } = useQuery<StoredMessage[]>({
+    queryKey: ['workspace-chat-messages', workspaceId, activeChatId],
+    queryFn: () =>
+      api.get(`/workspaces/${workspaceId}/chats/${activeChatId}/messages`).then((r) => r.data),
+    enabled: !!workspaceId && !!activeChatId && !streaming,
+  })
 
   const switchModeMutation = useMutation({
     mutationFn: () =>
@@ -32,24 +60,48 @@ export function SimpleMode({ workspaceId, onSwitchToAdvanced }: SimpleModeProps)
     },
   })
 
+  useEffect(() => {
+    setActiveChatId(null)
+    setMessages([])
+    setStreamSteps([])
+  }, [workspaceId])
+
+  useEffect(() => {
+    if (activeChatId || chats.length === 0) return
+    setActiveChatId(chats[0].id)
+  }, [activeChatId, chats])
+
+  useEffect(() => {
+    if (streaming || !storedMessages) return
+    setMessages(
+      storedMessages
+        .filter((message) => message.role === 'user' || message.role === 'assistant')
+        .map((message) => ({ role: message.role, content: message.content }))
+    )
+  }, [storedMessages, streaming])
+
+  const createChat = async () => {
+    const created = await api
+      .post(`/workspaces/${workspaceId}/chats`, {
+        title: 'Simple Chat',
+        metadata: { mode: 'simple' },
+      })
+      .then((r) => r.data as ChatSession)
+    setActiveChatId(created.id)
+    setMessages([])
+    await queryClient.invalidateQueries({ queryKey: ['workspace-chats', workspaceId] })
+    return created.id
+  }
+
   const handleSend = async () => {
     if (!input.trim() || streaming) return
     const userMsg = input.trim()
     setInput('')
     setMessages((prev) => [...prev, { role: 'user', content: userMsg }])
 
-    // Get or create a chat
-    let chatId: string
+    let chatId = activeChatId
     try {
-      const chats = await api.get(`/workspaces/${workspaceId}/chats`).then((r) => r.data)
-      if (chats.length > 0) {
-        chatId = chats[0].id
-      } else {
-        const created = await api
-          .post(`/workspaces/${workspaceId}/chats`, { title: 'Simple Chat' })
-          .then((r) => r.data)
-        chatId = created.id
-      }
+      chatId = chatId || (await createChat())
     } catch {
       setMessages((prev) => [...prev, { role: 'assistant', content: 'Failed to initialize chat.' }])
       return
@@ -142,6 +194,8 @@ export function SimpleMode({ workspaceId, onSwitchToAdvanced }: SimpleModeProps)
     } finally {
       setStreaming(false)
       setStreamSteps([])
+      queryClient.invalidateQueries({ queryKey: ['workspace-chats', workspaceId] })
+      queryClient.invalidateQueries({ queryKey: ['workspace-chat-messages', workspaceId, chatId] })
     }
   }
 
@@ -155,12 +209,53 @@ export function SimpleMode({ workspaceId, onSwitchToAdvanced }: SimpleModeProps)
           <span className="text-xs text-muted-foreground">Simple Mode</span>
         </div>
         <button
+          type="button"
           onClick={() => switchModeMutation.mutate()}
           className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors"
         >
           <Settings className="h-3.5 w-3.5" />
           Switch to Advanced
         </button>
+      </div>
+
+      <div className="border-b border-border bg-card/30 px-6 py-2">
+        <div className="mx-auto flex w-full max-w-2xl items-center gap-2 overflow-x-auto scrollbar-hide">
+          <span className="shrink-0 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+            Sessions
+          </span>
+          {chats.map((chat) => (
+            <button
+              key={chat.id}
+              type="button"
+              onClick={() => {
+                setActiveChatId(chat.id)
+                setMessages([])
+                setStreamSteps([])
+              }}
+              className={`max-w-[160px] shrink-0 truncate rounded-lg border px-3 py-1.5 text-[11px] font-bold transition-all ${
+                chat.id === activeChatId
+                  ? 'border-primary/30 bg-primary/10 text-primary'
+                  : 'border-border bg-background text-muted-foreground hover:text-foreground'
+              }`}
+              title={chat.title}
+            >
+              {chat.title}
+            </button>
+          ))}
+          {chats.length === 0 && (
+            <span className="shrink-0 rounded-lg border border-dashed border-border px-3 py-1.5 text-[11px] font-bold text-muted-foreground">
+              {chatsLoading ? 'Loading...' : 'No sessions'}
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => createChat()}
+            className="ml-auto flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-border bg-background px-3 text-[11px] font-bold text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <MessageSquarePlus className="h-3.5 w-3.5" />
+            New
+          </button>
+        </div>
       </div>
 
       {/* Messages */}
