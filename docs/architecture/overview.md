@@ -95,4 +95,6 @@ Agent Runtime
 
 See [Cognix Product Refactor Plan](product-refactor-plan.md) for the task-first workspace architecture, BYOK and entitlement flow, sandbox policy, memory router, artifact studio, and phased implementation roadmap.
 
+See [Intent-First Product Implementation Plan](intent-first-product-implementation.md) for the customer-facing command-center flow where MCP, skills, CLI, Claude Agent SDK, Hermes, memory, scheduler, and connectors are treated as internal capabilities selected by the planner.
+
 See [Planner Orchestrator Refactor Plan](planner-orchestrator.md) for the intent-to-plan-to-execution product layer that turns a user goal into agents, skills, MCP usage, scheduled tasks, execution events, artifacts, and memory/playbook follow-up.
