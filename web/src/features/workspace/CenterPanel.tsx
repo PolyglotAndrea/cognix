@@ -88,6 +88,7 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleP
     setRightPanelTab,
     addToolResult,
     addLog,
+    setAgentRunning,
   } = useWorkspaceStore()
   const queryClient = useQueryClient()
   const [messages, setMessages] = useState<Message[]>([])
@@ -256,6 +257,7 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleP
     const outgoingAttachments = attachments
     setAttachments([])
     setIsStreaming(true)
+    setAgentRunning(true)
 
     const token = useAuthStore.getState().token
     const requestBody = {
@@ -496,6 +498,7 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleP
       ])
     } finally {
       setIsStreaming(false)
+      setAgentRunning(false)
       setStreamSteps([])
     }
   }

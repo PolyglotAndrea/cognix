@@ -16,6 +16,13 @@ export interface LogEntry {
   timestamp: number
 }
 
+export interface NotebookSource {
+  id: string
+  kind: 'file' | 'url' | 'artifact' | 'memory'
+  title: string
+  subtitle: string
+}
+
 type RightPanelTab =
   | 'approvals'
   | 'tasks'
@@ -40,6 +47,8 @@ interface WorkspaceState {
   inputMode: 'plan' | 'chat'
   toolResults: ToolResult[]
   executionLogs: LogEntry[]
+  isAgentRunning: boolean
+  notebookSources: NotebookSource[]
   setSelectedWorkspace: (id: string | null) => void
   setSelectedAgent: (id: string | null) => void
   setRightPanelTab: (tab: RightPanelTab) => void
@@ -50,6 +59,8 @@ interface WorkspaceState {
   clearResults: () => void
   toggleRightPanel: () => void
   setWorkspaceOwner: (userId: string | null) => void
+  setAgentRunning: (running: boolean) => void
+  setNotebookSources: (sources: NotebookSource[]) => void
 }
 
 const uid = () => crypto.randomUUID()
@@ -65,6 +76,8 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       inputMode: 'plan',
       toolResults: [],
       executionLogs: [],
+      isAgentRunning: false,
+      notebookSources: [],
       setSelectedWorkspace: (id) =>
         set({ selectedWorkspaceId: id, selectedAgentId: null, toolResults: [], executionLogs: [] }),
       setWorkspaceOwner: (userId) => set({ selectedWorkspaceUserId: userId }),
@@ -78,6 +91,8 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         set((s) => ({ executionLogs: [...s.executionLogs, { ...log, id: log.id || uid() }] })),
       clearResults: () => set({ toolResults: [], executionLogs: [] }),
       toggleRightPanel: () => set((s) => ({ rightPanelOpen: !s.rightPanelOpen })),
+      setAgentRunning: (running) => set({ isAgentRunning: running }),
+      setNotebookSources: (sources) => set({ notebookSources: sources }),
     }),
     {
       name: 'cognix-workspace-ui',

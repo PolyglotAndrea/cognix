@@ -23,7 +23,7 @@ import { LeftPanel } from './LeftPanel'
 import { CenterPanel } from './CenterPanel'
 import { RightPanel } from './RightPanel'
 import { OnboardingWizard } from './OnboardingWizard'
-import { SimpleMode } from './SimpleMode'
+import { NotebookWorkspace } from './NotebookWorkspace'
 import { api } from '@/shared/api/client'
 import { cn } from '@/shared/lib/cn'
 import type { DragHandleProps } from './types'
@@ -121,7 +121,7 @@ export function Workspace() {
   // Simple mode
   if (workspaceId && uiMode === 'simple') {
     return (
-      <SimpleMode
+      <NotebookWorkspace
         workspaceId={workspaceId}
         onSwitchToAdvanced={() => refetchSettings()}
       />

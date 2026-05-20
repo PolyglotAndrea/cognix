@@ -1,20 +1,16 @@
-import { useMemo, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import {
-  Archive,
-  CheckCircle2,
-  Clock,
-  Database,
   FileText,
-  Filter,
-  GitBranch,
   NotebookTabs,
-  Sparkles,
-  Trash2,
+  Database,
+  CheckCircle2,
+  Loader2,
 } from 'lucide-react'
 import { api } from '@/shared/api/client'
 import { cn } from '@/shared/lib/cn'
 import { ArtifactDetail } from './ArtifactDetail'
+import { useWorkspaceStore } from './store'
 
 interface Artifact {
   id: string
@@ -33,12 +29,6 @@ interface Artifact {
   updated_at: string
 }
 
-const STATUS_ICONS: Record<string, typeof FileText> = {
-  draft: Clock,
-  published: CheckCircle2,
-  archived: Archive,
-}
-
 const TYPE_ICONS: Record<string, typeof FileText> = {
   report: FileText,
   plan: NotebookTabs,
@@ -47,19 +37,13 @@ const TYPE_ICONS: Record<string, typeof FileText> = {
   log: Database,
 }
 
-const STATUS_COLORS: Record<string, string> = {
-  draft: 'text-amber-600 bg-amber-500/10 border-amber-500/20',
-  published: 'text-emerald-600 bg-emerald-500/10 border-emerald-500/20',
-  archived: 'text-slate-500 bg-slate-500/10 border-slate-500/20',
-}
-
 const SOURCE_LABELS: Record<string, string> = {
   manual: 'Manual',
-  plan_apply: 'Plan',
-  task_executor: 'Task',
-  browser_automation: 'Browser',
-  chat: 'Chat',
-  skill: 'Skill',
+  plan_apply: 'Plan Output',
+  task_executor: 'Task Result',
+  browser_automation: 'Automation',
+  chat: 'Conversation',
+  skill: 'Tool Skill',
 }
 
 interface ArtifactPanelProps {
@@ -67,111 +51,122 @@ interface ArtifactPanelProps {
 }
 
 export function ArtifactPanel({ workspaceId }: ArtifactPanelProps) {
-  const queryClient = useQueryClient()
-  const [statusFilter, setStatusFilter] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const localDev =
-    window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+  const { isAgentRunning } = useWorkspaceStore()
 
   const { data: artifacts = [], isLoading } = useQuery<Artifact[]>({
-    queryKey: ['artifacts', workspaceId, statusFilter],
-    queryFn: () => {
-      const params: Record<string, string> = {}
-      if (statusFilter) params.status = statusFilter
-      return api
-        .get(`/workspaces/${workspaceId}/artifacts`, { params })
-        .then((r) => r.data)
-    },
+    queryKey: ['artifacts', workspaceId],
+    queryFn: () =>
+      api
+        .get(`/workspaces/${workspaceId}/artifacts`)
+        .then((r) => r.data),
     enabled: !!workspaceId,
-  })
-
-  const stats = useMemo(() => {
-    const published = artifacts.filter((item) => item.status === 'published').length
-    const browser = artifacts.filter((item) => item.source === 'browser_automation').length
-    const latest = artifacts[0]?.updated_at
-    return { total: artifacts.length, published, browser, latest }
-  }, [artifacts])
-
-  const clearHistoryMutation = useMutation({
-    mutationFn: () =>
-      api.delete(`/workspaces/${workspaceId}/dev/history`, {
-        params: { failed_only: true },
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['artifacts', workspaceId] })
-      queryClient.invalidateQueries({ queryKey: ['workspace-task-status'] })
-    },
+    refetchInterval: isAgentRunning ? 3000 : false,
   })
 
   return (
-    <div className="p-4 space-y-3.5">
-      {/* Compact Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Sparkles className="h-4 w-4 text-primary" />
-          <h3 className="text-sm font-black text-foreground">Outputs</h3>
-          <span className="text-[10px] font-bold text-muted-foreground/60 bg-muted/50 px-2 py-0.5 rounded-lg border border-border">
-            {stats.total}
-          </span>
-        </div>
-        {localDev && (
-          <button
-            type="button"
-            onClick={() => clearHistoryMutation.mutate()}
-            disabled={clearHistoryMutation.isPending}
-            className="rounded-lg p-1.5 text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 disabled:opacity-40 transition-colors"
-            title="Clear failed local dev outputs"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
+    <div className="flex flex-col h-full bg-transparent">
+      {/* Header */}
+      <div className="px-4 py-3 shrink-0 flex items-center justify-between">
+        <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground/60">
+          Generated Outputs ({artifacts.length})
+        </span>
+        {isAgentRunning && (
+          <div className="flex items-center gap-1.5 text-[9px] font-black uppercase tracking-widest text-primary animate-pulse">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            <span>Working…</span>
+          </div>
         )}
       </div>
 
-      <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-hide">
-        <Filter className="h-3 w-3 shrink-0 text-muted-foreground/70" />
-        {[null, 'draft', 'published', 'archived'].map((status) => (
-          <button
-            key={status ?? 'all'}
-            onClick={() => setStatusFilter(status)}
-            className={cn(
-              'shrink-0 px-2.5 py-1 rounded-lg text-[9px] font-bold uppercase tracking-wider border transition-all',
-              statusFilter === status
-                ? 'bg-primary text-primary-foreground border-primary shadow-sm shadow-primary/20'
-                : 'bg-background text-muted-foreground border-border hover:text-foreground hover:bg-muted',
-            )}
-          >
-            {status ?? 'All'}
-          </button>
-        ))}
-      </div>
+      {/* Artifacts List */}
+      <div className="flex-1 overflow-y-auto px-4 pb-6 scrollbar-hide">
+        {/* Loading skeleton — shown while agent is actively running */}
+        {isAgentRunning && (
+          <div className="mb-3 p-3.5 rounded-2xl border border-primary/20 bg-primary/3 flex items-start gap-3.5 animate-pulse">
+            <div className="w-8 h-8 rounded-xl bg-primary/10 border border-primary/15 shrink-0 flex items-center justify-center">
+              <Loader2 className="h-4 w-4 text-primary/40 animate-spin" />
+            </div>
+            <div className="flex-1 min-w-0 space-y-2 pt-0.5">
+              <div className="h-3 bg-primary/10 rounded-lg w-3/5" />
+              <div className="h-2.5 bg-muted/60 rounded-lg w-2/5" />
+            </div>
+          </div>
+        )}
 
-      {isLoading ? (
-        <div className="py-20 text-center">
-          <FileText className="h-8 w-8 text-muted-foreground/20 animate-pulse mx-auto mb-4" />
-          <p className="text-xs font-bold text-muted-foreground uppercase tracking-widest">
-            Loading Outputs
-          </p>
-        </div>
-      ) : artifacts.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-border bg-muted/20 px-6 py-16 text-center">
-          <FileText className="h-9 w-9 text-muted-foreground/30 mx-auto mb-4" />
-          <p className="text-sm font-black text-foreground">No outputs yet</p>
-          <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-            Finished tasks, browser captures, reports, and exported results will appear here.
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-2.5">
-          {artifacts.map((artifact) => (
-            <ArtifactCard
-              key={artifact.id}
-              artifact={artifact}
-              selected={artifact.id === selectedId}
-              onClick={() => setSelectedId(artifact.id)}
-            />
-          ))}
-        </div>
-      )}
+        {isLoading && !isAgentRunning ? (
+          <div className="py-20 text-center">
+            <FileText className="h-8 w-8 text-muted-foreground/20 animate-pulse mx-auto mb-3" />
+            <p className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">
+              Loading artifacts...
+            </p>
+          </div>
+        ) : artifacts.length === 0 && !isAgentRunning ? (
+          <div className="rounded-2xl border border-dashed border-border/80 bg-muted/5 px-4 py-16 text-center select-none">
+            <FileText className="h-8 w-8 text-muted-foreground/20 mx-auto mb-3" />
+            <p className="text-xs font-black text-foreground uppercase tracking-wider">No outputs yet</p>
+            <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground/75 font-medium">
+              Artifacts generated during execution will appear here.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {artifacts.map((artifact) => {
+              const selected = artifact.id === selectedId
+              const TypeIcon = TYPE_ICONS[artifact.artifact_type] ?? FileText
+
+              return (
+                <button
+                  key={artifact.id}
+                  onClick={() => setSelectedId(artifact.id)}
+                  className={cn(
+                    "w-full text-left p-3.5 rounded-2xl border transition-all duration-200 flex items-start gap-3.5 group relative overflow-hidden",
+                    selected
+                      ? "bg-primary/5 border-primary/30 shadow-md shadow-primary/5 ring-1 ring-primary/20"
+                      : "bg-card/40 border-border/60 hover:bg-card/90 hover:border-border/100 hover:shadow-sm"
+                  )}
+                >
+                  {/* Left accent */}
+                  <div className={cn(
+                    "absolute left-0 top-0 bottom-0 w-1 transition-all duration-200",
+                    selected ? "bg-primary" : "bg-transparent group-hover:bg-muted-foreground/20"
+                  )} />
+
+                  {/* Icon */}
+                  <div className={cn(
+                    "w-8 h-8 rounded-xl flex items-center justify-center shrink-0 border transition-colors",
+                    selected
+                      ? "bg-primary/10 border-primary/20 text-primary"
+                      : "bg-muted/40 border-border/50 text-muted-foreground/70 group-hover:text-primary group-hover:bg-primary/5 group-hover:border-primary/10"
+                  )}>
+                    <TypeIcon className="h-4 w-4" />
+                  </div>
+
+                  {/* Meta */}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start justify-between gap-2">
+                      <h4 className={cn(
+                        "text-xs font-black leading-tight tracking-tight truncate transition-colors",
+                        selected ? "text-primary" : "text-foreground group-hover:text-primary"
+                      )}>
+                        {artifact.title}
+                      </h4>
+                      <span className="shrink-0 text-[8px] font-black uppercase tracking-widest text-muted-foreground bg-muted/60 px-1.5 py-0.5 rounded border border-border/40">
+                        v{artifact.version}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5 text-[9px] font-bold text-muted-foreground/60 mt-1">
+                      <span>{SOURCE_LABELS[artifact.source] ?? artifact.source}</span>
+                      <span>•</span>
+                      <span>{new Date(artifact.updated_at).toLocaleDateString()}</span>
+                    </div>
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        )}
+      </div>
 
       {selectedId && (
         <ArtifactDetail
@@ -182,89 +177,4 @@ export function ArtifactPanel({ workspaceId }: ArtifactPanelProps) {
       )}
     </div>
   )
-}
-
-function ArtifactCard({
-  artifact,
-  selected,
-  onClick,
-}: {
-  artifact: Artifact
-  selected: boolean
-  onClick: () => void
-}) {
-  const StatusIcon = STATUS_ICONS[artifact.status] ?? FileText
-  const TypeIcon = TYPE_ICONS[artifact.artifact_type] ?? FileText
-  const summary = artifactSummary(artifact)
-
-  return (
-    <button
-      onClick={onClick}
-      className={cn(
-        'w-full text-left rounded-xl border p-3 transition-all duration-200 group',
-        selected
-          ? 'border-primary/40 bg-primary/5 shadow-sm shadow-primary/10'
-          : 'border-border bg-card/50 hover:bg-card hover:border-primary/20',
-      )}
-    >
-      <div className="flex items-start gap-2.5">
-        <div className="h-8.5 w-8.5 rounded-lg border border-border bg-background flex items-center justify-center shrink-0 group-hover:border-primary/30">
-          <TypeIcon className="h-3.5 w-3.5 text-primary" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-2">
-            <h4 className="line-clamp-1 text-xs font-black leading-snug text-foreground group-hover:text-primary">
-              {artifact.title}
-            </h4>
-            <span
-              className={cn(
-                'shrink-0 flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[8px] font-black uppercase tracking-wider border',
-                STATUS_COLORS[artifact.status] ?? STATUS_COLORS.draft,
-              )}
-            >
-              <StatusIcon className="h-2 w-2" />
-              {artifact.status}
-            </span>
-          </div>
-
-          <p className="mt-1 line-clamp-1 text-[11px] leading-relaxed text-muted-foreground/80">
-            {summary}
-          </p>
-
-          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[9px] font-bold text-muted-foreground/50">
-            <span className="text-muted-foreground/70">{SOURCE_LABELS[artifact.source] ?? artifact.source}</span>
-            <span>•</span>
-            <span className="text-muted-foreground/70">{artifact.artifact_type}</span>
-            {artifact.task_id && (
-              <>
-                <span>•</span>
-                <span className="text-muted-foreground/70">Task {artifact.task_id.slice(0, 6)}</span>
-              </>
-            )}
-            <span>•</span>
-            <span className="flex items-center gap-0.5">
-              <GitBranch className="h-2 w-2" />
-              v{artifact.version}
-            </span>
-            <span>•</span>
-            <span>{new Date(artifact.updated_at).toLocaleDateString()}</span>
-          </div>
-        </div>
-      </div>
-    </button>
-  )
-}
-
-
-function artifactSummary(artifact: Artifact): string {
-  const metadataSummary = artifact.metadata?.summary
-  if (typeof metadataSummary === 'string' && metadataSummary.trim()) {
-    return metadataSummary.trim()
-  }
-  const text = artifact.content
-    .replace(/^# .+$/gm, '')
-    .replace(/[#*_`>-]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-  return text || 'Open this output to inspect the generated result and source details.'
 }

@@ -24,6 +24,8 @@ import { useWorkspaceStore } from './store'
 interface SimpleModeProps {
   workspaceId: string
   onSwitchToAdvanced: () => void
+  embedded?: boolean
+  requestedIntent?: { id: number; text: string; autoSubmit?: boolean } | null
 }
 
 interface StreamStep {
@@ -61,13 +63,19 @@ interface UIMessage {
   applyResult?: ApplyResult
 }
 
-export function SimpleMode({ workspaceId, onSwitchToAdvanced }: SimpleModeProps) {
+export function SimpleMode({
+  workspaceId,
+  onSwitchToAdvanced,
+  embedded = false,
+  requestedIntent = null,
+}: SimpleModeProps) {
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState<UIMessage[]>([])
   const [streaming, setStreaming] = useState(false)
   const [activeChatId, setActiveChatId] = useState<string | null>(null)
   const queryClient = useQueryClient()
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const notebookSources = useWorkspaceStore((state) => state.notebookSources)
 
   const { data: chats = [], isLoading: chatsLoading } = useQuery<ChatSession[]>({
     queryKey: ['workspace-chats', workspaceId],
@@ -157,9 +165,29 @@ export function SimpleMode({ workspaceId, onSwitchToAdvanced }: SimpleModeProps)
     return created.id
   }
 
-  const handleSend = async () => {
-    if (!input.trim() || streaming) return
-    const userMsg = input.trim()
+  useEffect(() => {
+    if (!requestedIntent?.text) return
+    setInput(requestedIntent.text)
+    if (requestedIntent.autoSubmit) {
+      void handleSend(requestedIntent.text)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedIntent?.id])
+
+  const buildSourceContext = () => {
+    if (notebookSources.length === 0) return ''
+    const lines = notebookSources
+      .slice(0, 20)
+      .map((source) => `- [${source.kind}] ${source.title}: ${source.subtitle}`)
+      .join('\n')
+    return `\n\nSelected workspace sources:\n${lines}`
+  }
+
+  const handleSend = async (override?: string) => {
+    const currentInput = override ?? input
+    if (!currentInput.trim() || streaming) return
+    const userMsg = currentInput.trim()
+    const plannerIntent = `${userMsg}${buildSourceContext()}`
     setInput('')
 
     let chatId = activeChatId
@@ -175,6 +203,9 @@ export function SimpleMode({ workspaceId, onSwitchToAdvanced }: SimpleModeProps)
       await api.post(`/workspaces/${workspaceId}/chats/${chatId}/messages/raw`, {
         role: 'user',
         content: userMsg,
+        metadata: {
+          sources: notebookSources,
+        },
       })
     } catch (err) {
       console.error('Failed to persist user message:', err)
@@ -187,7 +218,7 @@ export function SimpleMode({ workspaceId, onSwitchToAdvanced }: SimpleModeProps)
     setMessages((prev) => [...prev, { role: 'assistant', content: 'Analyzing your intent and generating execution plan...' }])
 
     try {
-      const planRes = await api.post(`/workspaces/${workspaceId}/plans`, { intent: userMsg })
+      const planRes = await api.post(`/workspaces/${workspaceId}/plans`, { intent: plannerIntent })
       const plan = planRes.data as WorkspacePlan
 
       // Save plan message persistently
@@ -484,8 +515,9 @@ export function SimpleMode({ workspaceId, onSwitchToAdvanced }: SimpleModeProps)
   }
 
   return (
-    <div className="h-screen flex flex-col bg-background text-foreground overflow-hidden">
+    <div className={`${embedded ? 'h-full' : 'h-screen'} flex flex-col bg-background text-foreground overflow-hidden`}>
       {/* Header */}
+      {!embedded && (
       <div className="flex items-center justify-between px-6 py-4 border-b border-border/80 bg-card/60 backdrop-blur-xl shrink-0">
         <div className="flex items-center gap-2.5">
           <div className="relative flex h-2.5 w-2.5">
@@ -508,6 +540,7 @@ export function SimpleMode({ workspaceId, onSwitchToAdvanced }: SimpleModeProps)
           Switch to Advanced
         </button>
       </div>
+      )}
 
       {/* Chat Tabs / Sessions */}
       <div className="border-b border-border/60 bg-card/30 px-6 py-2.5 shrink-0">
@@ -843,7 +876,7 @@ export function SimpleMode({ workspaceId, onSwitchToAdvanced }: SimpleModeProps)
             className="flex-1 rounded-xl border border-border/80 bg-background px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground/60 outline-none focus:ring-2 focus:ring-primary/25 focus:border-primary disabled:opacity-60 shadow-inner"
           />
           <button
-            onClick={handleSend}
+            onClick={() => handleSend()}
             disabled={!input.trim() || streaming}
             className="w-11 h-11 rounded-xl bg-primary text-primary-foreground flex items-center justify-center hover:bg-primary/95 transition-all active:scale-95 disabled:opacity-50 shadow-md shadow-primary/10 shrink-0"
           >

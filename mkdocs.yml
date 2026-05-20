@@ -82,6 +82,9 @@ nav:
     - Orchestration: architecture/orchestration.md
     - API Server: architecture/api.md
     - Storage: architecture/storage.md
+    - Intent-First Product: architecture/intent-first-product-implementation.md
+    - Product Refactor Plan: architecture/product-refactor-plan.md
+    - Notebook-Style UI Migration: architecture/notebook-style-ui-migration.md
   - API Reference:
     - Auth: api/auth.md
     - Agents: api/agents.md
