@@ -1,5 +1,4 @@
 import { useMemo, useState } from 'react'
-import type { ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Archive,
@@ -105,50 +104,37 @@ export function ArtifactPanel({ workspaceId }: ArtifactPanelProps) {
   })
 
   return (
-    <div className="p-4 space-y-4">
-      <section className="rounded-2xl border border-border bg-card/70 p-4 shadow-sm">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <div className="h-9 w-9 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center">
-                <Sparkles className="h-4 w-4 text-primary" />
-              </div>
-              <div>
-                <h3 className="text-sm font-black text-foreground">Output Library</h3>
-                <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-                  Reports, datasets, browser captures, and task results
-                </p>
-              </div>
-            </div>
-          </div>
-          {localDev && (
-            <button
-              type="button"
-              onClick={() => clearHistoryMutation.mutate()}
-              disabled={clearHistoryMutation.isPending}
-              className="shrink-0 rounded-xl border border-border bg-background px-2.5 py-2 text-[10px] font-black uppercase tracking-widest text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
-              title="Clear failed local dev outputs"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
-          )}
+    <div className="p-4 space-y-3.5">
+      {/* Compact Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Sparkles className="h-4 w-4 text-primary" />
+          <h3 className="text-sm font-black text-foreground">Outputs</h3>
+          <span className="text-[10px] font-bold text-muted-foreground/60 bg-muted/50 px-2 py-0.5 rounded-lg border border-border">
+            {stats.total}
+          </span>
         </div>
+        {localDev && (
+          <button
+            type="button"
+            onClick={() => clearHistoryMutation.mutate()}
+            disabled={clearHistoryMutation.isPending}
+            className="rounded-lg p-1.5 text-muted-foreground hover:text-rose-500 hover:bg-rose-500/10 disabled:opacity-40 transition-colors"
+            title="Clear failed local dev outputs"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        )}
+      </div>
 
-        <div className="mt-4 grid grid-cols-3 gap-2">
-          <Metric label="Total" value={stats.total} />
-          <Metric label="Published" value={stats.published} />
-          <Metric label="Browser" value={stats.browser} />
-        </div>
-      </section>
-
-      <div className="flex items-center gap-2 overflow-x-auto scrollbar-hide">
-        <Filter className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      <div className="flex items-center gap-1.5 overflow-x-auto scrollbar-hide">
+        <Filter className="h-3 w-3 shrink-0 text-muted-foreground/70" />
         {[null, 'draft', 'published', 'archived'].map((status) => (
           <button
             key={status ?? 'all'}
             onClick={() => setStatusFilter(status)}
             className={cn(
-              'shrink-0 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border transition-all',
+              'shrink-0 px-2.5 py-1 rounded-lg text-[9px] font-bold uppercase tracking-wider border transition-all',
               statusFilter === status
                 ? 'bg-primary text-primary-foreground border-primary shadow-sm shadow-primary/20'
                 : 'bg-background text-muted-foreground border-border hover:text-foreground hover:bg-muted',
@@ -175,7 +161,7 @@ export function ArtifactPanel({ workspaceId }: ArtifactPanelProps) {
           </p>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-2.5">
           {artifacts.map((artifact) => (
             <ArtifactCard
               key={artifact.id}
@@ -198,17 +184,6 @@ export function ArtifactPanel({ workspaceId }: ArtifactPanelProps) {
   )
 }
 
-function Metric({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded-xl border border-border bg-background/70 px-3 py-2">
-      <div className="text-lg font-black text-foreground">{value}</div>
-      <div className="text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
-        {label}
-      </div>
-    </div>
-  )
-}
-
 function ArtifactCard({
   artifact,
   selected,
@@ -226,44 +201,52 @@ function ArtifactCard({
     <button
       onClick={onClick}
       className={cn(
-        'w-full text-left rounded-2xl border p-4 transition-all duration-200 group',
+        'w-full text-left rounded-xl border p-3 transition-all duration-200 group',
         selected
           ? 'border-primary/40 bg-primary/5 shadow-sm shadow-primary/10'
           : 'border-border bg-card/50 hover:bg-card hover:border-primary/20',
       )}
     >
-      <div className="flex items-start gap-3">
-        <div className="h-10 w-10 rounded-xl border border-border bg-background flex items-center justify-center shrink-0 group-hover:border-primary/30">
-          <TypeIcon className="h-4 w-4 text-primary" />
+      <div className="flex items-start gap-2.5">
+        <div className="h-8.5 w-8.5 rounded-lg border border-border bg-background flex items-center justify-center shrink-0 group-hover:border-primary/30">
+          <TypeIcon className="h-3.5 w-3.5 text-primary" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-2">
-            <h4 className="line-clamp-2 text-sm font-black leading-snug text-foreground group-hover:text-primary">
+            <h4 className="line-clamp-1 text-xs font-black leading-snug text-foreground group-hover:text-primary">
               {artifact.title}
             </h4>
             <span
               className={cn(
-                'shrink-0 flex items-center gap-1 px-2 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border',
+                'shrink-0 flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[8px] font-black uppercase tracking-wider border',
                 STATUS_COLORS[artifact.status] ?? STATUS_COLORS.draft,
               )}
             >
-              <StatusIcon className="h-2.5 w-2.5" />
+              <StatusIcon className="h-2 w-2" />
               {artifact.status}
             </span>
           </div>
 
-          <p className="mt-2 line-clamp-3 text-xs leading-relaxed text-muted-foreground">
+          <p className="mt-1 line-clamp-1 text-[11px] leading-relaxed text-muted-foreground/80">
             {summary}
           </p>
 
-          <div className="mt-3 flex flex-wrap items-center gap-2 text-[9px] font-bold uppercase tracking-widest text-muted-foreground">
-            <Chip>{SOURCE_LABELS[artifact.source] ?? artifact.source}</Chip>
-            <Chip>{artifact.artifact_type}</Chip>
-            {artifact.task_id && <Chip>Task {artifact.task_id.slice(0, 6)}</Chip>}
-            <span className="flex items-center gap-1">
-              <GitBranch className="h-2.5 w-2.5" />
+          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[9px] font-bold text-muted-foreground/50">
+            <span className="text-muted-foreground/70">{SOURCE_LABELS[artifact.source] ?? artifact.source}</span>
+            <span>•</span>
+            <span className="text-muted-foreground/70">{artifact.artifact_type}</span>
+            {artifact.task_id && (
+              <>
+                <span>•</span>
+                <span className="text-muted-foreground/70">Task {artifact.task_id.slice(0, 6)}</span>
+              </>
+            )}
+            <span>•</span>
+            <span className="flex items-center gap-0.5">
+              <GitBranch className="h-2 w-2" />
               v{artifact.version}
             </span>
+            <span>•</span>
             <span>{new Date(artifact.updated_at).toLocaleDateString()}</span>
           </div>
         </div>
@@ -272,13 +255,6 @@ function ArtifactCard({
   )
 }
 
-function Chip({ children }: { children: ReactNode }) {
-  return (
-    <span className="rounded-full border border-border bg-background/70 px-2 py-1">
-      {children}
-    </span>
-  )
-}
 
 function artifactSummary(artifact: Artifact): string {
   const metadataSummary = artifact.metadata?.summary

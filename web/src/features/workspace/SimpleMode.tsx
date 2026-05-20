@@ -325,6 +325,8 @@ export function SimpleMode({ workspaceId, onSwitchToAdvanced }: SimpleModeProps)
               stepId = 'execution-done'
               stepLabel = event.result?.status === 'failed'
                 ? 'Execution finished with recoverable errors'
+                : event.result?.status === 'needs_input'
+                ? 'Waiting for your input to continue'
                 : 'Execution completed'
               status = event.result?.status === 'failed' ? 'failed' : 'done'
               finalApplyResultFromStream = event.result
@@ -377,14 +379,20 @@ export function SimpleMode({ workspaceId, onSwitchToAdvanced }: SimpleModeProps)
         execution_results: finalApplyResultFromStream?.execution_results || [],
         artifacts: finalApplyResultFromStream?.artifacts || [],
         code_projects: finalApplyResultFromStream?.created?.code_projects || [],
+        approval_ids: finalApplyResultFromStream?.approval_ids || [],
         plan: finalApplyResultFromStream?.plan || updatedPlan,
       }
       const failed = finalApplyResult.status === 'failed'
+      const needsInput =
+        finalApplyResult.status === 'needs_input' ||
+        Boolean(finalApplyResult.approval_ids?.length)
       const firstError =
         finalApplyResult.execution_results?.find((item) => item.error)?.error ||
         (failed ? 'The workflow could not complete with the current configuration.' : '')
       const resultContent = failed
         ? `Execution needs attention.\n\n${firstError}\n\nRecommended next step: review the highlighted issue, adjust the source/provider/capability access if needed, then run the plan again.`
+        : needsInput
+        ? `I need a bit more information before continuing.\n\n${finalResultText}\n\nOpen Needs Input on the right and provide the requested details.`
         : `Execution completed.\n\n${finalResultText}`
 
       // Save raw final result to backend
@@ -412,7 +420,12 @@ export function SimpleMode({ workspaceId, onSwitchToAdvanced }: SimpleModeProps)
       )
       queryClient.invalidateQueries({ queryKey: ['artifacts', workspaceId] })
       queryClient.invalidateQueries({ queryKey: ['code-projects', workspaceId] })
-      if (finalApplyResult.artifacts && finalApplyResult.artifacts.length > 0) {
+      queryClient.invalidateQueries({ queryKey: ['approvals', workspaceId] })
+      if (needsInput) {
+        const workspaceStore = useWorkspaceStore.getState()
+        workspaceStore.setRightPanelTab('approvals')
+        workspaceStore.setRightPanelOpen(true)
+      } else if (finalApplyResult.artifacts && finalApplyResult.artifacts.length > 0) {
         const workspaceStore = useWorkspaceStore.getState()
         workspaceStore.setRightPanelTab('artifacts')
         workspaceStore.setRightPanelOpen(true)

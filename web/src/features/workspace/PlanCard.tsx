@@ -4,6 +4,7 @@ import {
   Clock,
   Cpu,
   FileText,
+  MessageSquareText,
   Loader2,
   Play,
   Puzzle,
@@ -42,11 +43,13 @@ export function PlanCard({
   plan,
   onApply,
   onReject,
+  onViewNeedsInput,
   isApplying,
 }: {
   plan: WorkspacePlan
   onApply: () => void
   onReject: () => void
+  onViewNeedsInput?: () => void
   isApplying: boolean
 }) {
   const stepStatuses = plan.step_statuses || {}
@@ -203,6 +206,15 @@ export function PlanCard({
             <CheckCircle2 className="h-4 w-4" />
             Applied Successfully
           </div>
+        ) : plan.status === 'needs_input' ? (
+          <button
+            type="button"
+            onClick={onViewNeedsInput}
+            className="flex-1 h-10 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center gap-2 text-xs font-bold border border-amber-500/20 hover:bg-amber-500/15 transition-all"
+          >
+            <MessageSquareText className="h-4 w-4" />
+            Needs Your Input
+          </button>
         ) : plan.status === 'failed' ? (
           <div className="flex-1 h-10 rounded-xl bg-rose-500/10 text-rose-500 flex items-center justify-center gap-2 text-xs font-bold border border-rose-500/20">
             <XCircle className="h-4 w-4" />

@@ -45,6 +45,7 @@ export interface ApplyResult {
   execution_results?: ExecutionResult[]
   artifacts?: string[]
   code_projects?: string[]
+  approval_ids?: string[]
   plan?: WorkspacePlan
 }
 

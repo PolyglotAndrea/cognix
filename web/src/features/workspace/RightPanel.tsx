@@ -218,6 +218,16 @@ export function RightPanel({ dragHandleProps: _dragHandleProps }: { dragHandlePr
       response?: string
     }): Promise<unknown> => {
       if (action === 'approve' || action === 'respond') {
+        if (
+          action === 'respond' &&
+          approval.kind === 'question' &&
+          approval.metadata?.source === 'plan_apply'
+        ) {
+          return api.post(
+            `/approvals/${approval.id}/${action}`,
+            response ? { response } : undefined,
+          )
+        }
         // Approve/respond, then auto-resume in one click
         await api.post(
           `/approvals/${approval.id}/${action}`,

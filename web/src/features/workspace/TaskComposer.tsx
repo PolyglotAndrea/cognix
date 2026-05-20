@@ -39,7 +39,7 @@ export function TaskComposer({
     if (polledPlan && applyingPlanId) {
       lastPolledRef.current = polledPlan
       setPlan(polledPlan)
-      if (polledPlan.status === 'applied' || polledPlan.status === 'failed') {
+      if (polledPlan.status === 'applied' || polledPlan.status === 'failed' || polledPlan.status === 'needs_input') {
         setApplyingPlanId(null)
       }
     }
@@ -69,6 +69,7 @@ export function TaskComposer({
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
       queryClient.invalidateQueries({ queryKey: ['artifacts', workspaceId] })
       queryClient.invalidateQueries({ queryKey: ['code-projects', workspaceId] })
+      queryClient.invalidateQueries({ queryKey: ['approvals', workspaceId] })
       queryClient.invalidateQueries({ queryKey: ['workspace-settings', workspaceId] })
       const result: ApplyResult = response.data
       setApplyResult(result)
@@ -80,7 +81,11 @@ export function TaskComposer({
       if (createdAgents?.length > 0) {
         onAgentCreated?.(createdAgents[0])
       }
-      if (result.artifacts && result.artifacts.length > 0) {
+      if (result.status === 'needs_input' || result.approval_ids?.length) {
+        const workspaceStore = useWorkspaceStore.getState()
+        workspaceStore.setRightPanelTab('approvals')
+        workspaceStore.setRightPanelOpen(true)
+      } else if (result.artifacts && result.artifacts.length > 0) {
         const workspaceStore = useWorkspaceStore.getState()
         workspaceStore.setRightPanelTab('artifacts')
         workspaceStore.setRightPanelOpen(true)
@@ -169,18 +174,45 @@ export function TaskComposer({
         <div className={`p-4 rounded-xl border space-y-3 ${
           applyResult.status === 'failed'
             ? 'border-rose-500/20 bg-rose-500/5'
+            : applyResult.status === 'needs_input'
+            ? 'border-amber-500/20 bg-amber-500/5'
             : 'border-emerald-500/20 bg-emerald-500/5'
         }`}>
           <div className={`flex items-center gap-2 text-xs font-bold ${
-            applyResult.status === 'failed' ? 'text-rose-700' : 'text-emerald-700'
+            applyResult.status === 'failed'
+              ? 'text-rose-700'
+              : applyResult.status === 'needs_input'
+              ? 'text-amber-700'
+              : 'text-emerald-700'
           }`}>
             {applyResult.status === 'failed' ? (
               <XCircle className="h-4 w-4" />
             ) : (
               <CheckCircle2 className="h-4 w-4" />
             )}
-            {applyResult.status === 'failed' ? 'Plan applied with failures' : 'Plan applied successfully'}
+            {applyResult.status === 'failed'
+              ? 'Plan applied with failures'
+              : applyResult.status === 'needs_input'
+              ? 'Needs your input to continue'
+              : 'Plan applied successfully'}
           </div>
+          {applyResult.status === 'needs_input' && (
+            <div className="rounded-xl border border-amber-500/20 bg-background/70 p-3 text-[11px] leading-relaxed text-foreground/70">
+              Cognix started the work but needs missing details before it can continue. Open
+              <button
+                type="button"
+                onClick={() => {
+                  const workspaceStore = useWorkspaceStore.getState()
+                  workspaceStore.setRightPanelTab('approvals')
+                  workspaceStore.setRightPanelOpen(true)
+                }}
+                className="mx-1 font-black text-amber-700 underline underline-offset-2"
+              >
+                Needs Input
+              </button>
+              and provide the requested information.
+            </div>
+          )}
           <div className="space-y-1 text-[11px] text-foreground/70">
             {applyResult.created.agents?.length > 0 && (
               <div>Created {applyResult.created.agents.length} agent(s)</div>
@@ -253,6 +285,11 @@ export function TaskComposer({
           plan={plan}
           onApply={() => applyPlanMutation.mutate(plan.id)}
           onReject={() => rejectPlanMutation.mutate(plan.id)}
+          onViewNeedsInput={() => {
+            const workspaceStore = useWorkspaceStore.getState()
+            workspaceStore.setRightPanelTab('approvals')
+            workspaceStore.setRightPanelOpen(true)
+          }}
           isApplying={applyPlanMutation.isPending || !!applyingPlanId}
         />
       )}
