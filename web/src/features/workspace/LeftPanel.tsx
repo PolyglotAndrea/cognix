@@ -95,19 +95,53 @@ export function LeftPanel({ dragHandleProps }: { dragHandleProps?: DragHandlePro
       <PanelHeader dragHandleProps={dragHandleProps} className="bg-muted/30">
         <div className="flex items-center gap-2">
            <Bot className="h-4 w-4 text-primary" />
-           <span className="text-xs font-bold uppercase tracking-widest text-foreground">Workspace Process</span>
+           <span className="text-xs font-bold uppercase tracking-widest text-foreground">Workspace Guide</span>
         </div>
       </PanelHeader>
 
       <PanelBody className="scrollbar-hide">
+        {!developerDetailsOpen && (
+          <div className="p-5 border-b border-border">
+            <div className="rounded-2xl border border-border bg-muted/20 p-4">
+              <div className="flex items-center gap-3">
+                <div className="h-10 w-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center">
+                  <Zap className="h-5 w-5 text-primary" />
+                </div>
+                <div>
+                  <div className="text-sm font-black text-foreground">Goal-driven workspace</div>
+                  <div className="text-[10px] uppercase tracking-widest text-muted-foreground">
+                    Internal workers stay hidden
+                  </div>
+                </div>
+              </div>
+              <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+                Use the center chat to describe the outcome. Cognix will decide whether to answer,
+                ask for more information, create a plan, run a long task, or use MCP/skills.
+              </p>
+              <div className="mt-4 grid gap-2 text-xs">
+                <GuideItem icon={Brain} label="Understands intent" />
+                <GuideItem icon={Wrench} label="Selects internal capabilities" />
+                <GuideItem icon={Bot} label="Creates workers only when needed" />
+              </div>
+              <button
+                onClick={() => setDeveloperDetailsOpen(true)}
+                className="mt-4 w-full rounded-xl border border-border bg-background px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+              >
+                Show Developer Details
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Agent Selector */}
+        {developerDetailsOpen && (
         <div className="border-b border-border">
           <button
             onClick={() => setAgentListOpen(!agentListOpen)}
             className="w-full px-6 py-4 flex items-center justify-between hover:bg-muted transition-colors group"
           >
             <div className="flex items-center gap-3 text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
-              Internal Workers
+              Developer Workers
             </div>
             {agentListOpen ? (
               <ChevronDown className="h-4 w-4 text-muted-foreground group-hover:text-foreground" />
@@ -184,10 +218,10 @@ export function LeftPanel({ dragHandleProps }: { dragHandleProps?: DragHandlePro
             </div>
           )}
         </div>
+        )}
 
         {/* No agent selected state */}
-        {/* No agent selected state */}
-        {!selected && (
+        {developerDetailsOpen && !selected && (
           <div className="flex items-center justify-center p-8">
             <div className="text-center">
               <div className="w-16 h-16 bg-muted rounded-2xl flex items-center justify-center mx-auto mb-4 border border-border">
@@ -202,7 +236,7 @@ export function LeftPanel({ dragHandleProps }: { dragHandleProps?: DragHandlePro
         )}
 
         {/* Agent Config (shown when agent selected) */}
-        {selected && (
+        {developerDetailsOpen && selected && (
           <>
           <div className="p-4 border-t border-border">
             <div className="rounded-2xl border border-border bg-muted/20 p-4">
@@ -221,10 +255,10 @@ export function LeftPanel({ dragHandleProps }: { dragHandleProps?: DragHandlePro
                 Workers are managed by Cognix. Use the center panel for goals and the right panel for progress, approvals, and outputs.
               </p>
               <button
-                onClick={() => setDeveloperDetailsOpen((open) => !open)}
+                onClick={() => setDeveloperDetailsOpen(false)}
                 className="mt-3 w-full rounded-xl border border-border bg-background px-3 py-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
               >
-                {developerDetailsOpen ? 'Hide Developer Details' : 'Show Developer Details'}
+                Hide Developer Details
               </button>
             </div>
           </div>
@@ -411,5 +445,14 @@ export function LeftPanel({ dragHandleProps }: { dragHandleProps?: DragHandlePro
         )}
       </PanelBody>
     </Panel>
+  )
+}
+
+function GuideItem({ icon: Icon, label }: { icon: typeof Bot; label: string }) {
+  return (
+    <div className="flex items-center gap-2 rounded-xl border border-border bg-background/70 px-3 py-2 text-muted-foreground">
+      <Icon className="h-3.5 w-3.5 text-primary" />
+      <span className="font-bold">{label}</span>
+    </div>
   )
 }

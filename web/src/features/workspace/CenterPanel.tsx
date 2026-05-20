@@ -551,7 +551,7 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleP
     setAttachments((prev) => prev.filter((attachment) => attachment.id !== id))
   }
 
-  // Plan mode: show TaskComposer as primary view
+  // Goal mode: chat-first orchestration. Cognix may create a plan when needed.
   const mode: string = inputMode
   if (inputMode === 'plan' && workspaceId) {
     return (
@@ -563,9 +563,9 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleP
                 <Sparkles className="h-4 w-4 text-primary" />
               </div>
               <div>
-                <span className="text-sm font-bold text-foreground">Plan Mode</span>
+                <span className="text-sm font-bold text-foreground">Goal Chat</span>
                 <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest">
-                  Describe what you need — Cognix will build it
+                  Chat first — Cognix plans, asks, and executes only when needed
                 </p>
               </div>
             </div>
@@ -579,7 +579,7 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleP
                 }`}
               >
                 <Sparkles className="h-3.5 w-3.5" />
-                Plan
+                Goal
               </button>
               <button
                 onClick={() => { if (selectedAgentId) setInputMode('chat') }}
@@ -591,7 +591,7 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleP
                 }`}
               >
                 <MessageSquare className="h-3.5 w-3.5" />
-                Chat
+                Developer Chat
               </button>
             </div>
           </div>
@@ -599,9 +599,10 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleP
         <div className="flex-1 overflow-auto flex items-start justify-center p-8">
           <div className="w-full max-w-2xl pt-8">
             <div className="text-center mb-8">
-              <h2 className="text-xl font-bold text-foreground mb-2">What do you want to do?</h2>
+              <h2 className="text-xl font-bold text-foreground mb-2">Tell Cognix the outcome</h2>
               <p className="text-sm text-muted-foreground">
-                Describe your goal and Cognix will create agents, configure tools, and execute automatically.
+                Cognix will inspect available skills, MCP tools, memory, and long-task options,
+                then ask for missing information or propose a run plan.
               </p>
             </div>
             <TaskComposer
@@ -614,12 +615,12 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleP
                   timestamp: Date.now(),
                 })
               }}
-              onAgentCreated={(agentId) => {
-                setSelectedAgent(agentId)
-                setRightPanelTab('tasks')
-              }}
-            />
-          </div>
+                onAgentCreated={(agentId) => {
+                  setSelectedAgent(agentId)
+                  setRightPanelTab('artifacts')
+                }}
+              />
+            </div>
         </div>
       </Panel>
     )
@@ -635,9 +636,9 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleP
                 <Sparkles className="h-4 w-4 text-primary" />
               </div>
               <div>
-                <span className="text-sm font-bold text-foreground">Plan Mode</span>
+                <span className="text-sm font-bold text-foreground">Goal Chat</span>
                 <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-widest">
-                  Describe what you need — Cognix will build it
+                  Chat first — Cognix plans, asks, and executes only when needed
                 </p>
               </div>
             </div>
@@ -651,7 +652,7 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleP
                 }`}
               >
                 <Sparkles className="h-3.5 w-3.5" />
-                Plan
+                Goal
               </button>
               <button
                 disabled
@@ -668,7 +669,8 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleP
             <div className="text-center mb-8">
               <h2 className="text-xl font-bold text-foreground mb-2">What do you want to do?</h2>
               <p className="text-sm text-muted-foreground">
-                Describe your goal and Cognix will create agents, configure tools, and execute automatically.
+                Describe the output you need. Cognix will decide whether this is a simple answer,
+                a plan, a long task, or a capability-backed workflow.
               </p>
             </div>
             {workspaceId && (
@@ -684,7 +686,7 @@ export function CenterPanel({ dragHandleProps }: { dragHandleProps?: DragHandleP
                 }}
                 onAgentCreated={(agentId) => {
                   setSelectedAgent(agentId)
-                  setRightPanelTab('tasks')
+                  setRightPanelTab('artifacts')
                 }}
               />
             )}

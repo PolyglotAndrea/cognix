@@ -68,6 +68,7 @@ export function TaskComposer({
       queryClient.invalidateQueries({ queryKey: ['agents', workspaceId] })
       queryClient.invalidateQueries({ queryKey: ['tasks'] })
       queryClient.invalidateQueries({ queryKey: ['artifacts', workspaceId] })
+      queryClient.invalidateQueries({ queryKey: ['code-projects', workspaceId] })
       queryClient.invalidateQueries({ queryKey: ['workspace-settings', workspaceId] })
       const result: ApplyResult = response.data
       setApplyResult(result)
@@ -82,6 +83,10 @@ export function TaskComposer({
       if (result.artifacts && result.artifacts.length > 0) {
         const workspaceStore = useWorkspaceStore.getState()
         workspaceStore.setRightPanelTab('artifacts')
+        workspaceStore.setRightPanelOpen(true)
+      } else if (result.created?.code_projects?.length > 0) {
+        const workspaceStore = useWorkspaceStore.getState()
+        workspaceStore.setRightPanelTab('apps')
         workspaceStore.setRightPanelOpen(true)
       }
       setApplyingPlanId(null)
@@ -126,7 +131,7 @@ export function TaskComposer({
           value={intent}
           onChange={(e) => setIntent(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Describe what you want done... (e.g. 'Create a daily report agent that summarizes our GitHub activity')"
+          placeholder="Tell Cognix your goal. It can answer directly, ask a follow-up, or propose a plan before running."
           rows={3}
           className="w-full pl-12 pr-24 py-4 bg-card border border-border rounded-2xl text-sm text-foreground resize-none outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/40 placeholder:text-muted-foreground/40 shadow-sm"
           disabled={createPlanMutation.isPending}
@@ -140,12 +145,12 @@ export function TaskComposer({
             {createPlanMutation.isPending ? (
               <>
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                Planning...
+                Thinking...
               </>
             ) : (
               <>
                 <Send className="h-3.5 w-3.5" />
-                Plan
+                Send
               </>
             )}
           </button>

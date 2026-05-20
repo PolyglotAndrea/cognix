@@ -61,7 +61,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       selectedWorkspaceId: null,
       selectedWorkspaceUserId: null,
       selectedAgentId: null,
-      rightPanelTab: 'tasks',
+      rightPanelTab: 'artifacts',
       rightPanelOpen: true,
       inputMode: 'plan',
       toolResults: [],

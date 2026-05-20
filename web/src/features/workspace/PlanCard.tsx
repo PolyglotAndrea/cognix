@@ -19,6 +19,8 @@ const ACTION_ICONS: Record<string, typeof Bot> = {
   create_task: Clock,
   install_skill: Puzzle,
   configure_mcp: Cpu,
+  create_code_project: Zap,
+  start_code_project: Play,
 }
 
 const ACTION_COLORS: Record<string, string> = {
@@ -26,6 +28,8 @@ const ACTION_COLORS: Record<string, string> = {
   create_task: 'text-emerald-500 bg-emerald-500/10 border-emerald-500/20',
   install_skill: 'text-violet-500 bg-violet-500/10 border-violet-500/20',
   configure_mcp: 'text-amber-500 bg-amber-500/10 border-amber-500/20',
+  create_code_project: 'text-emerald-500 bg-emerald-500/10 border-emerald-500/20',
+  start_code_project: 'text-emerald-500 bg-emerald-500/10 border-emerald-500/20',
 }
 
 const COST_COLORS: Record<string, string> = {
@@ -154,9 +158,6 @@ export function PlanCard({
               </div>
               <div className="flex-1 min-w-0 pb-1">
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-mono text-muted-foreground/40">
-                    {step.id}
-                  </span>
                   <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border ${
                     isStepCompleted ? 'text-emerald-500 bg-emerald-500/10 border-emerald-500/20' :
                     isStepFailed ? 'text-rose-500 bg-rose-500/10 border-rose-500/20' :
@@ -259,6 +260,8 @@ function actionLabel(action: string) {
     create_task: 'run',
     install_skill: 'enable help',
     configure_mcp: 'prepare tool',
+    create_code_project: 'build preview',
+    start_code_project: 'open preview',
   }
   return labels[action] || action.replace('_', ' ')
 }
