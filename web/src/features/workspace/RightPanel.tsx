@@ -2,6 +2,7 @@ import { useRef, useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   AlertCircle,
+  AppWindow,
   CheckCircle2,
   Clock,
   Activity,
@@ -30,10 +31,11 @@ import { AuditLog } from './AuditLog'
 import { PlaybookPanel } from './PlaybookPanel'
 import { BotHealthPanel } from './BotHealthPanel'
 import { RuntimePanel } from './RuntimePanel'
+import { CodeProjectsPanel } from './CodeProjectsPanel'
 import type { DragHandleProps } from './types'
 import { useCurrentWorkspace } from './useCurrentWorkspace'
 
-type TabKey = 'approvals' | 'tasks' | 'files' | 'events' | 'results' | 'artifacts' | 'playbooks' | 'policy' | 'audit' | 'bots' | 'runtime' | 'logs' | 'json'
+type TabKey = 'approvals' | 'tasks' | 'apps' | 'files' | 'events' | 'results' | 'artifacts' | 'playbooks' | 'policy' | 'audit' | 'bots' | 'runtime' | 'logs' | 'json'
 
 interface TabDef {
   key: TabKey
@@ -66,6 +68,7 @@ const TAB_GROUPS: TabGroup[] = [
     tabs: [
       { key: 'results', label: 'Results', icon: Wrench, color: 'text-emerald-500' },
       { key: 'artifacts', label: 'Artifacts', icon: FileText, color: 'text-cyan-500' },
+      { key: 'apps', label: 'Apps', icon: AppWindow, color: 'text-fuchsia-500' },
       { key: 'playbooks', label: 'Playbooks', icon: BookOpen, color: 'text-violet-500' },
       { key: 'files', label: 'Files', icon: Folder, color: 'text-indigo-500' },
     ],
@@ -578,6 +581,10 @@ export function RightPanel({ dragHandleProps: _dragHandleProps }: { dragHandlePr
         {/* Artifacts Tab */}
         {rightPanelTab === 'artifacts' && workspaceId && (
           <ArtifactPanel workspaceId={workspaceId} />
+        )}
+
+        {rightPanelTab === 'apps' && workspaceId && (
+          <CodeProjectsPanel workspaceId={workspaceId} />
         )}
 
         {/* Playbooks Tab */}

@@ -134,6 +134,23 @@ class WriteWorkspaceFileRequest(BaseModel):
     content: str
 
 
+class CodeProjectFileRequest(BaseModel):
+    path: str
+    content: str = ""
+
+
+class CreateCodeProjectRequest(BaseModel):
+    name: str
+    description: str = ""
+    files: list[CodeProjectFileRequest] = Field(default_factory=list)
+    start_command: str = ""
+    metadata: dict = Field(default_factory=dict)
+
+
+class StartCodeProjectRequest(BaseModel):
+    command: str = ""
+
+
 class AttachmentRequest(BaseModel):
     id: str | None = None
     name: str
@@ -618,6 +635,98 @@ async def delete_workspace_mcp_server(
         raise HTTPException(404, "MCP server not found")
     await default_mcp_runtime.invalidate(server_id)
     return {"deleted": server_id}
+
+
+@router.get("/{workspace_id}/code-projects")
+async def list_code_projects(
+    workspace_id: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    from cognix.local.code_sandbox import CodeSandboxStore
+
+    store = CodeSandboxStore(workspace_id)
+    return [store.to_dict(project) for project in store.list_all()]
+
+
+@router.post("/{workspace_id}/code-projects", status_code=201)
+async def create_code_project(
+    workspace_id: str,
+    body: CreateCodeProjectRequest,
+    user: CurrentUser = Depends(require_agents_write),
+) -> dict:
+    from cognix.local.code_sandbox import CodeSandboxStore
+
+    try:
+        project = CodeSandboxStore(workspace_id).create_project(
+            name=body.name,
+            description=body.description,
+            files=[item.model_dump() for item in body.files],
+            start_command=body.start_command,
+            metadata=body.metadata,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    return CodeSandboxStore.to_dict(project)
+
+
+@router.post("/{workspace_id}/code-projects/{project_id}/start")
+async def start_code_project(
+    workspace_id: str,
+    project_id: str,
+    body: StartCodeProjectRequest,
+    user: CurrentUser = Depends(require_agents_write),
+) -> dict:
+    from cognix.core.policy import WorkspacePolicyService
+    from cognix.local.code_sandbox import CodeSandboxStore
+
+    command = body.command or "workspace preview"
+    policy = await WorkspacePolicyService(workspace_id).check_command(
+        command,
+        permission_mode="workspace-write",
+        user_id=user.id,
+    )
+    if not policy.allowed and not policy.requires_approval:
+        raise HTTPException(403, policy.reason or "Code preview denied by workspace policy")
+    try:
+        project = await CodeSandboxStore(workspace_id).start_project(
+            project_id,
+            command=body.command,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from None
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    return CodeSandboxStore.to_dict(project)
+
+
+@router.post("/{workspace_id}/code-projects/{project_id}/stop")
+async def stop_code_project(
+    workspace_id: str,
+    project_id: str,
+    user: CurrentUser = Depends(require_agents_write),
+) -> dict:
+    from cognix.local.code_sandbox import CodeSandboxStore
+
+    try:
+        project = CodeSandboxStore(workspace_id).stop_project(project_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from None
+    return CodeSandboxStore.to_dict(project)
+
+
+@router.get("/{workspace_id}/code-projects/{project_id}/logs")
+async def get_code_project_logs(
+    workspace_id: str,
+    project_id: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    from cognix.local.code_sandbox import CodeSandboxStore
+
+    try:
+        logs = CodeSandboxStore(workspace_id).logs(project_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from None
+    return {"project_id": project_id, "logs": logs}
 
 
 @router.post("/{workspace_id}/claude/stream")

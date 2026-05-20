@@ -176,3 +176,20 @@ Browser automation is an internal capability selected by the planner. The MCP
 preset provisions a Playwright MCP server with a workspace-scoped browser profile.
 `browser/run` applies workspace network policy, creates approval requests when
 needed, runs Playwright when allowed, and persists browser output as an artifact.
+
+---
+
+### Code Project Sandbox
+
+```
+GET /api/v1/workspaces/{workspace_id}/code-projects
+POST /api/v1/workspaces/{workspace_id}/code-projects
+POST /api/v1/workspaces/{workspace_id}/code-projects/{project_id}/start
+POST /api/v1/workspaces/{workspace_id}/code-projects/{project_id}/stop
+GET /api/v1/workspaces/{workspace_id}/code-projects/{project_id}/logs
+```
+
+Code projects are written under the workspace sandbox directory. Static projects
+run through a local Python preview server. Node projects with `package.json` use
+`npm run dev -- --host 127.0.0.1 --port <port>` by default. The frontend shows
+running previews in the workspace `Apps` output panel.

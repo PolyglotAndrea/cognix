@@ -56,6 +56,7 @@ class CapabilityResolver:
         mcp_servers = self._mcp_servers(ws_config, policy)
         connectors = self._connectors(ws_config, policy)
         browser_automation = self._browser_automation(ws_config, policy)
+        code_sandbox = self._code_sandbox(policy)
         workspace_files = self._workspace_files(workspace_id)
         agents = await self._agents(workspace_id)
         entitlement_status = await self._entitlement_status(user_id, workspace_id)
@@ -82,6 +83,7 @@ class CapabilityResolver:
             *[tool for server in mcp_servers for tool in server.get("tools", [])],
             *[tool for connector in connectors for tool in connector.get("tools", [])],
             browser_automation,
+            code_sandbox,
             *cli_tools,
             memory,
         ]
@@ -98,6 +100,7 @@ class CapabilityResolver:
             "mcp_servers": mcp_servers,
             "connectors": connectors,
             "browser_automation": browser_automation,
+            "code_sandbox": code_sandbox,
             "cli_tools": cli_tools,
             "memory": memory,
             "agents": agents,
@@ -224,6 +227,21 @@ class CapabilityResolver:
             "mcp_preset_configured": bool(preset),
             "mcp_server_id": preset.id if preset else "",
             "engines": ["playwright", "mcp"],
+        }
+
+    def _code_sandbox(self, policy: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": "code.sandbox",
+            "kind": "code_sandbox",
+            "name": "Code project sandbox",
+            "description": (
+                "Create workspace-scoped code projects, write files, run preview servers, "
+                "and expose running app URLs."
+            ),
+            "risk_level": "high",
+            "requires_approval": policy.get("file_write") == "ask",
+            "workspace_enabled": True,
+            "engines": ["static", "node", "python"],
         }
 
     def _cli_tools(self, policy: dict[str, Any]) -> list[dict[str, Any]]:
