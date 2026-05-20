@@ -53,29 +53,37 @@ interface TabGroup {
 
 const TAB_GROUPS: TabGroup[] = [
   {
-    key: 'activity',
-    label: 'Process',
-    defaultOpen: false,
-    tabs: [
-      { key: 'approvals', label: 'Approvals', icon: ShieldQuestion, color: 'text-amber-500' },
-      { key: 'tasks', label: 'Long Tasks', icon: Clock, color: 'text-blue-500' },
-    ],
-  },
-  {
     key: 'outputs',
     label: 'Outputs',
     defaultOpen: true,
     tabs: [
-      { key: 'results', label: 'Results', icon: Wrench, color: 'text-emerald-500' },
-      { key: 'artifacts', label: 'Artifacts', icon: FileText, color: 'text-cyan-500' },
+      { key: 'artifacts', label: 'Outputs', icon: FileText, color: 'text-cyan-500' },
       { key: 'apps', label: 'Apps', icon: AppWindow, color: 'text-fuchsia-500' },
+      { key: 'approvals', label: 'Needs Input', icon: ShieldQuestion, color: 'text-amber-500' },
+    ],
+  },
+  {
+    key: 'developer',
+    label: 'Developer Details',
+    defaultOpen: false,
+    tabs: [
+      { key: 'tasks', label: 'Long Tasks', icon: Clock, color: 'text-blue-500' },
+      { key: 'results', label: 'Tool Results', icon: Wrench, color: 'text-emerald-500' },
       { key: 'playbooks', label: 'Playbooks', icon: BookOpen, color: 'text-violet-500' },
       { key: 'files', label: 'Files', icon: Folder, color: 'text-indigo-500' },
+      { key: 'events', label: 'Events', icon: Activity, color: 'text-slate-500' },
+      { key: 'logs', label: 'Logs', icon: Terminal, color: 'text-slate-500' },
+      { key: 'json', label: 'JSON', icon: FileJson, color: 'text-slate-500' },
+      { key: 'policy', label: 'Policy', icon: ShieldCheck, color: 'text-slate-500' },
+      { key: 'audit', label: 'Audit', icon: ShieldQuestion, color: 'text-slate-500' },
+      { key: 'bots', label: 'Bots', icon: Server, color: 'text-slate-500' },
+      { key: 'runtime', label: 'Runtime', icon: Server, color: 'text-slate-500' },
     ],
   },
 ]
 
 const VISIBLE_TABS = new Set(TAB_GROUPS.flatMap((group) => group.tabs.map((tab) => tab.key)))
+const SIMPLE_TABS = new Set<TabKey>(['artifacts', 'apps', 'approvals'])
 
 interface TaskSummary {
   id: string
@@ -149,13 +157,14 @@ export function RightPanel({ dragHandleProps: _dragHandleProps }: { dragHandlePr
   const [currentDir, setCurrentDir] = useState('')
   const [previewPath, setPreviewPath] = useState<string | null>(null)
   const [selectedTask, setSelectedTask] = useState<TaskSummary | null>(null)
+  const [developerDetailsOpen, setDeveloperDetailsOpen] = useState(false)
   
   const { workspaceId } = useCurrentWorkspace()
   
   const { data: tasks = [], isLoading: tasksLoading } = useQuery<TaskSummary[]>({
     queryKey: ['workspace-task-status'],
     queryFn: async () => {
-      const response = await api.get('/tasks')
+      const response = await api.get('/tasks', { params: { workspace_id: workspaceId } })
       const taskRows = response.data as Omit<TaskSummary, 'runs'>[]
       return Promise.all(
         taskRows.slice(0, 8).map(async (task) => {
@@ -167,8 +176,8 @@ export function RightPanel({ dragHandleProps: _dragHandleProps }: { dragHandlePr
         })
       )
     },
-    enabled: rightPanelTab === 'tasks',
-    refetchInterval: rightPanelTab === 'tasks' ? 5000 : false,
+    enabled: !!workspaceId && developerDetailsOpen && rightPanelTab === 'tasks',
+    refetchInterval: developerDetailsOpen && rightPanelTab === 'tasks' ? 5000 : false,
   })
 
   const { data: files = [], isLoading: filesLoading } = useQuery<WorkspaceFile[]>({
@@ -196,7 +205,7 @@ export function RightPanel({ dragHandleProps: _dragHandleProps }: { dragHandlePr
       api
         .get('/approvals', { params: { workspace_id: workspaceId, include_resolved: true } })
         .then((r) => r.data),
-    enabled: !!workspaceId && rightPanelTab === 'approvals',
+    enabled: !!workspaceId,
     refetchInterval: rightPanelTab === 'approvals' ? 5000 : false,
   })
 
@@ -244,10 +253,10 @@ export function RightPanel({ dragHandleProps: _dragHandleProps }: { dragHandlePr
   const pendingCount = approvals.filter((a) => a.status === 'pending').length
 
   useEffect(() => {
-    if (!VISIBLE_TABS.has(rightPanelTab)) {
-      setRightPanelTab('tasks')
+    if (!VISIBLE_TABS.has(rightPanelTab) || (!developerDetailsOpen && !SIMPLE_TABS.has(rightPanelTab))) {
+      setRightPanelTab('artifacts')
     }
-  }, [rightPanelTab, setRightPanelTab])
+  }, [developerDetailsOpen, rightPanelTab, setRightPanelTab])
 
   if (!rightPanelOpen) {
     return (
@@ -264,11 +273,8 @@ export function RightPanel({ dragHandleProps: _dragHandleProps }: { dragHandlePr
         )}
         <div className="flex flex-col gap-4">
            <ShieldQuestion className="h-4 w-4 text-muted-foreground/30" />
-           <Clock className="h-4 w-4 text-muted-foreground/30" />
-           <Activity className="h-4 w-4 text-muted-foreground/30" />
-           <Wrench className="h-4 w-4 text-muted-foreground/30" />
            <FileText className="h-4 w-4 text-muted-foreground/30" />
-           <Server className="h-4 w-4 text-muted-foreground/30" />
+           <AppWindow className="h-4 w-4 text-muted-foreground/30" />
         </div>
       </button>
     )
@@ -288,11 +294,20 @@ export function RightPanel({ dragHandleProps: _dragHandleProps }: { dragHandlePr
             <ChevronRight className="h-4 w-4" />
           </button>
 
-          {/* Tab Icons organized by groups */}
           {TAB_GROUPS.map((group, groupIdx) => (
             <div key={group.key} className="flex flex-col items-center gap-2 w-full">
               {groupIdx > 0 && <div className="w-8 h-px bg-border/60 my-1" />}
-              {group.tabs.map((tab) => {
+              {group.key === 'developer' && !developerDetailsOpen ? (
+                <button
+                  onClick={() => setDeveloperDetailsOpen(true)}
+                  className="p-2.5 rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground transition-all"
+                  title="Show developer details"
+                >
+                  <Server className="h-4 w-4" />
+                </button>
+              ) : group.tabs
+                .filter((tab) => tab.key !== 'approvals' || pendingCount > 0 || rightPanelTab === 'approvals')
+                .map((tab) => {
                 const isActive = rightPanelTab === tab.key
                 const isApprovalPending = tab.key === 'approvals' && pendingCount > 0
                 return (
@@ -319,6 +334,18 @@ export function RightPanel({ dragHandleProps: _dragHandleProps }: { dragHandlePr
                   </button>
                 )
               })}
+              {group.key === 'developer' && developerDetailsOpen && (
+                <button
+                  onClick={() => {
+                    setDeveloperDetailsOpen(false)
+                    if (!SIMPLE_TABS.has(rightPanelTab)) setRightPanelTab('artifacts')
+                  }}
+                  className="p-2.5 rounded-xl text-muted-foreground hover:bg-muted hover:text-foreground transition-all"
+                  title="Hide developer details"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+              )}
             </div>
           ))}
         </div>

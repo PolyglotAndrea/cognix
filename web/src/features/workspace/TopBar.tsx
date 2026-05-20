@@ -74,6 +74,17 @@ export function TopBar() {
     queryFn: () => api.get('/skills').then((r) => r.data),
   })
 
+  const enableSkillMutation = useMutation({
+    mutationFn: (skillName: string) => {
+      if (!workspace?.id) throw new Error('No workspace selected')
+      return api.put(`/workspaces/${workspace.id}/skills/${skillName}`, { enabled: true })
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['workspace-skills', workspace?.id] })
+      setOpen(false)
+    },
+  })
+
   const filtered = search.trim()
     ? skills.filter(
         (s) =>
@@ -189,7 +200,7 @@ export function TopBar() {
                     </div>
                     {filtered.map((skill) => (
                       <div
-                        key={skill.id}
+                        key={skill.name}
                         className="group px-3 py-3 hover:bg-muted rounded-xl border border-transparent hover:border-border transition-all cursor-pointer"
                       >
                         <div className="flex items-center justify-between gap-4">
@@ -215,10 +226,12 @@ export function TopBar() {
                             className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-lg bg-primary/10 text-primary border border-primary/20 hover:bg-primary hover:text-white transition-all shadow-sm shadow-primary/10"
                             onClick={(e) => {
                               e.stopPropagation()
+                              enableSkillMutation.mutate(skill.name)
                             }}
+                            disabled={!workspace?.id || enableSkillMutation.isPending}
                           >
                             <Download className="h-3 w-3" />
-                            Install
+                            Enable
                           </button>
                         </div>
                       </div>

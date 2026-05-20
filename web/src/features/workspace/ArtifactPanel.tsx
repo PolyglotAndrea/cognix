@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Archive,
   CheckCircle2,
@@ -11,6 +11,7 @@ import {
   GitBranch,
   NotebookTabs,
   Sparkles,
+  Trash2,
 } from 'lucide-react'
 import { api } from '@/shared/api/client'
 import { cn } from '@/shared/lib/cn'
@@ -67,8 +68,11 @@ interface ArtifactPanelProps {
 }
 
 export function ArtifactPanel({ workspaceId }: ArtifactPanelProps) {
+  const queryClient = useQueryClient()
   const [statusFilter, setStatusFilter] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const localDev =
+    window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
 
   const { data: artifacts = [], isLoading } = useQuery<Artifact[]>({
     queryKey: ['artifacts', workspaceId, statusFilter],
@@ -89,6 +93,17 @@ export function ArtifactPanel({ workspaceId }: ArtifactPanelProps) {
     return { total: artifacts.length, published, browser, latest }
   }, [artifacts])
 
+  const clearHistoryMutation = useMutation({
+    mutationFn: () =>
+      api.delete(`/workspaces/${workspaceId}/dev/history`, {
+        params: { failed_only: true },
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['artifacts', workspaceId] })
+      queryClient.invalidateQueries({ queryKey: ['workspace-task-status'] })
+    },
+  })
+
   return (
     <div className="p-4 space-y-4">
       <section className="rounded-2xl border border-border bg-card/70 p-4 shadow-sm">
@@ -106,6 +121,17 @@ export function ArtifactPanel({ workspaceId }: ArtifactPanelProps) {
               </div>
             </div>
           </div>
+          {localDev && (
+            <button
+              type="button"
+              onClick={() => clearHistoryMutation.mutate()}
+              disabled={clearHistoryMutation.isPending}
+              className="shrink-0 rounded-xl border border-border bg-background px-2.5 py-2 text-[10px] font-black uppercase tracking-widest text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+              title="Clear failed local dev outputs"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
 
         <div className="mt-4 grid grid-cols-3 gap-2">
