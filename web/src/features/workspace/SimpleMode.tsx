@@ -370,8 +370,11 @@ export function SimpleMode({
     setMessages((prev) => [...prev, { role: 'user', content: userMsg }])
     setStreaming(true)
 
-    // Add loading placeholder
-    setMessages((prev) => [...prev, { role: 'assistant', content: 'Analyzing your intent and generating execution plan...' }])
+    // Add visible loading placeholder
+    setMessages((prev) => [
+      ...prev,
+      { role: 'assistant', content: '正在分析需求，并准备可执行方案...' },
+    ])
 
     try {
       const planRes = await api.post(`/workspaces/${workspaceId}/plans`, {
@@ -736,7 +739,6 @@ export function SimpleMode({
         )}
 
         {messages.map((msg, i) => {
-          const isLastMessage = i === messages.length - 1
           if (msg.role === 'user') {
             return (
               <div key={i} className="flex justify-end">
@@ -748,18 +750,11 @@ export function SimpleMode({
           }
 
           if (msg.role === 'assistant') {
-            if (!msg.content?.trim() && (!streaming || !isLastMessage)) return null
+            if (!msg.content?.trim()) return null
             return (
               <div key={i} className="flex justify-start">
                 <div className="max-w-[80%] rounded-2xl bg-card border border-border px-4 py-3 text-sm leading-relaxed text-foreground shadow-sm">
-                  {msg.content?.trim() ? (
-                    <RichMessage content={msg.content} compact />
-                  ) : (
-                    <div className="flex gap-1.5 py-1.5 items-center">
-                      <Loader2 className="h-4 w-4 animate-spin text-primary" />
-                      <span className="text-xs text-muted-foreground animate-pulse">Thinking...</span>
-                    </div>
-                  )}
+                  <RichMessage content={msg.content} compact />
                 </div>
               </div>
             )
