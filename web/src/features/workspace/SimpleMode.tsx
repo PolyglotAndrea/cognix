@@ -421,6 +421,9 @@ export function SimpleMode({
             } else if (event.type === 'task.created') {
               stepId = `task-${event.task_id || 'new'}`
               stepLabel = 'Prepared the execution task'
+            } else if (event.type === 'browser_run.created') {
+              stepId = `browser-${event.task_id || 'new'}`
+              stepLabel = 'Prepared the browser automation run'
             } else if (event.type === 'code_project.created') {
               const projectId = event.data?.id || 'new'
               stepId = `code-project-${projectId}`

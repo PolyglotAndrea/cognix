@@ -73,11 +73,14 @@ Actions:
 - create_task: params = { name, agent_name, schedule_type, cron_or_interval, input }
 - install_skill: params = { skill_name }
 - configure_mcp: params = { name, command, args }
+- browser_run: params = { objective, url, engine, profile, wait_for_selector, extract_text, extract_links, extract_tables, screenshot }
 - create_code_project: params = { name, description, files, start_command, auto_start }
 - start_code_project: params = { project_id, project_name, command }
 
 Rules:
 - Agent Naming: Generate a descriptive semantic name for the agent(s) you create.
+- For authorized browser/page extraction tasks, prefer browser_run over create_agent/create_task.
+- browser_run executes the browser capability directly and must include the target url when known.
   Summarize the user's intent into a brief prefix and combine it with a role suffix
   such as `-task-agent`, `-research-agent`, or `-automation-agent`.
   Examples: `write-blog-task-agent`, `每天发送邮件-automation-agent`.
@@ -269,6 +272,7 @@ class PlannerService:
             "skills": [],
             "mcp_servers": [],
             "code_projects": [],
+            "browser_runs": [],
         }
 
         ws_config = WorkspaceConfigStore(workspace_id, home=self.home)
@@ -392,6 +396,34 @@ class PlannerService:
                             task_id=task_id,
                             agent_id=step.params.get("_resolved_agent_id", ""),
                             data={"name": step.params.get("name", "")},
+                        )
+                    )
+                elif step.action == "browser_run":
+                    step.params["_plan_id"] = plan_id
+                    step.params["_step_id"] = step.id
+                    task_id = await self._apply_browser_run(
+                        workspace_id,
+                        step.params,
+                        user_id,
+                    )
+                    created["tasks"].append(task_id)
+                    created["browser_runs"].append(task_id)
+                    task_steps.append((task_id, step.params, step.id))
+                    emit_orchestration_event(
+                        OrchestrationEvent(
+                            workspace_id=workspace_id,
+                            type="browser_run.created",
+                            stage="execution",
+                            status="created",
+                            run_id=plan_id,
+                            plan_id=plan_id,
+                            step_id=step.id,
+                            task_id=task_id,
+                            data={
+                                "objective": step.params.get("objective", ""),
+                                "url": step.params.get("url", ""),
+                                "engine": step.params.get("engine", "playwright"),
+                            },
                         )
                     )
                 elif step.action == "install_skill":
@@ -1000,6 +1032,23 @@ class PlannerService:
         needs_web = any(
             token in text for token in ("web", "search", "news", "联网", "搜索", "新闻", "最新")
         )
+        browser_task = any(
+            token in text
+            for token in (
+                "browser",
+                "playwright",
+                "browser-use",
+                "网页",
+                "浏览器",
+                "抓取",
+                "爬取",
+                "采集",
+                "导出",
+                "分页",
+                "券码",
+                "支付券码",
+            )
+        )
         code_project = any(
             token in text
             for token in (
@@ -1078,7 +1127,7 @@ class PlannerService:
         )
         project_name = f"{semantic_prefix}-app" if semantic_prefix else "generated-app"
 
-        if code_project and not scheduled:
+        if code_project and not scheduled and not browser_task:
             safe_title = user_intent[:80].replace("<", "").replace(">", "")
             fallback_html = "".join(
                 [
@@ -1141,6 +1190,54 @@ class PlannerService:
                     "reason": "",
                 },
                 "estimated_cost": "low",
+            }
+
+        browser_url = self._extract_first_url(user_intent)
+        if browser_task and not scheduled:
+            return {
+                "summary": f"Run browser automation for: {user_intent[:100]}",
+                "intent_type": "integration",
+                "execution_mode": "once",
+                "steps": [
+                    {
+                        "id": "step_1",
+                        "action": "browser_run",
+                        "description": "Run the authorized browser workflow and capture the result",
+                        "params": {
+                            "name": "browser-automation-task",
+                            "objective": user_intent,
+                            "url": browser_url,
+                            "engine": self._select_browser_engine(user_intent, context),
+                            "profile": "default",
+                            "cdp_endpoint": context.get("browser_automation", {}).get(
+                                "cdp_endpoint",
+                                "",
+                            ),
+                            "extract_text": True,
+                            "extract_links": True,
+                            "extract_tables": True,
+                            "screenshot": True,
+                            "artifact_title": "Browser Automation Result",
+                        },
+                        "depends_on": [],
+                    }
+                ],
+                "required_skills": [
+                    item["name"] for item in recommended_skills if item.get("available")
+                ],
+                "required_connectors": [],
+                "sandbox_permissions": ["network_access", "browser_automation"],
+                "expected_artifacts": ["browser capture", "structured result", "report"],
+                "recommended_agents": [],
+                "recommended_skills": recommended_skills,
+                "recommended_mcp_tools": recommended_mcp_tools,
+                "scheduling": {
+                    "needed": False,
+                    "kind": "once",
+                    "expression": "",
+                    "reason": "",
+                },
+                "estimated_cost": "medium",
             }
 
         artifact = "research report" if research else "task result"
@@ -1223,8 +1320,41 @@ class PlannerService:
         ) or self._recommend_mcp_tools(user_intent, context)
         normalized["scheduling"] = plan.get("scheduling") or defaults["scheduling"]
 
+        browser_requested = self._is_browser_intent(user_intent)
+        browser_url = self._extract_first_url(user_intent)
+        actions = [str(step.get("action") or "") for step in normalized.get("steps", [])]
+        if browser_requested and "browser_run" not in actions and "create_code_project" not in actions:
+            if browser_url:
+                normalized["steps"] = self._default_plan(user_intent, context)["steps"]
+                normalized["summary"] = f"Run browser automation for: {user_intent[:100]}"
+                normalized["intent_type"] = "integration"
+                normalized["execution_mode"] = "once"
+                normalized["expected_artifacts"] = [
+                    "browser capture",
+                    "structured result",
+                    "report",
+                ]
+                normalized["sandbox_permissions"] = ["network_access", "browser_automation"]
+
         model = context.get("provider", {}).get("default_model") or "gpt-4o"
         for step in normalized.get("steps", []):
+            if step.get("action") == "browser_run":
+                params = step.setdefault("params", {})
+                params["url"] = params.get("url") or params.get("target_url") or browser_url
+                params["objective"] = params.get("objective") or params.get("input") or user_intent
+                params["engine"] = params.get("engine") or self._select_browser_engine(
+                    user_intent,
+                    context,
+                )
+                params["profile"] = params.get("profile") or "default"
+                params["cdp_endpoint"] = params.get("cdp_endpoint") or context.get(
+                    "browser_automation",
+                    {},
+                ).get("cdp_endpoint", "")
+                params["extract_text"] = params.get("extract_text", True)
+                params["extract_links"] = params.get("extract_links", True)
+                params["extract_tables"] = params.get("extract_tables", True)
+                params["screenshot"] = params.get("screenshot", True)
             if step.get("action") == "create_agent":
                 params = step.setdefault("params", {})
                 params["model"] = params.get("model") or model
@@ -1237,6 +1367,51 @@ class PlannerService:
                         normalized.get("scheduling", {}).get("expression") or "every 24h"
                     )
         return normalized
+
+    @staticmethod
+    def _extract_first_url(text: str) -> str:
+        import re
+
+        match = re.search(r"https?://[^\s`\"'<>]+", text)
+        return match.group(0) if match else ""
+
+    @staticmethod
+    def _is_browser_intent(text: str) -> bool:
+        lowered = text.lower()
+        return any(
+            token in lowered
+            for token in (
+                "browser",
+                "playwright",
+                "browser-use",
+                "网页",
+                "浏览器",
+                "抓取",
+                "爬取",
+                "采集",
+                "导出",
+                "分页",
+                "券码",
+                "支付券码",
+            )
+        )
+
+    @staticmethod
+    def _select_browser_engine(user_intent: str, context: dict) -> str:
+        """Choose browser backend: deterministic, attached-session, or agentic."""
+        browser = context.get("browser_automation", {})
+        configured_default = str(browser.get("default_engine") or "").strip()
+        if configured_default in {"playwright", "cdp", "browser_use"}:
+            return configured_default
+        lowered = user_intent.lower()
+        if any(token in lowered for token in ("已登录", "登录态", "当前浏览器", "复用", "cookie")):
+            return "cdp"
+        if any(
+            token in lowered
+            for token in ("browser-use", "browser use", "自动判断", "复杂页面", "多步骤")
+        ):
+            return "browser_use"
+        return "playwright"
 
     @staticmethod
     def _recommend_skills(user_intent: str, context: dict) -> list[dict[str, Any]]:
@@ -1704,4 +1879,80 @@ class PlannerService:
                     )
             except Exception:
                 logger.warning("Failed to register planned task in scheduler", exc_info=True)
+        return task_id
+
+    @staticmethod
+    async def _apply_browser_run(
+        workspace_id: str,
+        params: dict,
+        user_id: str | None = None,
+    ) -> str:
+        """Create a browser automation task from plan step params."""
+        from cognix.scheduler.schedules import next_run_time
+        from cognix.storage.database import get_session
+        from cognix.storage.models import ScheduledTaskModel, TaskState, TaskType
+
+        task_id = uuid.uuid4().hex[:12]
+        url = str(params.get("url") or params.get("target_url") or "")
+        if not url:
+            raise ValueError("Cannot run browser automation because no url was provided.")
+
+        schedule = (
+            params.get("cron") or params.get("cron_or_interval") or params.get("schedule") or "once"
+        )
+        payload_dict = {
+            "task_type": "browser_automation",
+            "task_id": task_id,
+            "name": params.get("name") or params.get("objective") or "browser-run",
+            "objective": params.get("objective") or params.get("input") or params.get("name") or "",
+            "url": url,
+            "engine": params.get("engine") or "playwright",
+            "profile": params.get("profile") or "default",
+            "cdp_endpoint": params.get("cdp_endpoint") or "",
+            "selectors": params.get("selectors") or {},
+            "extract_text": params.get("extract_text", True),
+            "extract_links": params.get("extract_links", True),
+            "extract_tables": params.get("extract_tables", True),
+            "screenshot": params.get("screenshot", True),
+            "wait_for_selector": params.get("wait_for_selector", ""),
+            "permission_mode": params.get("permission_mode", "workspace-write"),
+            "workspace_id": workspace_id,
+            "user_id": user_id or "",
+            "plan_id": params.get("_plan_id", ""),
+            "step_id": params.get("_step_id", ""),
+            "artifact_title": params.get("artifact_title")
+            or params.get("name")
+            or params.get("objective")
+            or "Browser Automation Result",
+        }
+        payload = json.dumps(payload_dict, ensure_ascii=False)
+        next_run = None
+        if schedule != "once":
+            try:
+                next_run = next_run_time(schedule)
+            except Exception:
+                next_run = None
+        task = ScheduledTaskModel(
+            id=task_id,
+            name=str(payload_dict["name"]),
+            user_id=user_id,
+            task_type=TaskType.BROWSER_AUTOMATION,
+            schedule=schedule,
+            payload=payload,
+            state=TaskState.ACTIVE,
+            next_run=next_run,
+        )
+        async with get_session() as session:
+            session.add(task)
+        params["schedule_type"] = schedule
+        params["_browser_task_id"] = task_id
+        if schedule != "once":
+            try:
+                from cognix.api.state import get_scheduler_engine, schedule_task_in_engine
+
+                engine = get_scheduler_engine()
+                if engine:
+                    schedule_task_in_engine(engine, task_id, schedule, payload_dict, name=task.name)
+            except Exception:
+                logger.warning("Failed to register planned browser task in scheduler", exc_info=True)
         return task_id

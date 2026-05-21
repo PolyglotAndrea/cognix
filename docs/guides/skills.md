@@ -145,8 +145,13 @@ with source attribution.
 
 Cognix also provides a workspace-scoped Browser Automation runtime:
 
-- `POST /api/v1/workspaces/{workspace_id}/browser/mcp-preset` provisions the
-  internal Playwright MCP preset with an isolated workspace browser profile.
+- Browser engine selection supports `playwright`, `cdp`, and `browser_use`.
+  `cdp` is intended for reusing a user-opened browser session through a configured
+  remote debugging endpoint.
+- `POST /api/v1/workspaces/{workspace_id}/browser/mcp-preset` explicitly
+  provisions the internal Playwright MCP preset with an isolated workspace browser
+  profile when a workspace wants Browser MCP. It is not auto-bootstrapped by
+  planner apply.
 - `GET /api/v1/workspaces/{workspace_id}/browser/profile` reports profile and
   cookie-store status.
 - `POST /api/v1/workspaces/{workspace_id}/browser/run` runs or approval-gates a

@@ -105,6 +105,7 @@ class BrowserAutomationRunRequest(BaseModel):
     extract_tables: bool = True
     screenshot: bool = False
     wait_for_selector: str = ""
+    cdp_endpoint: str = ""
     permission_mode: str = "workspace-write"
     approval_id: str = ""
     task_id: str = ""
@@ -427,7 +428,7 @@ async def run_browser_automation(
     from cognix.browser.service import BrowserAutomationRun, BrowserAutomationService
     from cognix.core.permissions import clamp_permission_mode
 
-    engine = body.engine if body.engine in {"playwright", "mcp"} else "playwright"
+    engine = body.engine if body.engine in {"playwright", "cdp", "browser_use"} else "playwright"
     request = BrowserAutomationRun(
         objective=body.objective,
         url=body.url,
@@ -439,6 +440,7 @@ async def run_browser_automation(
         extract_tables=body.extract_tables,
         screenshot=body.screenshot,
         wait_for_selector=body.wait_for_selector,
+        cdp_endpoint=body.cdp_endpoint,
         permission_mode=clamp_permission_mode(body.permission_mode, user.role),
         approval_id=body.approval_id,
         task_id=body.task_id,

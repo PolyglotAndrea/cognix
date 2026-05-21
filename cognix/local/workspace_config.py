@@ -108,6 +108,10 @@ class WorkspaceConfigStore:
                 "max_message_length": 4000,
                 "dlq_enabled": True,
             },
+            "browser": {
+                "default_engine": "playwright",
+                "cdp_endpoint": None,
+            },
             "ui_mode": "advanced",
             "onboarding_completed": False,
         }

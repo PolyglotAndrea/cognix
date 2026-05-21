@@ -21,6 +21,14 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+class TaskExecutionError(RuntimeError):
+    """Task execution error that may still carry an artifact."""
+
+    def __init__(self, message: str, *, artifact_id: str | None = None) -> None:
+        super().__init__(message)
+        self.artifact_id = artifact_id or ""
+
+
 class TaskExecutor:
     """Executes tasks of various types."""
 
@@ -54,6 +62,7 @@ class TaskExecutor:
         )
 
         try:
+            result: Any
             if task_type == "agent_call":
                 result = await self._execute_agent_call(payload)
             elif task_type == "rpc_call":
@@ -64,6 +73,8 @@ class TaskExecutor:
                 result = await self._execute_skill(payload)
             elif task_type == "workflow":
                 result = await self._execute_workflow(payload)
+            elif task_type == "browser_automation":
+                result = await self._execute_browser_automation(payload)
             else:
                 raise ValueError(f"Unknown task type: {task_type}")
 
@@ -78,6 +89,8 @@ class TaskExecutor:
                 "workspace_id": workspace_id,
                 "user_id": user_id,
             }
+            if isinstance(result, dict) and result.get("artifact_id"):
+                run["artifact_id"] = result.get("artifact_id")
 
         except Exception as e:
             duration_ms = int((time.monotonic() - start_time) * 1000)
@@ -91,6 +104,8 @@ class TaskExecutor:
                 "workspace_id": workspace_id,
                 "user_id": user_id,
             }
+            if isinstance(e, TaskExecutionError) and e.artifact_id:
+                run["artifact_id"] = e.artifact_id
             logger.exception("Task %s failed", task_id)
 
         # Store in history
@@ -99,7 +114,7 @@ class TaskExecutor:
         # Persist to DB
         await self._persist_run(run)
 
-        if run["status"] == "success" and workspace_id:
+        if run["status"] == "success" and workspace_id and not run.get("artifact_id"):
             artifact_id = await self._ensure_task_artifact(payload, run)
             if artifact_id:
                 run["artifact_id"] = artifact_id
@@ -156,6 +171,53 @@ class TaskExecutor:
         response = await agent.run(message)
         await self._post_remote_bot_response(payload, response.content)
         return response.content
+
+    async def _execute_browser_automation(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Execute a workspace browser automation task."""
+        from cognix.browser.service import BrowserAutomationRun, BrowserAutomationService
+
+        workspace_id = payload.get("workspace_id")
+        url = payload.get("url") or payload.get("target_url")
+        objective = payload.get("objective") or payload.get("message") or payload.get("name")
+        if not workspace_id:
+            raise ValueError("workspace_id required for browser_automation task")
+        if not url:
+            raise ValueError("url required for browser_automation task")
+        if not objective:
+            objective = f"Browser automation for {url}"
+
+        service = BrowserAutomationService(str(workspace_id))
+        result = await service.run(
+            BrowserAutomationRun(
+                objective=str(objective),
+                url=str(url),
+                engine=str(payload.get("engine") or "playwright"),  # type: ignore[arg-type]
+                profile=str(payload.get("profile") or "default"),
+                selectors=dict(payload.get("selectors") or {}),
+                extract_text=bool(payload.get("extract_text", True)),
+                extract_links=bool(payload.get("extract_links", True)),
+                extract_tables=bool(payload.get("extract_tables", True)),
+                screenshot=bool(payload.get("screenshot", True)),
+                wait_for_selector=str(payload.get("wait_for_selector") or ""),
+                cdp_endpoint=str(payload.get("cdp_endpoint") or ""),
+                permission_mode=str(payload.get("permission_mode") or "workspace-write"),
+                approval_id=str(payload.get("approval_id") or ""),
+                task_id=str(payload.get("task_id") or ""),
+                agent_id=str(payload.get("agent_id") or ""),
+                plan_id=str(payload.get("plan_id") or ""),
+            ),
+            user_id=payload.get("user_id"),
+        )
+        if result.get("status") == "approval_required":
+            raise PermissionError(result.get("reason") or "Browser automation approval required")
+        if result.get("status") == "failed":
+            message = result.get("error") or "Browser automation failed"
+            recovery = result.get("recovery")
+            raise TaskExecutionError(
+                f"{message}{f' Recovery: {recovery}' if recovery else ''}",
+                artifact_id=result.get("artifact_id"),
+            )
+        return result
 
     async def _execute_rpc_call(self, payload: dict[str, Any]) -> Any:
         """Execute an RPC call task."""

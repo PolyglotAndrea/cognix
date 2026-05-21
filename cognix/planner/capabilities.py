@@ -226,7 +226,20 @@ class CapabilityResolver:
             "workspace_enabled": True,
             "mcp_preset_configured": bool(preset),
             "mcp_server_id": preset.id if preset else "",
-            "engines": ["playwright", "mcp"],
+            "engines": ["playwright", "cdp", "browser_use"],
+            "mcp_preset_available": True,
+            "default_engine": ws_config.get_settings().get("browser", {}).get(
+                "default_engine",
+                "playwright",
+            ),
+            "cdp_configured": bool(
+                ws_config.get_settings().get("browser", {}).get("cdp_endpoint")
+            ),
+            "cdp_endpoint": ws_config.get_settings().get("browser", {}).get(
+                "cdp_endpoint",
+                "",
+            )
+            or "",
         }
 
     def _code_sandbox(self, policy: dict[str, Any]) -> dict[str, Any]:

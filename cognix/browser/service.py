@@ -20,7 +20,7 @@ from cognix.local.workspace import WorkspaceManager
 from cognix.local.workspace_config import MCPServerConfig, WorkspaceConfigStore
 from cognix.orchestrator.protocol import OrchestrationEvent, emit_orchestration_event
 
-BrowserEngine = Literal["playwright", "mcp"]
+BrowserEngine = Literal["playwright", "cdp", "browser_use"]
 
 
 @dataclass(frozen=True)
@@ -48,6 +48,7 @@ class BrowserAutomationRun:
     extract_tables: bool = True
     screenshot: bool = False
     wait_for_selector: str = ""
+    cdp_endpoint: str = ""
     permission_mode: str = "workspace-write"
     approval_id: str = ""
     task_id: str = ""
@@ -193,35 +194,20 @@ class BrowserAutomationService:
             },
         )
 
-        if request.engine == "mcp":
-            server = self.ensure_mcp_preset(profile=request.profile)
-            result = {
-                "status": "mcp_ready",
-                "server_id": server.id,
-                "server_name": server.name,
-                "message": (
-                    "Browser MCP preset is configured. "
-                    "Use discovered MCP tools to execute steps."
-                ),
-            }
-            artifact_id = await self.create_artifact(
-                request=request,
-                observation=BrowserObservation(title="Browser MCP preset ready", url=request.url),
-                result=result,
-                user_id=user_id,
-            )
-            result["artifact_id"] = artifact_id
-            return result
-
         try:
-            observation = await self._run_playwright(request)
+            if request.engine == "cdp":
+                observation = await self._run_cdp(request)
+            elif request.engine == "browser_use":
+                observation = await self._run_browser_use(request)
+            else:
+                observation = await self._run_playwright(request)
         except Exception as exc:
             result = {
                 "status": "failed",
                 "error": str(exc),
                 "recovery": (
-                    "Install browser extras and browser binaries, or switch the workspace to "
-                    "the Browser MCP preset."
+                    "Install browser extras and browser binaries, configure a CDP endpoint, "
+                    "or switch to another browser automation engine."
                 ),
             }
             artifact_id = await self.create_artifact(
@@ -438,6 +424,115 @@ class BrowserAutomationService:
                 )
             finally:
                 await context.close()
+
+    async def _run_cdp(self, request: BrowserAutomationRun) -> BrowserObservation:
+        """Connect to an already-running Chromium instance over CDP."""
+        try:
+            from playwright.async_api import async_playwright
+        except Exception as exc:
+            raise RuntimeError(
+                "Playwright is required for CDP browser automation. Install optional "
+                "dependency `cognix[browser]`."
+            ) from exc
+
+        endpoint = (
+            request.cdp_endpoint
+            or self.config.get_settings().get("browser", {}).get("cdp_endpoint")
+            or ""
+        )
+        if not endpoint:
+            raise RuntimeError(
+                "CDP endpoint is not configured. Start Chrome with remote debugging, for "
+                "example `--remote-debugging-port=9222`, then set browser.cdp_endpoint "
+                "to `http://127.0.0.1:9222`."
+            )
+
+        screenshot_path = ""
+        async with async_playwright() as p:
+            browser = await p.chromium.connect_over_cdp(endpoint)
+            context = browser.contexts[0] if browser.contexts else await browser.new_context()
+            page = context.pages[0] if context.pages else await context.new_page()
+            try:
+                await page.goto(request.url, wait_until="domcontentloaded")
+                if request.wait_for_selector:
+                    await page.wait_for_selector(request.wait_for_selector, timeout=15000)
+                title = await page.title()
+                current_url = page.url
+                text = await page.locator("body").inner_text(timeout=15000)
+                links: list[dict[str, str]] = []
+                tables: list[list[list[str]]] = []
+                if request.extract_links:
+                    links = await page.locator("a").evaluate_all(
+                        "(nodes) => nodes.slice(0, 100).map((a) => "
+                        "({ text: (a.innerText || '').trim(), href: a.href || '' }))"
+                    )
+                if request.extract_tables:
+                    tables = await page.locator("table").evaluate_all(
+                        "(tables) => tables.slice(0, 20).map((table) => "
+                        "Array.from(table.rows).map((row) => "
+                        "Array.from(row.cells).map((cell) => (cell.innerText || '').trim())))"
+                    )
+                if request.screenshot:
+                    screenshot = self.screenshot_dir() / f"{uuid.uuid4().hex[:12]}.png"
+                    await page.screenshot(path=str(screenshot), full_page=True)
+                    screenshot_path = str(screenshot)
+                return BrowserObservation(
+                    title=title,
+                    url=current_url,
+                    text=text[:20000] if request.extract_text else "",
+                    links=links,
+                    tables=tables,
+                    screenshot_path=screenshot_path,
+                )
+            finally:
+                await browser.close()
+
+    async def _run_browser_use(self, request: BrowserAutomationRun) -> BrowserObservation:
+        """Run browser-use for high-level browser tasks when its runtime is installed."""
+        try:
+            from browser_use import Agent as BrowserUseAgent
+            from browser_use import Browser, BrowserConfig
+            from langchain_openai import ChatOpenAI
+        except Exception as exc:
+            raise RuntimeError(
+                "browser-use runtime is not fully installed. Install optional browser-use "
+                "dependencies plus a LangChain-compatible LLM provider, or use playwright/cdp."
+            ) from exc
+
+        from cognix.providers.resolver import resolve_provider
+
+        provider = resolve_provider(self.workspace_id)
+        if not provider.api_key:
+            raise RuntimeError("browser-use requires a configured model provider API key.")
+
+        llm_kwargs: dict[str, Any] = {
+            "model": provider.default_model,
+            "api_key": provider.api_key,
+        }
+        if provider.base_url:
+            llm_kwargs["base_url"] = provider.base_url
+        llm = ChatOpenAI(**llm_kwargs)
+        browser = Browser(
+            config=BrowserConfig(
+                headless=True,
+                user_data_dir=str(self.profile_dir(request.profile)),
+            )
+        )
+        task = f"{request.objective}\n\nTarget URL: {request.url}"
+        agent = BrowserUseAgent(task=task, llm=llm, browser=browser)
+        try:
+            history = await agent.run()
+        finally:
+            close = getattr(browser, "close", None)
+            if close:
+                result = close()
+                if hasattr(result, "__await__"):
+                    await result
+        return BrowserObservation(
+            title="browser-use run",
+            url=request.url,
+            text=str(history)[:20000],
+        )
 
     def _artifact_content(
         self,

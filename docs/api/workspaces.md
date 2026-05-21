@@ -172,10 +172,26 @@ GET /api/v1/workspaces/{workspace_id}/browser/profile?profile=default
 POST /api/v1/workspaces/{workspace_id}/browser/run
 ```
 
-Browser automation is an internal capability selected by the planner. The MCP
-preset provisions a Playwright MCP server with a workspace-scoped browser profile.
+Browser automation is an internal capability selected by the planner. Cognix can
+choose among three execution engines:
+
+- `playwright`: deterministic isolated browser execution with a workspace profile.
+- `cdp`: attaches to an already-running Chromium session through a configured
+  Chrome DevTools Protocol endpoint, useful when the user has manually logged in.
+- `browser_use`: delegates high-level multi-step browser work to browser-use when
+  that optional runtime and a compatible model provider are configured.
+
+The MCP preset endpoint remains available for explicit Browser MCP setup, but
+planner/apply does not automatically bootstrap online CLI MCP processes.
 `browser/run` applies workspace network policy, creates approval requests when
-needed, runs Playwright when allowed, and persists browser output as an artifact.
+needed, runs the selected browser engine when allowed, and persists browser output
+as an artifact.
+Planner apply can emit a first-class `browser_run` step for authorized browser
+work. That step creates a `browser_automation` scheduled task, ensures the
+selected browser task executes through `TaskExecutor`, and links the resulting
+browser artifact back to the plan/task. If the selected runtime is missing or
+misconfigured, the run fails as a browser artifact with recovery guidance instead
+of falling back to a text-only agent response.
 
 ---
 

@@ -89,6 +89,7 @@ class TaskType(StrEnum):
     HTTP_WEBHOOK = "http_webhook"
     SKILL_EXEC = "skill_exec"
     WORKFLOW = "workflow"
+    BROWSER_AUTOMATION = "browser_automation"
 
 
 class ScheduledTaskModel(Base):
