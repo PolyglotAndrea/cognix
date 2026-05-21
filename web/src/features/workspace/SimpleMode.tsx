@@ -231,7 +231,13 @@ export function SimpleMode({
     if (streaming || !storedMessages) return
     setMessages(
       storedMessages
-        .filter((message) => message.role === 'user' || message.role === 'assistant')
+        .filter((message) => {
+          if (message.role !== 'user' && message.role !== 'assistant') return false
+          if (message.role === 'assistant' && !message.content.trim() && !message.metadata?.type) {
+            return false
+          }
+          return true
+        })
         .map((message) => {
           if (message.metadata?.type === 'plan') {
             return {
@@ -690,6 +696,7 @@ export function SimpleMode({
         )}
 
         {messages.map((msg, i) => {
+          const isLastMessage = i === messages.length - 1
           if (msg.role === 'user') {
             return (
               <div key={i} className="flex justify-end">
@@ -701,10 +708,11 @@ export function SimpleMode({
           }
 
           if (msg.role === 'assistant') {
+            if (!msg.content?.trim() && (!streaming || !isLastMessage)) return null
             return (
               <div key={i} className="flex justify-start">
                 <div className="max-w-[80%] rounded-2xl bg-card border border-border px-4 py-3 text-sm leading-relaxed text-foreground shadow-sm">
-                  {msg.content ? (
+                  {msg.content?.trim() ? (
                     <RichMessage content={msg.content} compact />
                   ) : (
                     <div className="flex gap-1.5 py-1.5 items-center">

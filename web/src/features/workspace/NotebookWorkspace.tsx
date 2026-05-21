@@ -1,10 +1,8 @@
 import { useState } from 'react'
-import { SlidersHorizontal } from 'lucide-react'
 import { TopBar } from './TopBar'
 import { SourcesPanel } from './SourcesPanel'
 import { SimpleMode } from './SimpleMode'
 import { StudioPanel } from './StudioPanel'
-import { DeveloperDetailsDrawer } from './DeveloperDetailsDrawer'
 import { useWorkspaceStore } from './store'
 
 export function NotebookWorkspace({
@@ -14,8 +12,11 @@ export function NotebookWorkspace({
   workspaceId: string
   onSwitchToAdvanced: () => void
 }) {
-  const [developerOpen, setDeveloperOpen] = useState(false)
-  const [requestedIntent, setRequestedIntent] = useState<{ id: number; text: string; autoSubmit?: boolean } | null>(null)
+  const [requestedIntent, setRequestedIntent] = useState<{
+    id: number
+    text: string
+    autoSubmit?: boolean
+  } | null>(null)
   const notebookSources = useWorkspaceStore((state) => state.notebookSources)
 
   const handleStudioIntent = (intent: string) => {
@@ -45,16 +46,6 @@ export function NotebookWorkspace({
                 Ask a question or create something from selected sources.
               </p>
             </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setDeveloperOpen(true)}
-                className="flex h-9 w-9 items-center justify-center rounded-full border border-border bg-background text-muted-foreground hover:text-foreground"
-                title="Developer details"
-              >
-                <SlidersHorizontal className="h-4 w-4" />
-              </button>
-            </div>
           </div>
           <div className="min-h-0 flex-1">
             <SimpleMode
@@ -68,11 +59,6 @@ export function NotebookWorkspace({
 
         <StudioPanel workspaceId={workspaceId} onCreateFromStudio={handleStudioIntent} />
       </main>
-
-      <DeveloperDetailsDrawer
-        open={developerOpen}
-        onClose={() => setDeveloperOpen(false)}
-      />
     </div>
   )
 }
