@@ -996,10 +996,30 @@ function InlineApprovalQuestion({
     approval.reason ||
     String(approval.arguments?.question || approval.metadata?.question || '') ||
     'Cognix needs more information before it can continue this task.'
+  const isApprovalContinuation =
+    /已批准，继续|审批弹窗|审批后|允许后|approval/i.test(question)
   const shouldUseBrowserForm =
+    !isApprovalContinuation &&
     /浏览器|登录|授权|URL|网址|后台|入口|拉取|采集|爬取|导出/.test(question)
   const readyToResume =
     approval.status === 'approved' && Boolean(approval.response) && !approval.result
+
+  useEffect(() => {
+    setResponse('')
+    setErrors({})
+    setBrowserForm({
+      targetUrl: '',
+      menuEntry: '',
+      authorizationConfirmed: false,
+      loginMode: '',
+      loginNotes: '',
+      scope: '',
+      outputFields: '',
+      browserAccessApproved: false,
+      exportFormat: 'structured-table',
+      notes: '',
+    })
+  }, [approval.id, question])
 
   const updateBrowserForm = (
     field: keyof typeof browserForm,
@@ -1120,6 +1140,23 @@ function InlineApprovalQuestion({
             onChange={updateBrowserForm}
             onSubmit={submitBrowserForm}
           />
+        ) : isApprovalContinuation ? (
+          <div className="space-y-3">
+            <div className="rounded-xl border border-border bg-background/95 p-4 text-sm leading-6 text-foreground">
+              <RichMessage content={question} />
+            </div>
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => onSubmit('已批准，继续')}
+                disabled={busy}
+                className="inline-flex h-11 items-center gap-2 rounded-xl bg-foreground px-5 text-xs font-black uppercase tracking-wider text-background transition-opacity hover:opacity-90 disabled:opacity-40"
+              >
+                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                已批准，继续
+              </button>
+            </div>
+          </div>
         ) : (
           <>
             <div className="rounded-xl border border-border bg-background/95 p-4 text-sm leading-6 text-foreground">
