@@ -70,6 +70,7 @@ interface ApprovalRequest {
   status: string
   reason: string
   tool_name: string
+  arguments?: Record<string, unknown>
   response?: string
   metadata?: Record<string, unknown>
 }
@@ -945,7 +946,10 @@ function InlineApprovalQuestion({
   onSubmit: (response: string) => void
 }) {
   const [response, setResponse] = useState('')
-  const question = approval.reason || String(approval.metadata?.question || '')
+  const question =
+    approval.reason ||
+    String(approval.arguments?.question || approval.metadata?.question || '') ||
+    'Cognix needs more information before it can continue this task.'
 
   return (
     <div className="flex justify-start w-full">
@@ -967,8 +971,8 @@ function InlineApprovalQuestion({
           </span>
         </div>
 
-        <div className="rounded-xl border border-border bg-background/80 p-3 text-xs leading-6 text-foreground/75">
-          <RichMessage content={question} compact />
+        <div className="rounded-xl border border-border bg-background/95 p-4 text-sm leading-6 text-foreground">
+          <RichMessage content={question} />
         </div>
 
         <div className="mt-3 flex items-end gap-2">
