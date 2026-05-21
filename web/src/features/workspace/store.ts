@@ -49,6 +49,7 @@ interface WorkspaceState {
   executionLogs: LogEntry[]
   isAgentRunning: boolean
   notebookSources: NotebookSource[]
+  activeNotebookChatId: string | null
   setSelectedWorkspace: (id: string | null) => void
   setSelectedAgent: (id: string | null) => void
   setRightPanelTab: (tab: RightPanelTab) => void
@@ -61,6 +62,7 @@ interface WorkspaceState {
   setWorkspaceOwner: (userId: string | null) => void
   setAgentRunning: (running: boolean) => void
   setNotebookSources: (sources: NotebookSource[]) => void
+  setActiveNotebookChatId: (chatId: string | null) => void
 }
 
 const uid = () => crypto.randomUUID()
@@ -78,6 +80,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       executionLogs: [],
       isAgentRunning: false,
       notebookSources: [],
+      activeNotebookChatId: null,
       setSelectedWorkspace: (id) =>
         set({ selectedWorkspaceId: id, selectedAgentId: null, toolResults: [], executionLogs: [] }),
       setWorkspaceOwner: (userId) => set({ selectedWorkspaceUserId: userId }),
@@ -93,6 +96,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       toggleRightPanel: () => set((s) => ({ rightPanelOpen: !s.rightPanelOpen })),
       setAgentRunning: (running) => set({ isAgentRunning: running }),
       setNotebookSources: (sources) => set({ notebookSources: sources }),
+      setActiveNotebookChatId: (chatId) => set({ activeNotebookChatId: chatId }),
     }),
     {
       name: 'cognix-workspace-ui',

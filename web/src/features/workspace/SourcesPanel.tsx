@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   CalendarClock,
   Check,
   FileText,
   Globe2,
+  History,
   Link2,
   ListChecks,
   MemoryStick,
+  MessageSquarePlus,
   Plus,
   Search,
 } from 'lucide-react'
@@ -17,6 +19,7 @@ import { useWorkspaceStore, type NotebookSource } from './store'
 
 const EMPTY_FILES: WorkspaceFile[] = []
 const EMPTY_TASKS: ScheduledTaskSource[] = []
+const EMPTY_CHATS: ChatSession[] = []
 
 interface WorkspaceFile {
   name: string
@@ -36,6 +39,14 @@ interface ScheduledTaskSource {
   run_count?: number
 }
 
+interface ChatSession {
+  id: string
+  title: string
+  metadata?: Record<string, unknown>
+  created_at?: string
+  updated_at?: string
+}
+
 interface SourceItem {
   id: string
   kind: 'file' | 'url' | 'artifact' | 'memory'
@@ -46,7 +57,10 @@ interface SourceItem {
 
 export function SourcesPanel({ workspaceId }: { workspaceId: string }) {
   const setNotebookSources = useWorkspaceStore((state) => state.setNotebookSources)
-  const [activeTab, setActiveTab] = useState<'tasks' | 'sources'>('tasks')
+  const activeNotebookChatId = useWorkspaceStore((state) => state.activeNotebookChatId)
+  const setActiveNotebookChatId = useWorkspaceStore((state) => state.setActiveNotebookChatId)
+  const queryClient = useQueryClient()
+  const [activeTab, setActiveTab] = useState<'chats' | 'tasks' | 'sources'>('chats')
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Record<string, boolean>>({})
   const [urlSources, setUrlSources] = useState<SourceItem[]>([])
@@ -68,6 +82,13 @@ export function SourcesPanel({ workspaceId }: { workspaceId: string }) {
           task.schedule !== 'once' &&
           ['active', 'paused'].includes(String(task.state || '').toLowerCase()),
       ),
+  })
+
+  const { data: chats = EMPTY_CHATS, isLoading: chatsLoading } = useQuery<ChatSession[]>({
+    queryKey: ['workspace-chats', workspaceId],
+    queryFn: () => api.get(`/workspaces/${workspaceId}/chats`).then((r) => r.data),
+    enabled: !!workspaceId,
+    select: (rows) => rows.filter((chat) => chat.metadata?.mode === 'simple'),
   })
 
   const sources = useMemo<SourceItem[]>(() => {
@@ -110,6 +131,13 @@ export function SourcesPanel({ workspaceId }: { workspaceId: string }) {
 
   const selectedCount = sources.filter((source) => source.selected).length
   const taskCount = taskItems.length
+  const chatCount = chats.length
+
+  useEffect(() => {
+    if (!workspaceId) return
+    if (activeNotebookChatId && chats.some((chat) => chat.id === activeNotebookChatId)) return
+    setActiveNotebookChatId(chats[0]?.id || null)
+  }, [activeNotebookChatId, chats, setActiveNotebookChatId, workspaceId])
 
   useEffect(() => {
     const activeSources: NotebookSource[] = sources
@@ -140,28 +168,61 @@ export function SourcesPanel({ workspaceId }: { workspaceId: string }) {
     setUrlInput('')
   }
 
+  const createChat = async () => {
+    const created = await api
+      .post(`/workspaces/${workspaceId}/chats`, {
+        title: 'Planner Orchestrator Session',
+        metadata: { mode: 'simple' },
+      })
+      .then((r) => r.data as ChatSession)
+    setActiveNotebookChatId(created.id)
+    await queryClient.invalidateQueries({ queryKey: ['workspace-chats', workspaceId] })
+  }
+
   return (
     <aside className="flex h-full flex-col overflow-hidden rounded-[1.35rem] border border-border/70 bg-card shadow-sm">
       <div className="border-b border-border/70 px-4 py-3">
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-sm font-semibold text-foreground">
-              {activeTab === 'tasks' ? 'Tasks' : 'Sources'}
+              {activeTab === 'chats' ? 'Chat History' : activeTab === 'tasks' ? 'Tasks' : 'Sources'}
             </h2>
             <p className="mt-0.5 text-[11px] text-muted-foreground">
-              {activeTab === 'tasks'
+              {activeTab === 'chats'
+                ? `${chatCount} workspace conversations`
+                : activeTab === 'tasks'
                 ? `${taskCount} plans and tasks`
                 : `${selectedCount} selected for context`}
             </p>
           </div>
-          <button className="flex h-8 w-8 items-center justify-center rounded-full border border-border bg-background text-muted-foreground hover:text-foreground">
+          <button
+            type="button"
+            onClick={() => {
+              if (activeTab === 'chats') void createChat()
+              if (activeTab === 'sources') setActiveTab('sources')
+            }}
+            className="flex h-8 w-8 items-center justify-center rounded-full border border-border bg-background text-muted-foreground hover:text-foreground"
+          >
             <Plus className="h-4 w-4" />
           </button>
         </div>
       </div>
 
       <div className="border-b border-border/70 p-3">
-        <div className="grid grid-cols-2 gap-1 rounded-2xl border border-border bg-background/75 p-1">
+        <div className="grid grid-cols-3 gap-1 rounded-2xl border border-border bg-background/75 p-1">
+          <button
+            type="button"
+            onClick={() => setActiveTab('chats')}
+            className={cn(
+              'flex h-9 items-center justify-center gap-2 rounded-xl text-[11px] font-black uppercase tracking-wider transition-colors',
+              activeTab === 'chats'
+                ? 'bg-foreground text-background shadow-sm'
+                : 'text-muted-foreground hover:bg-muted/70 hover:text-foreground',
+            )}
+          >
+            <History className="h-3.5 w-3.5" />
+            Chats
+          </button>
           <button
             type="button"
             onClick={() => setActiveTab('tasks')}
@@ -190,6 +251,19 @@ export function SourcesPanel({ workspaceId }: { workspaceId: string }) {
           </button>
         </div>
       </div>
+
+      {activeTab === 'chats' && (
+        <div className="border-b border-border/70 p-4">
+          <button
+            type="button"
+            onClick={() => void createChat()}
+            className="flex h-10 w-full items-center justify-center gap-2 rounded-2xl border border-border bg-background text-xs font-black text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+          >
+            <MessageSquarePlus className="h-4 w-4" />
+            New Chat
+          </button>
+        </div>
+      )}
 
       {activeTab === 'sources' && (
       <div className="space-y-3 border-b border-border/70 p-4">
@@ -227,7 +301,47 @@ export function SourcesPanel({ workspaceId }: { workspaceId: string }) {
       )}
 
       <div className="flex-1 space-y-1 overflow-y-auto p-3 scrollbar-hide">
-        {activeTab === 'tasks' ? (
+        {activeTab === 'chats' ? (
+          chats.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-border p-6 text-center">
+              <History className="mx-auto mb-2 h-6 w-6 text-muted-foreground/30" />
+              <p className="text-xs font-semibold text-muted-foreground">
+                {chatsLoading ? 'Loading chat history...' : 'No chat history yet'}
+              </p>
+            </div>
+          ) : (
+            chats.map((chat, index) => (
+              <button
+                key={chat.id}
+                type="button"
+                onClick={() => setActiveNotebookChatId(chat.id)}
+                className={cn(
+                  'flex w-full items-center gap-3 rounded-2xl px-2.5 py-2.5 text-left transition-colors',
+                  chat.id === activeNotebookChatId
+                    ? 'bg-primary/10 text-primary ring-1 ring-primary/25'
+                    : 'hover:bg-muted/55',
+                )}
+              >
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary/8 text-primary">
+                  <History className="h-4 w-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-xs font-semibold text-foreground">
+                    {chat.title || `Conversation ${index + 1}`}
+                  </div>
+                  <div className="mt-0.5 truncate text-[10px] text-muted-foreground">
+                    Workspace conversation
+                  </div>
+                </div>
+                {chat.id === activeNotebookChatId && (
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
+                    <Check className="h-3.5 w-3.5" />
+                  </span>
+                )}
+              </button>
+            ))
+          )
+        ) : activeTab === 'tasks' ? (
           taskItems.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-border p-6 text-center">
               <ListChecks className="mx-auto mb-2 h-6 w-6 text-muted-foreground/30" />

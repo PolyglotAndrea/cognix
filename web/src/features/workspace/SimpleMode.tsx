@@ -3,7 +3,6 @@ import type { ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   CircleHelp,
-  MessageSquarePlus,
   Settings,
   Send,
   Loader2,
@@ -86,12 +85,13 @@ export function SimpleMode({
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState<UIMessage[]>([])
   const [streaming, setStreaming] = useState(false)
-  const [activeChatId, setActiveChatId] = useState<string | null>(null)
   const queryClient = useQueryClient()
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const notebookSources = useWorkspaceStore((state) => state.notebookSources)
+  const activeChatId = useWorkspaceStore((state) => state.activeNotebookChatId)
+  const setActiveChatId = useWorkspaceStore((state) => state.setActiveNotebookChatId)
 
-  const { data: chats = [], isLoading: chatsLoading } = useQuery<ChatSession[]>({
+  const { data: chats = [] } = useQuery<ChatSession[]>({
     queryKey: ['workspace-chats', workspaceId],
     queryFn: () => api.get(`/workspaces/${workspaceId}/chats`).then((r) => r.data),
     enabled: !!workspaceId,
@@ -187,7 +187,7 @@ export function SimpleMode({
   useEffect(() => {
     setActiveChatId(null)
     setMessages([])
-  }, [workspaceId])
+  }, [setActiveChatId, workspaceId])
 
   useEffect(() => {
     if (activeChatId || chats.length === 0) return
@@ -197,7 +197,11 @@ export function SimpleMode({
     } else {
       setActiveChatId(chats[0].id)
     }
-  }, [activeChatId, chats])
+  }, [activeChatId, chats, setActiveChatId])
+
+  useEffect(() => {
+    if (!streaming) setMessages([])
+  }, [activeChatId, streaming])
 
   useEffect(() => {
     if (streaming || !storedMessages) return
@@ -643,48 +647,6 @@ export function SimpleMode({
         </button>
       </div>
       )}
-
-      {/* Chat Tabs / Sessions */}
-      <div className="border-b border-border/60 bg-card/30 px-6 py-2.5 shrink-0">
-        <div className="mx-auto flex w-full max-w-3xl items-center gap-3 overflow-x-auto scrollbar-hide">
-          <span className="shrink-0 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-            Chat History
-          </span>
-          {chats
-            .filter((chat) => chat.metadata?.mode === 'simple')
-            .map((chat) => (
-              <button
-                key={chat.id}
-                type="button"
-                onClick={() => {
-                  setActiveChatId(chat.id)
-                  setMessages([])
-                }}
-                className={`max-w-[160px] shrink-0 truncate rounded-xl border px-3.5 py-1.5 text-xs font-bold transition-all ${
-                  chat.id === activeChatId
-                    ? 'border-primary/45 bg-primary/10 text-primary shadow-sm'
-                    : 'border-border bg-background/50 text-muted-foreground hover:text-foreground hover:bg-background'
-                }`}
-                title={chat.title}
-              >
-                {chat.title || 'Untitled chat'}
-              </button>
-            ))}
-          {chats.filter((chat) => chat.metadata?.mode === 'simple').length === 0 && (
-            <span className="shrink-0 rounded-xl border border-dashed border-border px-3.5 py-1.5 text-xs font-bold text-muted-foreground/60">
-              {chatsLoading ? 'Loading history...' : 'No chat history'}
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={() => createChat()}
-            className="ml-auto flex h-8 shrink-0 items-center gap-1.5 rounded-xl border border-border bg-background px-3 text-xs font-bold text-muted-foreground transition-colors hover:text-foreground hover:bg-card"
-          >
-            <MessageSquarePlus className="h-4 w-4" />
-            New Chat
-          </button>
-        </div>
-      </div>
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-6 py-8 space-y-6 max-w-3xl mx-auto w-full scrollbar-thin">
