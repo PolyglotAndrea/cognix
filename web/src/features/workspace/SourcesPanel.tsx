@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
+  CalendarClock,
   Check,
   FileText,
   Globe2,
   History,
   Link2,
+  ListChecks,
   MemoryStick,
   Plus,
   Search,
@@ -16,6 +18,8 @@ import { useWorkspaceStore, type NotebookSource } from './store'
 
 const EMPTY_FILES: WorkspaceFile[] = []
 const EMPTY_ARTIFACTS: ArtifactSource[] = []
+const EMPTY_PLANS: WorkspacePlanSource[] = []
+const EMPTY_TASKS: ScheduledTaskSource[] = []
 
 interface WorkspaceFile {
   name: string
@@ -33,6 +37,24 @@ interface ArtifactSource {
   updated_at: string
 }
 
+interface WorkspacePlanSource {
+  id: string
+  summary: string
+  status: string
+  execution_mode: string
+  created_at?: string
+}
+
+interface ScheduledTaskSource {
+  id: string
+  name: string
+  workspace_id?: string
+  task_type: string
+  schedule: string
+  state: string
+  run_count?: number
+}
+
 interface SourceItem {
   id: string
   kind: 'file' | 'url' | 'artifact' | 'memory'
@@ -43,6 +65,7 @@ interface SourceItem {
 
 export function SourcesPanel({ workspaceId }: { workspaceId: string }) {
   const setNotebookSources = useWorkspaceStore((state) => state.setNotebookSources)
+  const [activeTab, setActiveTab] = useState<'tasks' | 'sources'>('tasks')
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Record<string, boolean>>({})
   const [urlSources, setUrlSources] = useState<SourceItem[]>([])
@@ -58,6 +81,19 @@ export function SourcesPanel({ workspaceId }: { workspaceId: string }) {
     queryKey: ['artifacts', workspaceId],
     queryFn: () => api.get(`/workspaces/${workspaceId}/artifacts`).then((r) => r.data),
     enabled: !!workspaceId,
+  })
+
+  const { data: plans = EMPTY_PLANS } = useQuery<WorkspacePlanSource[]>({
+    queryKey: ['workspace-plans', workspaceId, 'notebook-tasks'],
+    queryFn: () => api.get(`/workspaces/${workspaceId}/plans`).then((r) => r.data),
+    enabled: !!workspaceId,
+  })
+
+  const { data: tasks = EMPTY_TASKS } = useQuery<ScheduledTaskSource[]>({
+    queryKey: ['tasks', workspaceId, 'notebook-tasks'],
+    queryFn: () => api.get('/tasks').then((r) => r.data),
+    enabled: !!workspaceId,
+    select: (rows) => rows.filter((task) => !task.workspace_id || task.workspace_id === workspaceId),
   })
 
   const sources = useMemo<SourceItem[]>(() => {
@@ -87,6 +123,25 @@ export function SourcesPanel({ workspaceId }: { workspaceId: string }) {
     return [memorySource, ...urlSources, ...fileSources, ...artifactSources]
   }, [artifacts, files, selected, urlSources])
 
+  const taskItems = useMemo(() => {
+    const planItems = plans.slice(0, 8).map((plan) => ({
+      id: `plan:${plan.id}`,
+      kind: 'plan' as const,
+      title: plan.summary || plan.id,
+      subtitle: `${plan.execution_mode || 'once'} · ${plan.status}`,
+      status: plan.status,
+    }))
+    const scheduledItems = tasks.slice(0, 10).map((task) => ({
+      id: `task:${task.id}`,
+      kind: 'task' as const,
+      title: task.name || task.id,
+      subtitle: `${task.task_type} · ${task.schedule}`,
+      status: task.state,
+      runCount: task.run_count || 0,
+    }))
+    return [...planItems, ...scheduledItems]
+  }, [plans, tasks])
+
   const filtered = search.trim()
     ? sources.filter((source) =>
         `${source.title} ${source.subtitle}`.toLowerCase().includes(search.toLowerCase()),
@@ -94,6 +149,7 @@ export function SourcesPanel({ workspaceId }: { workspaceId: string }) {
     : sources
 
   const selectedCount = sources.filter((source) => source.selected).length
+  const taskCount = taskItems.length
 
   useEffect(() => {
     const activeSources: NotebookSource[] = sources
@@ -129,9 +185,13 @@ export function SourcesPanel({ workspaceId }: { workspaceId: string }) {
       <div className="border-b border-border/70 px-4 py-3">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-sm font-semibold text-foreground">Sources</h2>
+            <h2 className="text-sm font-semibold text-foreground">
+              {activeTab === 'tasks' ? 'Tasks' : 'Sources'}
+            </h2>
             <p className="mt-0.5 text-[11px] text-muted-foreground">
-              {selectedCount} selected for context
+              {activeTab === 'tasks'
+                ? `${taskCount} plans and tasks`
+                : `${selectedCount} selected for context`}
             </p>
           </div>
           <button className="flex h-8 w-8 items-center justify-center rounded-full border border-border bg-background text-muted-foreground hover:text-foreground">
@@ -140,6 +200,38 @@ export function SourcesPanel({ workspaceId }: { workspaceId: string }) {
         </div>
       </div>
 
+      <div className="border-b border-border/70 p-3">
+        <div className="grid grid-cols-2 gap-1 rounded-2xl border border-border bg-background/75 p-1">
+          <button
+            type="button"
+            onClick={() => setActiveTab('tasks')}
+            className={cn(
+              'flex h-9 items-center justify-center gap-2 rounded-xl text-[11px] font-black uppercase tracking-wider transition-colors',
+              activeTab === 'tasks'
+                ? 'bg-foreground text-background shadow-sm'
+                : 'text-muted-foreground hover:bg-muted/70 hover:text-foreground',
+            )}
+          >
+            <ListChecks className="h-3.5 w-3.5" />
+            Tasks
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('sources')}
+            className={cn(
+              'flex h-9 items-center justify-center gap-2 rounded-xl text-[11px] font-black uppercase tracking-wider transition-colors',
+              activeTab === 'sources'
+                ? 'bg-foreground text-background shadow-sm'
+                : 'text-muted-foreground hover:bg-muted/70 hover:text-foreground',
+            )}
+          >
+            <FileText className="h-3.5 w-3.5" />
+            Sources
+          </button>
+        </div>
+      </div>
+
+      {activeTab === 'sources' && (
       <div className="space-y-3 border-b border-border/70 p-4">
         <div className="rounded-2xl border border-border bg-background/80 p-2">
           <div className="flex items-center gap-2">
@@ -172,9 +264,48 @@ export function SourcesPanel({ workspaceId }: { workspaceId: string }) {
           />
         </div>
       </div>
+      )}
 
       <div className="flex-1 space-y-1 overflow-y-auto p-3 scrollbar-hide">
-        {filtered.length === 0 ? (
+        {activeTab === 'tasks' ? (
+          taskItems.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-border p-6 text-center">
+              <ListChecks className="mx-auto mb-2 h-6 w-6 text-muted-foreground/30" />
+              <p className="text-xs font-semibold text-muted-foreground">No plans or tasks yet</p>
+              <p className="mt-1 text-[10px] leading-4 text-muted-foreground/70">
+                Plans created from chat will appear here and can later become scheduled or long-running tasks.
+              </p>
+            </div>
+          ) : (
+            taskItems.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className="flex w-full items-center gap-3 rounded-2xl px-2.5 py-2.5 text-left transition-colors hover:bg-muted/55"
+              >
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary/8 text-primary">
+                  {item.kind === 'plan' ? (
+                    <ListChecks className="h-4 w-4" />
+                  ) : (
+                    <CalendarClock className="h-4 w-4" />
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="line-clamp-2 text-xs font-semibold leading-4 text-foreground">
+                    {item.title}
+                  </div>
+                  <div className="mt-0.5 truncate text-[10px] text-muted-foreground">
+                    {item.subtitle}
+                    {'runCount' in item ? ` · ${item.runCount} runs` : ''}
+                  </div>
+                </div>
+                <span className="shrink-0 rounded-full border border-border bg-background px-2 py-1 text-[9px] font-black uppercase tracking-widest text-muted-foreground">
+                  {item.status}
+                </span>
+              </button>
+            ))
+          )
+        ) : filtered.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-border p-6 text-center">
             <FileText className="mx-auto mb-2 h-6 w-6 text-muted-foreground/30" />
             <p className="text-xs font-semibold text-muted-foreground">No sources found</p>
