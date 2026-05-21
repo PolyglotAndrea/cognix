@@ -26,6 +26,8 @@
 
     [:octicons-arrow-right-24: Architecture](architecture/overview.md)
 
+    [:octicons-arrow-right-24: Agentic Product Direction](architecture/agentic-product-direction.md)
+
 - :material-api:{ .lg .middle } **API Reference**
 
     ---
