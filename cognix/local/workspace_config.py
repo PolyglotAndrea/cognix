@@ -109,6 +109,7 @@ class WorkspaceConfigStore:
                 "dlq_enabled": True,
             },
             "browser": {
+                "enabled": False,
                 "default_engine": "playwright",
                 "cdp_endpoint": None,
             },
@@ -134,7 +135,9 @@ class WorkspaceConfigStore:
     def update_settings(self, updates: dict[str, Any]) -> dict[str, Any]:
         settings = self.get_settings()
         for key, value in updates.items():
-            if key in ("context", "llm") and isinstance(value, dict):
+            if key in ("context", "llm", "browser", "policy", "bot_limits") and isinstance(
+                value, dict
+            ):
                 settings[key] = {**settings.get(key, {}), **value}
             else:
                 settings[key] = value
@@ -158,6 +161,12 @@ class WorkspaceConfigStore:
         if not enabled:
             current = [name for name in current if name != skill_name]
         settings["enabled_skills"] = current
+        if skill_name == "browser_automation":
+            settings["browser"] = {
+                **self.default_settings()["browser"],
+                **settings.get("browser", {}),
+                "enabled": enabled,
+            }
         self._write_json(self.settings_path, settings)
         return settings
 

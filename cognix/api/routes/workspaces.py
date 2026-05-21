@@ -356,7 +356,35 @@ async def set_workspace_skill(
     if not manager.load(skill_name):
         raise HTTPException(404, "Skill not found")
     settings = _workspace_config(workspace_id).set_skill_enabled(skill_name, body.enabled)
-    return {"workspace_id": workspace_id, "skill": skill_name, "enabled": body.enabled, **settings}
+    response = {"workspace_id": workspace_id, "skill": skill_name, "enabled": body.enabled, **settings}
+
+    if skill_name == "browser_automation":
+        from cognix.api.state import agent_registry
+        from cognix.core.mounts import attach_browser_automation_tool
+
+        affected_agents: list[str] = []
+        for row in agent_registry.list_all():
+            if row.get("workspace_id") != workspace_id:
+                continue
+            agent = agent_registry.get(str(row.get("id") or ""))
+            if not agent:
+                continue
+            if body.enabled:
+                attach_browser_automation_tool(agent, workspace_id)
+            elif "browser_automation" in [tool.name for tool in agent.tools]:
+                agent.remove_tool("browser_automation")
+            affected_agents.append(agent.id)
+        response["runtime"] = {
+            "browser_automation": body.enabled,
+            "engines": ["playwright", "cdp", "browser_use"],
+            "attached_agents": affected_agents,
+            "note": (
+                "Browser automation is an internal runtime capability. The skill toggle "
+                "enables planner routing and refreshes currently loaded workspace agents."
+            ),
+        }
+
+    return response
 
 
 @router.get("/{workspace_id}/mcp/servers")

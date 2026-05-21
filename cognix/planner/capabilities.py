@@ -201,6 +201,9 @@ class CapabilityResolver:
     ) -> dict[str, Any]:
         """Expose browser automation as an internal capability preset."""
         preset = None
+        settings = ws_config.get_settings()
+        enabled_skills = set(settings.get("enabled_skills", []))
+        browser_settings = settings.get("browser", {})
         try:
             preset = next(
                 (
@@ -223,19 +226,19 @@ class CapabilityResolver:
             ),
             "risk_level": "high",
             "requires_approval": policy.get("network_access", "ask") != "workspace-write",
-            "workspace_enabled": True,
+            "workspace_enabled": bool(
+                browser_settings.get("enabled") or "browser_automation" in enabled_skills
+            ),
             "mcp_preset_configured": bool(preset),
             "mcp_server_id": preset.id if preset else "",
             "engines": ["playwright", "cdp", "browser_use"],
             "mcp_preset_available": True,
-            "default_engine": ws_config.get_settings().get("browser", {}).get(
+            "default_engine": browser_settings.get(
                 "default_engine",
                 "playwright",
             ),
-            "cdp_configured": bool(
-                ws_config.get_settings().get("browser", {}).get("cdp_endpoint")
-            ),
-            "cdp_endpoint": ws_config.get_settings().get("browser", {}).get(
+            "cdp_configured": bool(browser_settings.get("cdp_endpoint")),
+            "cdp_endpoint": browser_settings.get(
                 "cdp_endpoint",
                 "",
             )
