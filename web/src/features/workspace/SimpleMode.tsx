@@ -94,6 +94,7 @@ export function SimpleMode({
 }: SimpleModeProps) {
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState<UIMessage[]>([])
+  const [planInputValues, setPlanInputValues] = useState<Record<string, string>>({})
   const [streaming, setStreaming] = useState(false)
   const queryClient = useQueryClient()
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -123,12 +124,12 @@ export function SimpleMode({
           params: {
             workspace_id: workspaceId,
             chat_id: activeChatId,
-            include_resolved: true,
+            include_resolved: false,
           },
         })
         .then((r) => r.data),
     enabled: !!workspaceId && !!activeChatId,
-    refetchInterval: 5000,
+    refetchOnWindowFocus: false,
   })
   const pendingQuestions = approvals.filter(
     (approval) =>
@@ -417,7 +418,7 @@ export function SimpleMode({
     }
   }
 
-  const handleConfirmPlan = async (plan: WorkspacePlan) => {
+  const handleConfirmPlan = async (plan: WorkspacePlan, initialResponse?: string) => {
     if (streaming || !activeChatId) return
     setStreaming(true)
 
@@ -441,6 +442,45 @@ export function SimpleMode({
     let finalApplyResultFromStream: ApplyResult | null = null
 
     try {
+      if (initialResponse?.trim()) {
+        const applyRes = await api.post(`/workspaces/${workspaceId}/plans/${plan.id}/apply`)
+        let finalApplyResult = applyRes.data as ApplyResult
+        const approvalId = finalApplyResult.approval_ids?.[0]
+        if (approvalId) {
+          const resumeRes = await api.post(`/approvals/${approvalId}/resume-and-continue`, {
+            response: initialResponse.trim(),
+          })
+          finalApplyResult = resumeRes.data as ApplyResult
+        }
+        const resultContent = resultContentFromApplyResult(finalApplyResult)
+
+        await api.post(`/workspaces/${workspaceId}/chats/${activeChatId}/messages/raw`, {
+          role: 'assistant',
+          content: resultContent,
+          metadata: {
+            type: 'executed',
+            applyResult: finalApplyResult,
+          },
+        })
+
+        setMessages((prev) =>
+          prev.map((msg) => {
+            if (msg.role === 'executing' && msg.plan?.id === plan.id) {
+              return {
+                role: 'executed',
+                content: resultContent,
+                applyResult: finalApplyResult,
+              }
+            }
+            return msg
+          })
+        )
+        queryClient.invalidateQueries({ queryKey: ['artifacts', workspaceId, activeChatId] })
+        queryClient.invalidateQueries({ queryKey: ['approvals', workspaceId, activeChatId] })
+        queryClient.invalidateQueries({ queryKey: ['workspace-chat-messages', workspaceId, activeChatId] })
+        return
+      }
+
       const resp = await fetch(`/api/v1/workspaces/${workspaceId}/plans/${plan.id}/apply/stream`, {
         method: 'POST',
         headers: {
@@ -741,8 +781,11 @@ export function SimpleMode({
         {messages.map((msg, i) => {
           if (msg.role === 'user') {
             return (
-              <div key={i} className="flex justify-end">
+              <div key={i} className="flex justify-end gap-2">
                 <div className="max-w-[80%] rounded-2xl bg-primary px-4 py-3 text-sm leading-relaxed text-primary-foreground font-semibold shadow-sm">
+                  <div className="mb-1 text-[10px] font-black uppercase tracking-widest text-primary-foreground/70">
+                    You
+                  </div>
                   <div className="whitespace-pre-wrap break-words">{msg.content}</div>
                 </div>
               </div>
@@ -752,8 +795,14 @@ export function SimpleMode({
           if (msg.role === 'assistant') {
             if (!msg.content?.trim()) return null
             return (
-              <div key={i} className="flex justify-start">
+              <div key={i} className="flex justify-start gap-2">
+                <div className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-black text-primary">
+                  C
+                </div>
                 <div className="max-w-[80%] rounded-2xl bg-card border border-border px-4 py-3 text-sm leading-relaxed text-foreground shadow-sm">
+                  <div className="mb-1 text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                    Cognix
+                  </div>
                   <RichMessage content={msg.content} compact />
                 </div>
               </div>
@@ -762,20 +811,93 @@ export function SimpleMode({
 
           if (msg.role === 'plan' && msg.plan) {
             const plan = msg.plan
+            const requestInputStep = plan.steps.find((step) => step.action === 'request_input')
+            const requestInputValue = planInputValues[plan.id] || ''
+            const expectedOutputs = plan.expected_artifacts || []
+            const visibleSteps = plan.steps.filter((step) => step.action !== 'request_input')
             return (
               <div key={i} className="flex justify-start w-full">
                 <div className="w-full max-w-2xl bg-card border border-border/80 backdrop-blur-md rounded-2xl p-5 shadow-lg space-y-4 hover:border-primary/20 transition-all duration-300">
                   <div className="flex items-start justify-between border-b border-border/60 pb-3">
                     <div>
-                      <h4 className="text-sm font-black tracking-tight text-foreground">Recommended Approach</h4>
-                      <p className="text-[10px] text-muted-foreground mt-0.5">Review what Cognix will do before running.</p>
+                      <h4 className="text-sm font-black tracking-tight text-foreground">
+                        {requestInputStep ? 'Need one detail before running' : 'Recommended Approach'}
+                      </h4>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">
+                        {requestInputStep
+                          ? 'Cognix needs this information to continue safely.'
+                          : 'Review what Cognix recommends before execution.'}
+                      </p>
                     </div>
                     <span className="text-[10px] font-black uppercase tracking-wider bg-primary/10 text-primary px-2.5 py-1 rounded-full border border-primary/20">
                       {plan.intent_type || 'Automation'}
                     </span>
                   </div>
 
-                  <p className="text-sm text-foreground/95 leading-relaxed font-semibold">{plan.summary}</p>
+                  <div className="rounded-xl border border-border/60 bg-background/60 p-3.5">
+                    <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-1.5">
+                      Cognix suggests
+                    </div>
+                    <p className="text-sm text-foreground/95 leading-relaxed font-semibold">{plan.summary}</p>
+                  </div>
+
+                  {requestInputStep && (
+                    <div className="rounded-xl border border-amber-300/40 bg-amber-50/60 p-3.5 space-y-3">
+                      <div>
+                        <div className="text-[10px] font-black uppercase tracking-widest text-amber-700 mb-1">
+                          Missing information
+                        </div>
+                        <p className="text-sm font-semibold text-foreground">
+                          {String(requestInputStep.params?.question || requestInputStep.description || 'Provide the missing information.')}
+                        </p>
+                        {Boolean(requestInputStep.params?.reason) && (
+                          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                            {String(requestInputStep.params.reason)}
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex flex-col gap-2 sm:flex-row">
+                        <input
+                          value={requestInputValue}
+                          onChange={(event) =>
+                            setPlanInputValues((prev) => ({
+                              ...prev,
+                              [plan.id]: event.target.value,
+                            }))
+                          }
+                          placeholder="Paste the target URL here"
+                          className="h-10 min-w-0 flex-1 rounded-xl border border-border bg-background px-3 text-sm outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/15"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleConfirmPlan(plan, requestInputValue)}
+                          disabled={streaming || !requestInputValue.trim()}
+                          className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl bg-primary px-4 text-xs font-black text-primary-foreground transition-opacity hover:bg-primary/95 disabled:opacity-45"
+                        >
+                          <Play className="h-3.5 w-3.5 fill-current" />
+                          Continue
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {visibleSteps.length > 0 && (
+                    <div className="rounded-xl border border-border/60 bg-background/50 p-3">
+                      <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-2">
+                        What Cognix will do
+                      </div>
+                      <div className="space-y-2">
+                        {visibleSteps.map((step, idx) => (
+                          <div key={step.id} className="flex gap-2 text-xs leading-relaxed">
+                            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-black text-primary">
+                              {idx + 1}
+                            </span>
+                            <span className="font-medium text-foreground/90">{step.description}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Components discovered & recommended */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 pt-1">
@@ -825,8 +947,24 @@ export function SimpleMode({
                     )}
                   </div>
 
+                  {expectedOutputs.length > 0 && (
+                    <div className="rounded-xl border border-border/60 bg-background/50 p-3">
+                      <div className="flex items-center gap-1.5 text-xs font-black text-muted-foreground mb-2 uppercase tracking-wider">
+                        <FileText className="h-3.5 w-3.5 text-primary" />
+                        Expected Outputs
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {expectedOutputs.map((output, idx) => (
+                          <span key={idx} className="rounded-md border border-border bg-card px-2 py-1 text-[10px] font-semibold text-foreground/80">
+                            {String(output)}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Scheduling if applicable */}
-                  {plan.scheduling && Object.keys(plan.scheduling).length > 0 && (
+                  {plan.scheduling && Boolean(plan.scheduling.needed || plan.scheduling.reason) && (
                     <div className="flex items-center gap-2 p-2.5 bg-primary/5 rounded-xl border border-primary/10 text-xs">
                       <Calendar className="h-4 w-4 text-primary shrink-0" />
                       <div>
@@ -839,6 +977,7 @@ export function SimpleMode({
                   )}
 
                   {/* Action Buttons */}
+                  {!requestInputStep && (
                   <div className="flex items-center gap-2 pt-2 border-t border-border/60">
                     <button
                       onClick={() => handleConfirmPlan(plan)}
@@ -857,6 +996,7 @@ export function SimpleMode({
                       Reject
                     </button>
                   </div>
+                  )}
                 </div>
               </div>
             )
@@ -1086,6 +1226,31 @@ function getSuggestions(currentApproval: ApprovalRequest, allApprovals: Approval
   }
 
   return uniqueResponses
+}
+
+function resultContentFromApplyResult(result: ApplyResult) {
+  const failed = result.status === 'failed'
+  const needsInput = result.status === 'needs_input' || Boolean(result.approval_ids?.length)
+  const stepSummary =
+    result.plan?.steps
+      ?.map((step) => `• **${step.description}**: ${result.plan?.step_statuses?.[step.id] || 'pending'}`)
+      .join('\n') || ''
+  const firstError =
+    result.execution_results?.find((item) => item.error)?.error ||
+    Object.values(result.failed_step_errors || {}).find(Boolean) ||
+    ''
+  const executionText =
+    result.execution_results?.[0]?.error ||
+    result.execution_results?.[0]?.result ||
+    ''
+
+  if (failed) {
+    return `Execution needs attention.\n\n${firstError || executionText || 'The workflow could not complete with the current configuration.'}\n\nRecommended next step: review the highlighted issue, adjust the source/provider/capability access if needed, then run the plan again.`
+  }
+  if (needsInput) {
+    return `I need a bit more information before continuing.\n\n${stepSummary || executionText}`
+  }
+  return `Execution completed.\n\n${stepSummary || executionText || 'The task completed.'}`
 }
 
 function parseBrowserFormResponse(responseStr: string) {
