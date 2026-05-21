@@ -25,7 +25,20 @@ def test_browser_mcp_preset_and_profile_are_workspace_scoped(tmp_path) -> None:
 
     assert server.id == "browser_playwright"
     assert server.metadata["capability"] == "browser_automation"
+    assert server.metadata["internal"] is True
     assert server.metadata["profile"] == "operator"
+    assert [action["name"] for action in server.metadata["actions"]] == [
+        "browser.goto",
+        "browser.observe",
+        "browser.click",
+        "browser.fill",
+        "browser.select",
+        "browser.wait",
+        "browser.download",
+        "browser.extract_table",
+        "browser.screenshot",
+    ]
+    assert server.metadata["tools"][0]["canonical_action"] == "browser.goto"
     assert "--user-data-dir" in server.args
     assert profile["exists"] is True
     assert profile["path"].endswith("/browser/profiles/operator")
@@ -108,5 +121,50 @@ async def test_capability_resolver_includes_browser_automation(tmp_path, monkeyp
 
     browser = snapshot["browser_automation"]
     assert browser["kind"] == "browser_automation"
+    assert browser["internal_runtime"] is True
     assert browser["mcp_preset_configured"] is True
     assert browser["mcp_server_id"] == "browser_playwright"
+    assert browser["actions"][0]["name"] == "browser.goto"
+
+
+@pytest.mark.asyncio
+async def test_browser_run_uses_fallback_approvals(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("COGNIX_HOME", str(tmp_path / ".cognix"))
+    home = CognixHome.default().ensure()
+    workspace = WorkspaceManager(home).create("Browser")
+    service = BrowserAutomationService(workspace.id, home=home)
+    store = ApprovalStore(home)
+
+    run_request = BrowserAutomationRun(
+        objective="Collect authorized page data",
+        url="https://example.test/report",
+        permission_mode="ask",
+    )
+
+    # 1. No approval exists yet -> returns a new pending approval
+    approval1 = await service._approval_or_none(run_request, user_id="user-1")
+    assert approval1 is not None
+    assert approval1.status == "pending"
+
+    # 2. Existing pending approval -> returns the same pending approval, avoiding duplicate creation
+    approval2 = await service._approval_or_none(run_request, user_id="user-1")
+    assert approval2 is not None
+    assert approval2.id == approval1.id
+
+    # 3. Existing approved approval -> returns None (allows execution)
+    store.approve(approval1.id)
+    allowed = await service._approval_or_none(run_request, user_id="user-1")
+    assert allowed is None
+
+    # 4. Existing rejected approval (newest one) -> raises PermissionError
+    rejected_app = store.create(
+        agent_id="test-agent",
+        workspace_id=workspace.id,
+        tool_name="browser_automation",
+        arguments={"url": "https://example.test/report"},
+        access_level="write",
+        reason="some reason",
+    )
+    store.reject(rejected_app.id)
+    with pytest.raises(PermissionError, match="rejected in a previous step"):
+        await service._approval_or_none(run_request, user_id="user-1")

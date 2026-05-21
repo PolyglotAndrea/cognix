@@ -12,6 +12,7 @@ A Hermes Agent-based multi-agent collaboration platform built in Python. Cognix 
 - **Scheduled Tasks** — Cron, interval, and one-shot scheduling with APScheduler plus runtime leases, due-task claiming, DB-backed worker dispatch, and retry backoff
 - **JSON-RPC 2.0** — Inter-service communication over HTTP and WebSocket
 - **Skills + MCP Tools** — Local skills, workspace MCP server config, stdio MCP tool discovery/status caching, and Agent tool mounting
+- **Browser Automation Layers** — Internal Browser MCP runtime for Playwright/CDP/browser-use execution, generic browser planning skill, and domain SOP skills such as Life Partner coupon export
 - **Claude Agent SDK Bridge** — Workspace-scoped Claude Agent SDK execution with permission mode, MCP config mapping, and approval callbacks
 - **Workspace Isolation** — Workspaces are owned by the authenticated user; workspace UI agent lists and new agents are scoped to the selected workspace
 - **Remote Bot Bridge** — Lark/Feishu, DingTalk, and WeChat entry points with signature-aware webhook handling, async dispatch, chat context binding, and response callbacks
@@ -263,6 +264,16 @@ MCP servers are configured per workspace. Cognix starts stdio MCP processes for 
 - `error` / `stderr`: startup or protocol diagnostics
 
 The API supports status refresh, restart, stop, delete, and permission-checked tool test calls. Server metadata can set `disabled_tools` to hide individual MCP tools from core Agent mounting. Workspace skills and MCP tools are adapted into core `Tool` instances through a shared runtime mount helper before REST, RPC, WebSocket, workspace chat, workflow, scheduled task, or remote bot execution.
+
+### Browser Automation Layers
+
+Browser automation is split into three layers:
+
+- Browser MCP Runtime is internal and executes `browser.goto`, `browser.observe`, `browser.click`, `browser.fill`, `browser.select`, `browser.wait`, `browser.download`, `browser.extract_table`, and `browser.screenshot` through Playwright, CDP, or browser-use.
+- `browser_automation` is a generic planning skill for compliance confirmation, login/session policy, collection strategy, artifact contracts, and recovery behavior. It does not execute browser actions.
+- Domain skills capture reusable SOPs. `life_partner_coupon_codes` defines the Life Partner/LinKe coupon export path, filters, field policy, export priority, and result schema.
+
+See `docs/architecture/browser-automation-layering.md` for the detailed contract.
 
 ### Distributed Scheduler
 

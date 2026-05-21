@@ -1,6 +1,6 @@
 name: browser_automation
 version: 0.1.0
-description: Plan compliant browser automation jobs, browser MCP usage, Playwright execution, extraction normalization, and artifact outputs.
+description: Define compliant browser automation jobs, approval gates, login/session policy, extraction strategy, artifact contracts, and recovery rules. This skill does not execute browser actions.
 author: cognix-team
 tags:
   - browser
@@ -51,6 +51,27 @@ tools:
           items:
             type: string
       required: [objective]
+  - name: browser_task_contract
+    description: Return the canonical contract that Planner must follow before routing work to the internal Browser MCP runtime.
+    access_level: read
+    parameters:
+      type: object
+      properties:
+        task_type:
+          type: string
+          description: Browser task category.
+          enum: [data_extraction, form_workflow, download_export, research_capture]
+          default: data_extraction
+        requires_login:
+          type: boolean
+          default: false
+        handles_sensitive_data:
+          type: boolean
+          default: false
+        output_format:
+          type: string
+          enum: [report, dataset, screenshot_bundle, exported_file]
+          default: dataset
   - name: browser_result_template
     description: Create an artifact schema for browser automation results.
     access_level: read
@@ -87,3 +108,20 @@ tools:
         source_url:
           type: string
       required: [observations]
+  - name: browser_error_recovery
+    description: Convert browser runtime failures into user-facing recovery guidance and retry strategy.
+    access_level: read
+    parameters:
+      type: object
+      properties:
+        error:
+          type: string
+        engine:
+          type: string
+          enum: [playwright, cdp, browser_use, unknown]
+          default: unknown
+        url:
+          type: string
+        operation:
+          type: string
+      required: [error]

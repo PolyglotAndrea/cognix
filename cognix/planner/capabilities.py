@@ -221,8 +221,8 @@ class CapabilityResolver:
             "kind": "browser_automation",
             "name": "Browser automation",
             "description": (
-                "Run authorized browser workflows through an isolated Playwright profile "
-                "or Browser MCP preset."
+                "Internal Browser MCP runtime for authorized browser workflows. "
+                "Planner should treat this as an execution backend, not a user-configured skill."
             ),
             "risk_level": "high",
             "requires_approval": policy.get("network_access", "ask") != "workspace-write",
@@ -233,6 +233,8 @@ class CapabilityResolver:
             "mcp_server_id": preset.id if preset else "",
             "engines": ["playwright", "cdp", "browser_use"],
             "mcp_preset_available": True,
+            "internal_runtime": True,
+            "actions": preset.metadata.get("actions", []) if preset else [],
             "default_engine": browser_settings.get(
                 "default_engine",
                 "playwright",

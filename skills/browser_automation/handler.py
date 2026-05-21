@@ -67,9 +67,26 @@ async def plan_browser_task(
                 "Avoid collecting sensitive personal data unless the workspace policy allows it.",
             ],
         },
+        "runtime_boundary": {
+            "skill_role": "planning_contract_only",
+            "executor": "internal_browser_mcp_runtime",
+            "supported_engines": ["playwright", "cdp", "browser_use"],
+            "canonical_actions": [
+                "browser.goto",
+                "browser.observe",
+                "browser.click",
+                "browser.fill",
+                "browser.select",
+                "browser.wait",
+                "browser.download",
+                "browser.extract_table",
+                "browser.screenshot",
+            ],
+        },
         "execution_plan": [
             first_step,
-            "Identify required MCP tools, Playwright backend, browser profile, and cookie sandbox.",
+            "Identify the matching domain skill/SOP before writing low-level browser steps.",
+            "Choose the runtime engine: playwright for deterministic pages, cdp for existing user sessions, browser_use for ambiguous multi-step navigation.",
             (
                 "Request human approval before login, file download, form submission, "
                 "or bulk extraction."
@@ -88,7 +105,18 @@ async def plan_browser_task(
         "constraints": known_constraints,
         "planner_hints": {
             "recommended_agent": "browser-operator",
-            "recommended_tools": ["browser_mcp", "playwright", "file_writer"],
+            "recommended_runtime": "browser_mcp",
+            "recommended_tools": [
+                "browser.goto",
+                "browser.observe",
+                "browser.click",
+                "browser.fill",
+                "browser.select",
+                "browser.wait",
+                "browser.download",
+                "browser.extract_table",
+                "browser.screenshot",
+            ],
             "runtime_endpoints": [
                 "POST /api/v1/workspaces/{workspace_id}/browser/mcp-preset",
                 "POST /api/v1/workspaces/{workspace_id}/browser/run",
@@ -97,6 +125,94 @@ async def plan_browser_task(
         },
     }
     return _json(plan)
+
+
+async def browser_task_contract(
+    task_type: str = "data_extraction",
+    requires_login: bool = False,
+    handles_sensitive_data: bool = False,
+    output_format: str = "dataset",
+) -> str:
+    """Return the canonical browser automation planning contract."""
+    normalized_type = (
+        task_type
+        if task_type in {"data_extraction", "form_workflow", "download_export", "research_capture"}
+        else "data_extraction"
+    )
+    normalized_format = (
+        output_format
+        if output_format in {"report", "dataset", "screenshot_bundle", "exported_file"}
+        else "dataset"
+    )
+    approval_reasons = ["network_access", "browser_automation"]
+    if requires_login:
+        approval_reasons.append("login_session_reuse")
+    if handles_sensitive_data:
+        approval_reasons.append("sensitive_data_handling")
+
+    return _json(
+        {
+            "capability": "browser_automation",
+            "task_type": normalized_type,
+            "runtime": {
+                "kind": "internal_browser_mcp_runtime",
+                "hidden_from_general_users": True,
+                "engines": ["playwright", "cdp", "browser_use"],
+                "actions": [
+                    "browser.goto",
+                    "browser.observe",
+                    "browser.click",
+                    "browser.fill",
+                    "browser.select",
+                    "browser.wait",
+                    "browser.download",
+                    "browser.extract_table",
+                    "browser.screenshot",
+                ],
+            },
+            "approval_policy": {
+                "required": True,
+                "reasons": approval_reasons,
+                "pause_on": [
+                    "login_required",
+                    "captcha",
+                    "sms_or_scan_verification",
+                    "permission_denied",
+                    "destructive_action",
+                    "unexpected_sensitive_data",
+                    "field_ambiguity",
+                ],
+            },
+            "login_strategy": {
+                "prefer_existing_session": True,
+                "do_not_collect_passwords": True,
+                "pause_for_user_login_or_2fa": True,
+                "cdp_for_existing_browser_session": requires_login,
+            },
+            "collection_strategy": {
+                "priority": ["official_api", "official_export", "browser_download", "table_extract"],
+                "rate_limit": "workspace_policy",
+                "source_attribution_required": True,
+            },
+            "artifact_contract": {
+                "format": normalized_format,
+                "must_include": [
+                    "title",
+                    "summary",
+                    "records_or_findings",
+                    "sources",
+                    "limitations",
+                    "task_id",
+                    "agent_id",
+                ],
+            },
+            "error_recovery": {
+                "retryable": ["timeout", "selector_not_found", "download_not_started"],
+                "requires_user": ["login_required", "captcha", "permission_denied"],
+                "requires_runtime_setup": ["playwright_missing", "cdp_endpoint_missing"],
+            },
+        }
+    )
 
 
 async def browser_result_template(
@@ -131,6 +247,54 @@ async def browser_result_template(
                 "requires_task_id": True,
                 "requires_agent_id": True,
             },
+        }
+    )
+
+
+async def browser_error_recovery(
+    error: str,
+    engine: str = "unknown",
+    url: str | None = None,
+    operation: str | None = None,
+) -> str:
+    """Return a structured recovery plan for browser runtime failures."""
+    text = error.lower()
+    if "playwright" in text and ("not installed" in text or "install" in text):
+        category = "runtime_setup"
+        next_steps = [
+            "Install browser optional dependencies.",
+            "Run playwright install chromium.",
+            "Retry with playwright, or provide a CDP endpoint for an existing Chrome session.",
+        ]
+    elif "cdp" in text and "endpoint" in text:
+        category = "runtime_setup"
+        next_steps = [
+            "Start Chrome with remote debugging enabled.",
+            "Configure browser.cdp_endpoint for the workspace.",
+            "Retry with engine=cdp.",
+        ]
+    elif any(token in text for token in ("login", "captcha", "验证码", "扫码", "permission")):
+        category = "human_required"
+        next_steps = [
+            "Pause the run and ask the user to complete login, verification, or permission setup.",
+            "Resume the same browser task after confirmation.",
+        ]
+    else:
+        category = "retryable_or_unknown"
+        next_steps = [
+            "Capture a screenshot and page observation.",
+            "Retry after waiting for page idle.",
+            "If repeated, ask the user for a corrected URL, selector, or export path.",
+        ]
+
+    return _json(
+        {
+            "category": category,
+            "engine": engine,
+            "url": url or "",
+            "operation": operation or "",
+            "error": error,
+            "next_steps": next_steps,
         }
     )
 

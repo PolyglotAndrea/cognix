@@ -73,7 +73,8 @@ Actions:
 - create_task: params = { name, agent_name, schedule_type, cron_or_interval, input }
 - install_skill: params = { skill_name }
 - configure_mcp: params = { name, command, args }
-- browser_run: params = { objective, url, engine, profile, wait_for_selector, extract_text, extract_links, extract_tables, screenshot }
+- browser_run: params = { objective, url, engine, profile,
+  wait_for_selector, extract_text, extract_links, extract_tables, screenshot }
 - create_code_project: params = { name, description, files, start_command, auto_start }
 - start_code_project: params = { project_id, project_name, command }
 
@@ -312,9 +313,7 @@ class PlannerService:
                 )
                 plan.step_statuses[step.id] = "failed"
                 failed_steps.append(step.id)
-                failed_step_errors[step.id] = (
-                    f"Dependency step(s) failed: {', '.join(failed_deps)}"
-                )
+                failed_step_errors[step.id] = f"Dependency step(s) failed: {', '.join(failed_deps)}"
                 self._save_plan(plan)
                 emit_orchestration_event(
                     OrchestrationEvent(
@@ -637,6 +636,9 @@ class PlannerService:
             raise ValueError("Planner approval is missing workspace, plan, or task metadata")
         if not answer:
             raise ValueError("A response is required to continue the planner task")
+        question_text = approval.reason or str(
+            approval.arguments.get("question") or approval.metadata.get("question") or ""
+        )
         answer_context = self._approval_context_for_task(store, approval, answer)
 
         plan = self._load_plan(workspace_id, plan_id)
@@ -656,7 +658,8 @@ class PlannerService:
             payload["message"] = (
                 f"{original_message}\n\n"
                 "The user has answered the required follow-up questions. "
-                "Use these details to continue the task without asking for the same information again.\n\n"
+                "Use these details to continue the task "
+                "without asking for the same information again.\n\n"
                 f"{answer_context}"
             ).strip()
             payload["approval_id"] = approval_id
@@ -670,6 +673,7 @@ class PlannerService:
                 user_id=user_id,
                 plan_id=plan_id,
                 task_id=task_id,
+                question=question_text,
             )
             if browser_payload:
                 payload.update(browser_payload)
@@ -818,6 +822,7 @@ class PlannerService:
         user_id: str | None,
         plan_id: str,
         task_id: str,
+        question: str = "",
     ) -> dict[str, Any] | None:
         """Upgrade legacy agent_call browser tasks to real browser_automation tasks."""
         if str(payload.get("task_type") or "agent_call") == "browser_automation":
@@ -855,6 +860,39 @@ class PlannerService:
         if not approved or not url:
             return None
 
+        # Resolve referenced browser approval
+        ref_approval_id = None
+        import re
+
+        from cognix.local.approvals import ApprovalStore
+
+        match = re.search(r"approval_id[：:]\s*`?([a-f0-9]{12})`?", question, re.IGNORECASE)
+        if not match:
+            match = re.search(
+                r"approval_id[：:]\s*`?([a-f0-9]{12})`?", answer_context, re.IGNORECASE
+            )
+        if match:
+            ref_approval_id = match.group(1)
+
+        store = ApprovalStore()
+        ref_approval = None
+        if ref_approval_id:
+            ref_approval = store.get(ref_approval_id)
+
+        if not ref_approval:
+            # Fallback search: look for a pending browser_automation approval
+            # matching url in this workspace
+            pending_approvals = store.list_all(workspace_id=workspace_id, status="pending")
+            for app in pending_approvals:
+                if app.tool_name == "browser_automation" and app.arguments.get("url") == url:
+                    ref_approval = app
+                    ref_approval_id = app.id
+                    break
+
+        if ref_approval:
+            if ref_approval.status == "pending":
+                store.approve(ref_approval_id)
+
         return {
             "task_type": "browser_automation",
             "task_id": task_id,
@@ -878,6 +916,7 @@ class PlannerService:
             "artifact_title": payload.get("artifact_title")
             or payload.get("name")
             or "Browser Automation Result",
+            "approval_id": ref_approval_id or "",
         }
 
     def reject_plan(self, workspace_id: str, plan_id: str) -> dict:
@@ -1218,25 +1257,20 @@ class PlannerService:
 
         # Generate a descriptive semantic name from the user intent
         import re
-        tokens = re.findall(r'[a-zA-Z0-9]+|[\u4e00-\u9fff]', user_intent)
+
+        tokens = re.findall(r"[a-zA-Z0-9]+|[\u4e00-\u9fff]", user_intent)
         semantic_prefix = ""
         if tokens:
             semantic_prefix = "-".join(tokens[:3]).lower()
             # Clean and sanitize the prefix
-            semantic_prefix = re.sub(r'[^a-z0-9\u4e00-\u9fff-]', '', semantic_prefix)
+            semantic_prefix = re.sub(r"[^a-z0-9\u4e00-\u9fff-]", "", semantic_prefix)
             semantic_prefix = semantic_prefix[:20].strip("-")
 
         base_role = (
-            "research"
-            if research
-            else "automation"
-            if scheduled or long_running
-            else "task"
+            "research" if research else "automation" if scheduled or long_running else "task"
         )
         agent_name = (
-            f"{semantic_prefix}-{base_role}-agent"
-            if semantic_prefix
-            else f"{base_role}-agent"
+            f"{semantic_prefix}-{base_role}-agent" if semantic_prefix else f"{base_role}-agent"
         )
         project_name = f"{semantic_prefix}-app" if semantic_prefix else "generated-app"
 
@@ -1442,7 +1476,11 @@ class PlannerService:
         browser_requested = self._is_browser_intent(user_intent)
         browser_url = self._extract_first_url(user_intent)
         actions = [str(step.get("action") or "") for step in normalized.get("steps", [])]
-        if browser_requested and "browser_run" not in actions and "create_code_project" not in actions:
+        if (
+            browser_requested
+            and "browser_run" not in actions
+            and "create_code_project" not in actions
+        ):
             if browser_url:
                 normalized["steps"] = self._default_plan(user_intent, context)["steps"]
                 normalized["summary"] = f"Run browser automation for: {user_intent[:100]}"
@@ -1541,7 +1579,8 @@ class PlannerService:
                         "input": (
                             "Before running browser automation, ask the user for the exact "
                             "target URL or select a URL source. Do not attempt browser "
-                            f"automation until a URL is available.\n\nOriginal request: {user_intent}"
+                            "automation until a URL is available.\n\n"
+                            f"Original request: {user_intent}"
                         ),
                     },
                     "depends_on": [],
@@ -1604,11 +1643,7 @@ class PlannerService:
     @staticmethod
     def _recommend_skills(user_intent: str, context: dict) -> list[dict[str, Any]]:
         text = user_intent.lower()
-        terms = {
-            part
-            for part in text.replace("/", " ").replace("-", " ").split()
-            if len(part) > 2
-        }
+        terms = {part for part in text.replace("/", " ").replace("-", " ").split() if len(part) > 2}
         if any(
             signal in text
             for signal in (
@@ -1625,6 +1660,11 @@ class PlannerService:
                 "爬取",
                 "抓取",
                 "券码",
+                "支付券码",
+                "林客",
+                "life partner",
+                "life-partner",
+                "linke",
             )
         ):
             terms.update(
@@ -1636,8 +1676,12 @@ class PlannerService:
                     "crawler",
                     "scrape",
                     "extraction",
+                    "coupon",
+                    "券码",
                 }
             )
+        if any(signal in text for signal in ("林客", "life partner", "life-partner", "linke")):
+            terms.update({"life", "partner", "life-partner", "linke", "林客", "coupon"})
         recommendations: list[dict[str, Any]] = []
         for skill in context.get("installed_skills", []):
             haystack = " ".join(
@@ -2142,5 +2186,7 @@ class PlannerService:
                 if engine:
                     schedule_task_in_engine(engine, task_id, schedule, payload_dict, name=task.name)
             except Exception:
-                logger.warning("Failed to register planned browser task in scheduler", exc_info=True)
+                logger.warning(
+                    "Failed to register planned browser task in scheduler", exc_info=True
+                )
         return task_id

@@ -1,0 +1,59 @@
+name: life_partner_coupon_codes
+version: 0.1.0
+description: Site-level SOP for authorized Life Partner/LinKe coupon code data export, including entry path, filters, field policy, date semantics, export priority, and artifact schema.
+author: cognix-team
+tags:
+  - life-partner
+  - linke
+  - lin-ke
+  - 林客
+  - 券码
+  - 支付券码
+  - coupon
+  - browser
+  - export
+  - domain-skill
+
+runtime:
+  python: ">=3.11"
+  entrypoint: handler.py
+
+tools:
+  - name: plan_coupon_code_export
+    description: Build the Life Partner/LinKe coupon-code export SOP for Planner. Does not execute browser actions.
+    access_level: read
+    parameters:
+      type: object
+      properties:
+        target_url:
+          type: string
+          description: Optional direct coupon data page URL.
+        date_range:
+          type: string
+          description: Business date range, such as 昨天, 今天, 最近7天, or explicit dates.
+          default: 昨天
+        date_field:
+          type: string
+          description: Date field used by the business filter.
+          default: 支付时间
+        field_policy:
+          type: string
+          description: Which fields should be exported.
+          default: 全部可见字段/全部自定义字段
+        login_mode:
+          type: string
+          description: Login/session mode, such as 当前浏览器已有登录态 or 需要人工登录.
+          default: 当前浏览器已有登录态
+        authorization_confirmed:
+          type: boolean
+          default: false
+      required: []
+  - name: coupon_code_artifact_schema
+    description: Return the expected output schema and field explanations for coupon-code artifacts.
+    access_level: read
+    parameters:
+      type: object
+      properties:
+        include_optional_fields:
+          type: boolean
+          default: true

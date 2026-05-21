@@ -105,31 +105,61 @@ class BrowserAutomationService:
     ) -> MCPServerConfig:
         """Create or update the workspace Browser MCP preset."""
         profile_path = self.profile_dir(profile)
-        tools = [
+        actions = self.runtime_actions()
+        mcp_tools = [
             {
                 "name": "browser_navigate",
                 "description": "Navigate an isolated browser page to a URL.",
                 "access_level": "write",
+                "canonical_action": "browser.goto",
             },
             {
                 "name": "browser_snapshot",
                 "description": "Read the current page accessibility snapshot.",
                 "access_level": "read",
+                "canonical_action": "browser.observe",
             },
             {
                 "name": "browser_click",
                 "description": "Click an element in the isolated browser page.",
                 "access_level": "write",
+                "canonical_action": "browser.click",
             },
             {
                 "name": "browser_type",
                 "description": "Type text into an element in the isolated browser page.",
                 "access_level": "write",
+                "canonical_action": "browser.fill",
+            },
+            {
+                "name": "browser_select",
+                "description": "Select an option in the isolated browser page.",
+                "access_level": "write",
+                "canonical_action": "browser.select",
+            },
+            {
+                "name": "browser_wait",
+                "description": "Wait for a selector, page state, or short delay.",
+                "access_level": "read",
+                "canonical_action": "browser.wait",
+            },
+            {
+                "name": "browser_download",
+                "description": "Download a file produced by the page into the workspace.",
+                "access_level": "write",
+                "canonical_action": "browser.download",
+            },
+            {
+                "name": "browser_extract_table",
+                "description": "Extract structured table data from the current page.",
+                "access_level": "read",
+                "canonical_action": "browser.extract_table",
             },
             {
                 "name": "browser_take_screenshot",
                 "description": "Capture a screenshot from the isolated browser page.",
                 "access_level": "read",
+                "canonical_action": "browser.screenshot",
             },
         ]
         return self.config.upsert_mcp_server(
@@ -150,10 +180,69 @@ class BrowserAutomationService:
                 "profile": profile_path.name,
                 "profile_path": str(profile_path),
                 "access_level": "write",
-                "tool_access": {tool["name"]: tool["access_level"] for tool in tools},
-                "tools": tools,
+                "internal": True,
+                "engines": ["playwright", "cdp", "browser_use"],
+                "tool_access": {tool["name"]: tool["access_level"] for tool in mcp_tools},
+                "action_access": {tool["name"]: tool["access_level"] for tool in actions},
+                "actions": actions,
+                "tools": mcp_tools,
             },
         )
+
+    @staticmethod
+    def runtime_actions() -> list[dict[str, str]]:
+        """Canonical browser runtime actions exposed to planner/skills.
+
+        These names are stable Cognix contracts. Individual engines may map them
+        to Playwright MCP tool names, CDP calls, or browser-use instructions.
+        """
+        return [
+            {
+                "name": "browser.goto",
+                "description": "Open a URL in the workspace browser profile.",
+                "access_level": "write",
+            },
+            {
+                "name": "browser.observe",
+                "description": "Read page state, text, accessibility snapshot, links, and tables.",
+                "access_level": "read",
+            },
+            {
+                "name": "browser.click",
+                "description": "Click a visible element by selector or observed label.",
+                "access_level": "write",
+            },
+            {
+                "name": "browser.fill",
+                "description": "Fill a text field or editable input.",
+                "access_level": "write",
+            },
+            {
+                "name": "browser.select",
+                "description": "Select an option from a dropdown or segmented control.",
+                "access_level": "write",
+            },
+            {
+                "name": "browser.wait",
+                "description": "Wait for navigation, selector, download, or page idle state.",
+                "access_level": "read",
+            },
+            {
+                "name": "browser.download",
+                "description": "Capture a user-authorized file download into workspace storage.",
+                "access_level": "write",
+            },
+            {
+                "name": "browser.extract_table",
+                "description": "Extract visible table rows and columns into structured records.",
+                "access_level": "read",
+            },
+            {
+                "name": "browser.screenshot",
+                "description": "Capture a screenshot for evidence or troubleshooting.",
+                "access_level": "read",
+            },
+        ]
 
     async def run(
         self,
@@ -342,7 +431,7 @@ class BrowserAutomationService:
             approval = ApprovalStore(self.home).get(request.approval_id)
             if (
                 approval
-                and approval.status == "approved"
+                and approval.status in ("approved", "completed")
                 and approval.workspace_id == self.workspace_id
                 and approval.tool_name == "browser_automation"
                 and approval.arguments.get("url") == request.url
@@ -351,6 +440,29 @@ class BrowserAutomationService:
             raise PermissionError("Browser automation approval is missing, rejected, or mismatched")
 
         if policy_result.requires_approval:
+            # Fallback: check if we have a recent approved/completed/rejected approval
+            # for this URL and workspace.
+            recent_approvals = ApprovalStore(self.home).list_all(
+                workspace_id=self.workspace_id, include_resolved=True
+            )
+            matching_approvals = [
+                a
+                for a in recent_approvals
+                if a.tool_name == "browser_automation" and a.arguments.get("url") == request.url
+            ]
+            if matching_approvals:
+                # list_all returns sorted newest first, so matching_approvals[0] is the most recent
+                most_recent = matching_approvals[0]
+                if most_recent.status in ("approved", "completed"):
+                    return None
+                elif most_recent.status == "rejected":
+                    raise PermissionError(
+                        f"Browser automation access to {request.url} "
+                        "was rejected in a previous step"
+                    )
+                elif most_recent.status == "pending":
+                    return most_recent
+
             return ApprovalStore(self.home).create(
                 agent_id=request.agent_id or "browser-automation",
                 workspace_id=self.workspace_id,
