@@ -1307,6 +1307,12 @@ class PlannerService:
 
         browser_url = self._extract_first_url(user_intent)
         if browser_task and not scheduled:
+            if not browser_url:
+                return self._browser_missing_url_plan(
+                    user_intent,
+                    recommended_skills,
+                    recommended_mcp_tools,
+                )
             return {
                 "summary": f"Run browser automation for: {user_intent[:100]}",
                 "intent_type": "integration",
@@ -1454,6 +1460,23 @@ class PlannerService:
             if step.get("action") == "browser_run":
                 params = step.setdefault("params", {})
                 params["url"] = params.get("url") or params.get("target_url") or browser_url
+                if not params["url"]:
+                    step["action"] = "create_task"
+                    step["description"] = "Ask for the target URL before browser automation"
+                    params.clear()
+                    params.update(
+                        {
+                            "name": "browser-automation-needs-url",
+                            "agent_name": "task-agent",
+                            "schedule_type": "once",
+                            "input": (
+                                "Before running browser automation, ask the user for the exact "
+                                "target URL or select a URL source. Do not attempt browser "
+                                "automation until a URL is available."
+                            ),
+                        }
+                    )
+                    continue
                 params["objective"] = params.get("objective") or params.get("input") or user_intent
                 params["engine"] = params.get("engine") or self._select_browser_engine(
                     user_intent,
@@ -1485,8 +1508,60 @@ class PlannerService:
     def _extract_first_url(text: str) -> str:
         import re
 
-        match = re.search(r"https?://[^\s`\"'<>]+", text)
-        return match.group(0) if match else ""
+        patterns = (
+            r"\[url\]\s+([^:\n]+):\s*(https?://[^\s`\"'<>]+)",
+            r"\[url\]\s+(https?://[^\s`\"'<>]+)",
+            r"https?://[^\s`\"'<>]+",
+        )
+        for pattern in patterns:
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if match:
+                return match.group(match.lastindex or 0).rstrip("。,.，)")
+        return ""
+
+    @staticmethod
+    def _browser_missing_url_plan(
+        user_intent: str,
+        recommended_skills: list[dict[str, Any]],
+        recommended_mcp_tools: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        return {
+            "summary": "Need target URL before browser automation can run.",
+            "intent_type": "integration",
+            "execution_mode": "once",
+            "steps": [
+                {
+                    "id": "step_1",
+                    "action": "create_task",
+                    "description": "Ask for the target URL before browser automation",
+                    "params": {
+                        "name": "browser-automation-needs-url",
+                        "agent_name": "task-agent",
+                        "schedule_type": "once",
+                        "input": (
+                            "Before running browser automation, ask the user for the exact "
+                            "target URL or select a URL source. Do not attempt browser "
+                            f"automation until a URL is available.\n\nOriginal request: {user_intent}"
+                        ),
+                    },
+                    "depends_on": [],
+                }
+            ],
+            "required_skills": [],
+            "required_connectors": [],
+            "sandbox_permissions": ["network_access", "browser_automation"],
+            "expected_artifacts": ["target URL confirmation"],
+            "recommended_agents": [],
+            "recommended_skills": recommended_skills,
+            "recommended_mcp_tools": recommended_mcp_tools,
+            "scheduling": {
+                "needed": False,
+                "kind": "once",
+                "expression": "",
+                "reason": "",
+            },
+            "estimated_cost": "low",
+        }
 
     @staticmethod
     def _is_browser_intent(text: str) -> bool:
