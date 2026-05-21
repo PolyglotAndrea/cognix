@@ -54,6 +54,7 @@ class BrowserAutomationRun:
     task_id: str = ""
     agent_id: str = ""
     plan_id: str = ""
+    chat_id: str = ""
 
 
 class BrowserAutomationService:
@@ -391,6 +392,7 @@ class BrowserAutomationService:
                 "task_id": request.task_id,
                 "agent_id": request.agent_id,
                 "plan_id": request.plan_id,
+                "chat_id": request.chat_id,
                 "user_id": user_id or "",
                 "is_error": is_error,
                 "status": "failure" if is_error else result.get("status", "completed"),
@@ -479,6 +481,7 @@ class BrowserAutomationService:
                 metadata={
                     "runtime": "browser_automation",
                     "plan_id": request.plan_id,
+                    "chat_id": request.chat_id,
                     "task_id": request.task_id,
                     "approval_type": "browser_automation",
                 },

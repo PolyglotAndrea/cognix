@@ -52,13 +52,15 @@ interface ArtifactPanelProps {
 
 export function ArtifactPanel({ workspaceId }: ArtifactPanelProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const { isAgentRunning } = useWorkspaceStore()
+  const { isAgentRunning, activeNotebookChatId } = useWorkspaceStore()
 
   const { data: artifacts = [], isLoading } = useQuery<Artifact[]>({
-    queryKey: ['artifacts', workspaceId],
+    queryKey: ['artifacts', workspaceId, activeNotebookChatId],
     queryFn: () =>
       api
-        .get(`/workspaces/${workspaceId}/artifacts`)
+        .get(`/workspaces/${workspaceId}/artifacts`, {
+          params: activeNotebookChatId ? { chat_id: activeNotebookChatId } : {},
+        })
         .then((r) => r.data),
     enabled: !!workspaceId,
     refetchInterval: isAgentRunning ? 3000 : false,

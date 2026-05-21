@@ -205,6 +205,7 @@ class TaskExecutor:
                 task_id=str(payload.get("task_id") or ""),
                 agent_id=str(payload.get("agent_id") or ""),
                 plan_id=str(payload.get("plan_id") or ""),
+                chat_id=str(payload.get("chat_id") or ""),
             ),
             user_id=payload.get("user_id"),
         )
@@ -493,6 +494,8 @@ class TaskExecutor:
                     "task_type": payload.get("task_type", "agent_call"),
                     "agent_id": agent_id or "",
                     "agent_name": agent_name,
+                    "plan_id": payload.get("plan_id", ""),
+                    "chat_id": payload.get("chat_id", ""),
                     "duration_ms": run.get("duration_ms", 0),
                 },
             )

@@ -183,12 +183,15 @@ class PlannerService:
         workspace_id: str,
         user_intent: str,
         user_id: str,
+        chat_id: str | None = None,
     ) -> WorkspacePlan:
         """Analyze user intent and produce a structured plan."""
         self._cleanup_old_plans()
 
         # Load workspace context
         context = await self._build_workspace_context(workspace_id, user_id)
+        if chat_id:
+            context["chat_id"] = chat_id
 
         # Call LLM to generate plan
         plan_json = await self._generate_plan_json(user_intent, context, workspace_id)
@@ -204,7 +207,7 @@ class PlannerService:
                 status="received",
                 run_id=plan_id,
                 plan_id=plan_id,
-                data={"intent": user_intent, "user_id": user_id},
+                data={"intent": user_intent, "user_id": user_id, "chat_id": chat_id or ""},
             )
         )
 
@@ -277,6 +280,7 @@ class PlannerService:
         }
 
         ws_config = WorkspaceConfigStore(workspace_id, home=self.home)
+        chat_id = str(plan.capability_snapshot.get("session", {}).get("chat_id") or "")
         task_steps: list[tuple[str, dict, str]] = []
         agent_name_to_id: dict[str, str] = {}
         code_project_name_to_id: dict[str, str] = {}
@@ -375,6 +379,8 @@ class PlannerService:
                 elif step.action == "create_task":
                     step.params["_plan_id"] = plan_id
                     step.params["_step_id"] = step.id
+                    if chat_id:
+                        step.params["_chat_id"] = chat_id
                     task_id = await self._apply_create_task(
                         workspace_id,
                         step.params,
@@ -400,6 +406,8 @@ class PlannerService:
                 elif step.action == "browser_run":
                     step.params["_plan_id"] = plan_id
                     step.params["_step_id"] = step.id
+                    if chat_id:
+                        step.params["_chat_id"] = chat_id
                     task_id = await self._apply_browser_run(
                         workspace_id,
                         step.params,
@@ -1037,6 +1045,9 @@ class PlannerService:
     def _compact_capability_snapshot(context: dict) -> dict:
         """Persist a small explanation snapshot without storing secrets or large tool schemas."""
         return {
+            "session": {
+                "chat_id": context.get("chat_id", ""),
+            },
             "provider": context.get("provider", {}),
             "enabled_skills": context.get("enabled_skills", []),
             "installed_skill_count": len(context.get("installed_skills", [])),
@@ -1904,6 +1915,7 @@ class PlannerService:
                     "plan_id": plan_id,
                     "task_id": task_id,
                     "artifact_id": artifact_id or "",
+                    "chat_id": params.get("_chat_id", ""),
                     "agent_name": params.get("agent_name", ""),
                     "resume_hint": "Provide the missing details, then rerun or continue the plan.",
                 },
@@ -1924,6 +1936,7 @@ class PlannerService:
             metadata={
                 **dict(params.get("metadata") or {}),
                 "source": "planner",
+                "chat_id": params.get("_chat_id", ""),
             },
         )
         if params.get("auto_start", True):
@@ -2080,6 +2093,7 @@ class PlannerService:
                 "user_id": user_id or "",
                 "plan_id": params.get("_plan_id", ""),
                 "step_id": params.get("_step_id", ""),
+                "chat_id": params.get("_chat_id", ""),
             }
         )
         next_run = None
@@ -2152,6 +2166,7 @@ class PlannerService:
             "user_id": user_id or "",
             "plan_id": params.get("_plan_id", ""),
             "step_id": params.get("_step_id", ""),
+            "chat_id": params.get("_chat_id", ""),
             "artifact_title": params.get("artifact_title")
             or params.get("name")
             or params.get("objective")

@@ -85,6 +85,7 @@ async def list_artifacts(
     workspace_id: str,
     artifact_type: str | None = None,
     task_id: str | None = None,
+    chat_id: str | None = None,
     status: str | None = None,
     source: str | None = None,
     context_type: str | None = None,
@@ -107,6 +108,12 @@ async def list_artifacts(
         stmt = stmt.order_by(ArtifactModel.created_at.desc()).limit(limit)
         result = await session.execute(stmt)
         rows = result.scalars().all()
+    if chat_id:
+        rows = [
+            row
+            for row in rows
+            if str((row.metadata_json or {}).get("chat_id") or "") == chat_id
+        ]
     return [_artifact_to_dict(row) for row in rows]
 
 

@@ -22,6 +22,7 @@ router = APIRouter(prefix="/api/v1/workspaces", tags=["planner"])
 
 class CreatePlanRequest(BaseModel):
     intent: str
+    chat_id: str | None = None
 
 
 class PlanActionRequest(BaseModel):
@@ -47,7 +48,7 @@ async def create_plan(
         raise HTTPException(404, "Workspace not found")
 
     service = PlannerService()
-    plan = await service.create_plan(workspace_id, body.intent, user.id)
+    plan = await service.create_plan(workspace_id, body.intent, user.id, chat_id=body.chat_id)
     return plan.to_dict()
 
 
@@ -166,45 +167,53 @@ async def apply_plan_stream(
             if event.type == "agent.created" and event.agent_id:
                 active_agent_ids.add(event.agent_id)
 
-            queue.put_nowait({
-                "type": event.type,
-                "stage": event.stage,
-                "status": event.status,
-                "agent_id": event.agent_id,
-                "task_id": event.task_id,
-                "step_id": event.step_id,
-                "artifact_id": event.artifact_id,
-                "data": event.data,
-                "timestamp": event.timestamp,
-            })
+            queue.put_nowait(
+                {
+                    "type": event.type,
+                    "stage": event.stage,
+                    "status": event.status,
+                    "agent_id": event.agent_id,
+                    "task_id": event.task_id,
+                    "step_id": event.step_id,
+                    "artifact_id": event.artifact_id,
+                    "data": event.data,
+                    "timestamp": event.timestamp,
+                }
+            )
 
     async def handle_event_bus(event: str, **kwargs):
         agent_id = kwargs.get("agent_id")
         if agent_id and agent_id in active_agent_ids:
             if event == Events.TOOL_CALLED:
-                queue.put_nowait({
-                    "type": "tool_call",
-                    "status": "running",
-                    "agent_id": agent_id,
-                    "tool": kwargs.get("tool"),
-                    "arguments": kwargs.get("arguments"),
-                })
+                queue.put_nowait(
+                    {
+                        "type": "tool_call",
+                        "status": "running",
+                        "agent_id": agent_id,
+                        "tool": kwargs.get("tool"),
+                        "arguments": kwargs.get("arguments"),
+                    }
+                )
             elif event == Events.TOOL_RESULT:
-                queue.put_nowait({
-                    "type": "tool_result",
-                    "status": "completed",
-                    "agent_id": agent_id,
-                    "tool": kwargs.get("tool"),
-                    "result": kwargs.get("result"),
-                })
+                queue.put_nowait(
+                    {
+                        "type": "tool_result",
+                        "status": "completed",
+                        "agent_id": agent_id,
+                        "tool": kwargs.get("tool"),
+                        "result": kwargs.get("result"),
+                    }
+                )
             elif event == Events.TOOL_ERROR:
-                queue.put_nowait({
-                    "type": "tool_error",
-                    "status": "failed",
-                    "agent_id": agent_id,
-                    "tool": kwargs.get("tool"),
-                    "error": kwargs.get("error"),
-                })
+                queue.put_nowait(
+                    {
+                        "type": "tool_error",
+                        "status": "failed",
+                        "agent_id": agent_id,
+                        "tool": kwargs.get("tool"),
+                        "error": kwargs.get("error"),
+                    }
+                )
 
     register_orchestration_listener(handle_orchestration_event)
     event_bus.on(Events.TOOL_CALLED, handle_event_bus)
@@ -214,17 +223,21 @@ async def apply_plan_stream(
     async def run_apply():
         try:
             result = await service.apply_plan(workspace_id, plan_id, user.id)
-            queue.put_nowait({
-                "type": "execution.completed",
-                "status": "completed",
-                "result": result,
-            })
+            queue.put_nowait(
+                {
+                    "type": "execution.completed",
+                    "status": "completed",
+                    "result": result,
+                }
+            )
         except Exception as exc:
-            queue.put_nowait({
-                "type": "execution.failed",
-                "status": "failed",
-                "error": str(exc),
-            })
+            queue.put_nowait(
+                {
+                    "type": "execution.failed",
+                    "status": "failed",
+                    "error": str(exc),
+                }
+            )
 
     apply_task = asyncio.create_task(run_apply())
 

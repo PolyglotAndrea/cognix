@@ -31,20 +31,25 @@ class ApprovalSuggestion(BaseModel):
 @router.get("")
 async def list_approvals(
     workspace_id: str | None = None,
+    chat_id: str | None = None,
     status: ApprovalStatus | None = None,
     include_resolved: bool = False,
     user: CurrentUser = Depends(get_current_user),
 ) -> list[dict]:
     store = ApprovalStore()
     store.complete_capability_blocked_questions(workspace_id=workspace_id)
-    return [
-        approval.__dict__
-        for approval in store.list_all(
-            workspace_id=workspace_id,
-            status=status,
-            include_resolved=include_resolved,
-        )
-    ]
+    approvals = store.list_all(
+        workspace_id=workspace_id,
+        status=status,
+        include_resolved=include_resolved,
+    )
+    if chat_id:
+        approvals = [
+            approval
+            for approval in approvals
+            if str(approval.metadata.get("chat_id") or "") == chat_id
+        ]
+    return [approval.__dict__ for approval in approvals]
 
 
 @router.get("/{approval_id}/suggestions")

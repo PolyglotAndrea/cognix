@@ -106,6 +106,7 @@ export function SimpleMode({
     queryFn: () => api.get(`/workspaces/${workspaceId}/chats`).then((r) => r.data),
     enabled: !!workspaceId,
   })
+  const activeChat = chats.find((chat) => chat.id === activeChatId) || null
 
   const { data: storedMessages } = useQuery<StoredMessage[]>({
     queryKey: ['workspace-chat-messages', workspaceId, activeChatId],
@@ -115,12 +116,18 @@ export function SimpleMode({
   })
 
   const { data: approvals = [] } = useQuery<ApprovalRequest[]>({
-    queryKey: ['approvals', workspaceId],
+    queryKey: ['approvals', workspaceId, activeChatId],
     queryFn: () =>
       api
-        .get('/approvals', { params: { workspace_id: workspaceId, include_resolved: true } })
+        .get('/approvals', {
+          params: {
+            workspace_id: workspaceId,
+            chat_id: activeChatId,
+            include_resolved: true,
+          },
+        })
         .then((r) => r.data),
-    enabled: !!workspaceId,
+    enabled: !!workspaceId && !!activeChatId,
     refetchInterval: 5000,
   })
   const pendingQuestions = approvals.filter(
@@ -161,9 +168,9 @@ export function SimpleMode({
       return api.post(endpoint, { response }).then((r) => r.data)
     },
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['approvals', workspaceId] })
+      queryClient.invalidateQueries({ queryKey: ['approvals', workspaceId, activeChatId] })
       queryClient.invalidateQueries({ queryKey: ['workspace-events', workspaceId] })
-      queryClient.invalidateQueries({ queryKey: ['artifacts', workspaceId] })
+      queryClient.invalidateQueries({ queryKey: ['artifacts', workspaceId, activeChatId] })
       queryClient.invalidateQueries({ queryKey: ['workspace-chats', workspaceId] })
 
       if (data?.plan_id) {
@@ -271,10 +278,10 @@ export function SimpleMode({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  const createChat = async () => {
+  const createChat = async (title?: string) => {
     const created = await api
       .post(`/workspaces/${workspaceId}/chats`, {
-        title: 'Planner Orchestrator Session',
+        title: title ? sessionTitleFromIntent(title) : 'New Chat',
         metadata: { mode: 'simple' },
       })
       .then((r) => r.data as ChatSession)
@@ -282,6 +289,20 @@ export function SimpleMode({
     setMessages([])
     await queryClient.invalidateQueries({ queryKey: ['workspace-chats', workspaceId] })
     return created.id
+  }
+
+  const maybeRenameCurrentChat = async (chatId: string, firstMessage: string) => {
+    const currentTitle = String(activeChat?.title || '')
+    const isGeneric =
+      !currentTitle ||
+      ['New Chat', 'Planner Orchestrator Session'].includes(currentTitle) ||
+      /^Conversation\s+\d+$/i.test(currentTitle)
+    if (!isGeneric || (storedMessages && storedMessages.length > 0)) return
+    await api.patch(`/workspaces/${workspaceId}/chats/${chatId}`, {
+      title: sessionTitleFromIntent(firstMessage),
+      metadata: { mode: 'simple' },
+    })
+    await queryClient.invalidateQueries({ queryKey: ['workspace-chats', workspaceId] })
   }
 
   useEffect(() => {
@@ -311,7 +332,7 @@ export function SimpleMode({
 
     let chatId = activeChatId
     try {
-      chatId = chatId || (await createChat())
+      chatId = chatId || (await createChat(userMsg))
     } catch {
       setMessages((prev) => [...prev, { role: 'assistant', content: 'Failed to initialize chat session.' }])
       return
@@ -319,6 +340,7 @@ export function SimpleMode({
 
     // Persist user intent message
     try {
+      await maybeRenameCurrentChat(chatId, userMsg)
       await api.post(`/workspaces/${workspaceId}/chats/${chatId}/messages/raw`, {
         role: 'user',
         content: userMsg,
@@ -337,7 +359,10 @@ export function SimpleMode({
     setMessages((prev) => [...prev, { role: 'assistant', content: 'Analyzing your intent and generating execution plan...' }])
 
     try {
-      const planRes = await api.post(`/workspaces/${workspaceId}/plans`, { intent: plannerIntent })
+      const planRes = await api.post(`/workspaces/${workspaceId}/plans`, {
+        intent: plannerIntent,
+        chat_id: chatId,
+      })
       const plan = planRes.data as WorkspacePlan
 
       // Save plan message persistently
@@ -588,9 +613,9 @@ export function SimpleMode({
           return msg
         })
       )
-      queryClient.invalidateQueries({ queryKey: ['artifacts', workspaceId] })
+      queryClient.invalidateQueries({ queryKey: ['artifacts', workspaceId, activeChatId] })
       queryClient.invalidateQueries({ queryKey: ['code-projects', workspaceId] })
-      queryClient.invalidateQueries({ queryKey: ['approvals', workspaceId] })
+      queryClient.invalidateQueries({ queryKey: ['approvals', workspaceId, activeChatId] })
       if (needsInput) {
         const workspaceStore = useWorkspaceStore.getState()
         workspaceStore.setRightPanelTab('approvals')
@@ -1663,6 +1688,12 @@ type BrowserApprovalFormProps = {
   browserAccessApproved: boolean
   exportFormat: string
   notes: string
+}
+
+function sessionTitleFromIntent(intent: string) {
+  const compact = intent.replace(/\s+/g, ' ').trim()
+  if (!compact) return 'New Chat'
+  return compact.length > 36 ? `${compact.slice(0, 36)}...` : compact
 }
 
 function FieldShell({
