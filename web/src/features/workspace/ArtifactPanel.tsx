@@ -1,11 +1,12 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   FileText,
   NotebookTabs,
   Database,
   CheckCircle2,
   Loader2,
+  Trash2,
 } from 'lucide-react'
 import { api } from '@/shared/api/client'
 import { cn } from '@/shared/lib/cn'
@@ -52,6 +53,7 @@ interface ArtifactPanelProps {
 
 export function ArtifactPanel({ workspaceId }: ArtifactPanelProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const queryClient = useQueryClient()
   const { isAgentRunning, activeNotebookChatId } = useWorkspaceStore()
 
   const { data: artifacts = [], isLoading } = useQuery<Artifact[]>({
@@ -65,6 +67,24 @@ export function ArtifactPanel({ workspaceId }: ArtifactPanelProps) {
     enabled: !!workspaceId,
     refetchInterval: isAgentRunning ? 3000 : false,
   })
+
+  const deleteArtifactMutation = useMutation({
+    mutationFn: (artifactId: string) =>
+      api.delete(`/workspaces/${workspaceId}/artifacts/${artifactId}`).then((r) => r.data),
+    onSuccess: (_, artifactId) => {
+      if (selectedId === artifactId) setSelectedId(null)
+      queryClient.invalidateQueries({
+        queryKey: ['artifacts', workspaceId, activeNotebookChatId],
+      })
+    },
+  })
+
+  const handleDeleteArtifact = (artifact: Artifact) => {
+    if (deleteArtifactMutation.isPending) return
+    const ok = window.confirm(`Delete output "${artifact.title}"?`)
+    if (!ok) return
+    deleteArtifactMutation.mutate(artifact.id)
+  }
 
   return (
     <div className="flex flex-col h-full bg-transparent">
@@ -118,11 +138,10 @@ export function ArtifactPanel({ workspaceId }: ArtifactPanelProps) {
               const TypeIcon = TYPE_ICONS[artifact.artifact_type] ?? FileText
 
               return (
-                <button
+                <div
                   key={artifact.id}
-                  onClick={() => setSelectedId(artifact.id)}
                   className={cn(
-                    "w-full text-left p-3.5 rounded-2xl border transition-all duration-200 flex items-start gap-3.5 group relative overflow-hidden",
+                    "w-full rounded-2xl border transition-all duration-200 flex items-start gap-2 group relative overflow-hidden",
                     selected
                       ? "bg-primary/5 border-primary/30 shadow-md shadow-primary/5 ring-1 ring-primary/20"
                       : "bg-card/40 border-border/60 hover:bg-card/90 hover:border-border/100 hover:shadow-sm"
@@ -134,36 +153,54 @@ export function ArtifactPanel({ workspaceId }: ArtifactPanelProps) {
                     selected ? "bg-primary" : "bg-transparent group-hover:bg-muted-foreground/20"
                   )} />
 
-                  {/* Icon */}
-                  <div className={cn(
-                    "w-8 h-8 rounded-xl flex items-center justify-center shrink-0 border transition-colors",
-                    selected
-                      ? "bg-primary/10 border-primary/20 text-primary"
-                      : "bg-muted/40 border-border/50 text-muted-foreground/70 group-hover:text-primary group-hover:bg-primary/5 group-hover:border-primary/10"
-                  )}>
-                    <TypeIcon className="h-4 w-4" />
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedId(artifact.id)}
+                    className="flex min-w-0 flex-1 items-start gap-3.5 p-3.5 text-left"
+                  >
+                    {/* Icon */}
+                    <div className={cn(
+                      "w-8 h-8 rounded-xl flex items-center justify-center shrink-0 border transition-colors",
+                      selected
+                        ? "bg-primary/10 border-primary/20 text-primary"
+                        : "bg-muted/40 border-border/50 text-muted-foreground/70 group-hover:text-primary group-hover:bg-primary/5 group-hover:border-primary/10"
+                    )}>
+                      <TypeIcon className="h-4 w-4" />
+                    </div>
 
-                  {/* Meta */}
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-start justify-between gap-2">
-                      <h4 className={cn(
-                        "text-xs font-black leading-tight tracking-tight truncate transition-colors",
-                        selected ? "text-primary" : "text-foreground group-hover:text-primary"
-                      )}>
-                        {artifact.title}
-                      </h4>
-                      <span className="shrink-0 text-[8px] font-black uppercase tracking-widest text-muted-foreground bg-muted/60 px-1.5 py-0.5 rounded border border-border/40">
-                        v{artifact.version}
-                      </span>
+                    {/* Meta */}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-start justify-between gap-2">
+                        <h4 className={cn(
+                          "text-xs font-black leading-tight tracking-tight truncate transition-colors",
+                          selected ? "text-primary" : "text-foreground group-hover:text-primary"
+                        )}>
+                          {artifact.title}
+                        </h4>
+                        <span className="shrink-0 text-[8px] font-black uppercase tracking-widest text-muted-foreground bg-muted/60 px-1.5 py-0.5 rounded border border-border/40">
+                          v{artifact.version}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1.5 text-[9px] font-bold text-muted-foreground/60 mt-1">
+                        <span>{SOURCE_LABELS[artifact.source] ?? artifact.source}</span>
+                        <span>•</span>
+                        <span>{new Date(artifact.updated_at).toLocaleDateString()}</span>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-1.5 text-[9px] font-bold text-muted-foreground/60 mt-1">
-                      <span>{SOURCE_LABELS[artifact.source] ?? artifact.source}</span>
-                      <span>•</span>
-                      <span>{new Date(artifact.updated_at).toLocaleDateString()}</span>
-                    </div>
-                  </div>
-                </button>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteArtifact(artifact)}
+                    disabled={deleteArtifactMutation.isPending}
+                    className={cn(
+                      "mr-3 mt-3 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-transparent text-muted-foreground opacity-0 transition-all hover:border-destructive/20 hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100 focus:opacity-100",
+                      deleteArtifactMutation.isPending && "opacity-50"
+                    )}>
+                    <Trash2 className="h-3.5 w-3.5" />
+                    <span className="sr-only">Delete output</span>
+                  </button>
+                </div>
               )
             })}
           </div>
