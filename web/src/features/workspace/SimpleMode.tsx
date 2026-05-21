@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  CircleHelp,
   MessageSquarePlus,
   Settings,
   Send,
@@ -63,6 +64,16 @@ interface UIMessage {
   applyResult?: ApplyResult
 }
 
+interface ApprovalRequest {
+  id: string
+  kind: string
+  status: string
+  reason: string
+  tool_name: string
+  response?: string
+  metadata?: Record<string, unknown>
+}
+
 export function SimpleMode({
   workspaceId,
   onSwitchToAdvanced,
@@ -88,6 +99,28 @@ export function SimpleMode({
     queryFn: () =>
       api.get(`/workspaces/${workspaceId}/chats/${activeChatId}/messages`).then((r) => r.data),
     enabled: !!workspaceId && !!activeChatId && !streaming,
+  })
+
+  const { data: approvals = [] } = useQuery<ApprovalRequest[]>({
+    queryKey: ['approvals', workspaceId],
+    queryFn: () =>
+      api
+        .get('/approvals', { params: { workspace_id: workspaceId, include_resolved: true } })
+        .then((r) => r.data),
+    enabled: !!workspaceId,
+    refetchInterval: 5000,
+  })
+  const pendingQuestions = approvals.filter(
+    (approval) => approval.status === 'pending' && approval.kind === 'question',
+  )
+
+  const respondApprovalMutation = useMutation({
+    mutationFn: ({ approvalId, response }: { approvalId: string; response: string }) =>
+      api.post(`/approvals/${approvalId}/respond`, { response }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['approvals', workspaceId] })
+      queryClient.invalidateQueries({ queryKey: ['workspace-events', workspaceId] })
+    },
   })
 
   const switchModeMutation = useMutation({
@@ -546,7 +579,7 @@ export function SimpleMode({
       <div className="border-b border-border/60 bg-card/30 px-6 py-2.5 shrink-0">
         <div className="mx-auto flex w-full max-w-3xl items-center gap-3 overflow-x-auto scrollbar-hide">
           <span className="shrink-0 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-            Sessions
+            Chat History
           </span>
           {chats
             .filter((chat) => chat.metadata?.mode === 'simple')
@@ -565,12 +598,12 @@ export function SimpleMode({
                 }`}
                 title={chat.title}
               >
-                {chat.title}
+                {chat.title || 'Untitled chat'}
               </button>
             ))}
           {chats.filter((chat) => chat.metadata?.mode === 'simple').length === 0 && (
             <span className="shrink-0 rounded-xl border border-dashed border-border px-3.5 py-1.5 text-xs font-bold text-muted-foreground/60">
-              {chatsLoading ? 'Loading sessions...' : 'No orchestrator sessions'}
+              {chatsLoading ? 'Loading history...' : 'No chat history'}
             </span>
           )}
           <button
@@ -579,7 +612,7 @@ export function SimpleMode({
             className="ml-auto flex h-8 shrink-0 items-center gap-1.5 rounded-xl border border-border bg-background px-3 text-xs font-bold text-muted-foreground transition-colors hover:text-foreground hover:bg-card"
           >
             <MessageSquarePlus className="h-4 w-4" />
-            New Session
+            New Chat
           </button>
         </div>
       </div>
@@ -861,6 +894,16 @@ export function SimpleMode({
 
           return null
         })}
+        {pendingQuestions.map((approval) => (
+          <InlineApprovalQuestion
+            key={approval.id}
+            approval={approval}
+            busy={respondApprovalMutation.isPending}
+            onSubmit={(response) =>
+              respondApprovalMutation.mutate({ approvalId: approval.id, response })
+            }
+          />
+        ))}
         <div ref={messagesEndRef} />
       </div>
 
@@ -885,6 +928,65 @@ export function SimpleMode({
             ) : (
               <Send className="h-4.5 w-4.5 fill-current" />
             )}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function InlineApprovalQuestion({
+  approval,
+  busy,
+  onSubmit,
+}: {
+  approval: ApprovalRequest
+  busy: boolean
+  onSubmit: (response: string) => void
+}) {
+  const [response, setResponse] = useState('')
+  const question = approval.reason || String(approval.metadata?.question || '')
+
+  return (
+    <div className="flex justify-start w-full">
+      <div className="w-full max-w-2xl rounded-2xl border border-amber-500/25 bg-amber-500/[0.04] p-4 shadow-sm">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-amber-500/10 text-amber-600">
+              <CircleHelp className="h-4 w-4" />
+            </div>
+            <div>
+              <div className="text-sm font-black text-foreground">Cognix needs more information</div>
+              <div className="text-[10px] font-bold uppercase tracking-widest text-amber-700/70">
+                Continue this task in chat
+              </div>
+            </div>
+          </div>
+          <span className="rounded-full border border-amber-500/20 bg-amber-500/10 px-2 py-1 text-[9px] font-black uppercase tracking-widest text-amber-700">
+            Pending
+          </span>
+        </div>
+
+        <div className="rounded-xl border border-border bg-background/80 p-3 text-xs leading-6 text-foreground/75">
+          <RichMessage content={question} compact />
+        </div>
+
+        <div className="mt-3 flex items-end gap-2">
+          <textarea
+            value={response}
+            onChange={(event) => setResponse(event.target.value)}
+            placeholder="Reply with the missing details, authorization, login status, scope, or fields to extract..."
+            className="min-h-24 flex-1 resize-none rounded-xl border border-border bg-background px-3 py-2 text-xs leading-5 text-foreground outline-none focus:border-amber-500/40 focus:ring-2 focus:ring-amber-500/15"
+          />
+          <button
+            type="button"
+            onClick={() => {
+              if (response.trim()) onSubmit(response.trim())
+            }}
+            disabled={busy || !response.trim()}
+            className="h-10 shrink-0 rounded-xl bg-foreground px-4 text-xs font-black text-background transition-opacity hover:opacity-90 disabled:opacity-40"
+          >
+            Send
           </button>
         </div>
       </div>

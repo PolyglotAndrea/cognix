@@ -78,22 +78,22 @@ export function StudioPanel({
       <div className="flex-1 overflow-y-auto scrollbar-hide">
         <div className="space-y-4 p-4">
           {pendingApprovals.length > 0 && (
-            <section className="rounded-2xl border border-amber-500/25 bg-amber-500/8 p-3">
-              <div className="mb-2 flex items-center gap-2">
+            <section className="rounded-2xl border border-amber-500/20 bg-amber-500/[0.06] p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-2">
                 <MessageSquareWarning className="h-4 w-4 text-amber-600" />
-                <span className="text-xs font-black text-amber-700">Needs Input</span>
-              </div>
-              <div className="space-y-2">
-                {pendingApprovals.slice(0, 3).map((approval) => (
-                  <div key={approval.id} className="rounded-xl border border-amber-500/15 bg-background/75 p-2.5">
-                    <div className="truncate text-xs font-semibold text-foreground">
-                      {approval.tool_name || approval.kind}
+                  <div className="min-w-0">
+                    <div className="truncate text-xs font-black text-amber-700">
+                      Needs input ({pendingApprovals.length})
                     </div>
-                    <p className="mt-1 line-clamp-2 text-[10px] leading-relaxed text-muted-foreground">
-                      {approval.reason}
+                    <p className="truncate text-[10px] text-muted-foreground">
+                      Continue in the chat flow.
                     </p>
                   </div>
-                ))}
+                </div>
+                <span className="shrink-0 rounded-full border border-amber-500/20 bg-background px-2 py-1 text-[9px] font-black uppercase tracking-widest text-amber-700">
+                  Pending
+                </span>
               </div>
             </section>
           )}
