@@ -765,7 +765,7 @@ export function SimpleMode({
       )}
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-6 py-8 space-y-6 max-w-3xl mx-auto w-full scrollbar-thin">
+      <div className="flex-1 overflow-y-auto px-4 py-6 sm:px-6 sm:py-8 space-y-6 max-w-4xl mx-auto w-full scrollbar-thin">
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-[70%] text-center max-w-md mx-auto">
             <div className="w-16 h-16 rounded-3xl bg-primary/10 flex items-center justify-center mb-5 animate-pulse">
@@ -813,20 +813,29 @@ export function SimpleMode({
             const plan = msg.plan
             const requestInputStep = plan.steps.find((step) => step.action === 'request_input')
             const requestInputValue = planInputValues[plan.id] || ''
-            const expectedOutputs = plan.expected_artifacts || []
+            const expectedOutputs = (plan.expected_artifacts || []).filter(
+              (output) => !requestInputStep || !String(output).toLowerCase().includes('confirmation'),
+            )
             const visibleSteps = plan.steps.filter((step) => step.action !== 'request_input')
+            const summary = cleanPlanText(plan.summary)
+            const inputQuestion = cleanPlanText(
+              String(requestInputStep?.params?.question || requestInputStep?.description || '请补充继续执行所需的信息。'),
+            )
+            const inputReason = cleanPlanText(
+              String(requestInputStep?.params?.reason || ''),
+            )
             return (
               <div key={i} className="flex justify-start w-full">
-                <div className="w-full max-w-2xl bg-card border border-border/80 backdrop-blur-md rounded-2xl p-5 shadow-lg space-y-4 hover:border-primary/20 transition-all duration-300">
+                <div className="w-full max-w-3xl bg-card border border-border/80 backdrop-blur-md rounded-2xl p-5 shadow-lg space-y-4 hover:border-primary/20 transition-all duration-300">
                   <div className="flex items-start justify-between border-b border-border/60 pb-3">
                     <div>
                       <h4 className="text-sm font-black tracking-tight text-foreground">
-                        {requestInputStep ? 'Need one detail before running' : 'Recommended Approach'}
+                        {requestInputStep ? '需要补充信息' : '建议方案'}
                       </h4>
                       <p className="text-[10px] text-muted-foreground mt-0.5">
                         {requestInputStep
-                          ? 'Cognix needs this information to continue safely.'
-                          : 'Review what Cognix recommends before execution.'}
+                          ? '补齐后我会继续执行，不需要去右侧审批面板操作。'
+                          : '请确认 Cognix 的执行思路。'}
                       </p>
                     </div>
                     <span className="text-[10px] font-black uppercase tracking-wider bg-primary/10 text-primary px-2.5 py-1 rounded-full border border-primary/20">
@@ -834,27 +843,32 @@ export function SimpleMode({
                     </span>
                   </div>
 
-                  <div className="rounded-xl border border-border/60 bg-background/60 p-3.5">
-                    <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-1.5">
-                      Cognix suggests
+                  {!requestInputStep && (
+                    <div className="rounded-xl border border-border/60 bg-background/60 p-3.5">
+                      <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-1.5">
+                        AI 判断
+                      </div>
+                      <p className="text-sm text-foreground/95 leading-relaxed font-semibold">{summary}</p>
                     </div>
-                    <p className="text-sm text-foreground/95 leading-relaxed font-semibold">{plan.summary}</p>
-                  </div>
+                  )}
 
                   {requestInputStep && (
-                    <div className="rounded-xl border border-amber-300/40 bg-amber-50/60 p-3.5 space-y-3">
-                      <div>
-                        <div className="text-[10px] font-black uppercase tracking-widest text-amber-700 mb-1">
-                          Missing information
+                    <div className="rounded-xl border border-amber-300/50 bg-amber-50/70 p-4 space-y-3">
+                      <div className="flex items-start gap-3">
+                        <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-500/10 text-amber-700">
+                          <CircleHelp className="h-4 w-4" />
                         </div>
-                        <p className="text-sm font-semibold text-foreground">
-                          {String(requestInputStep.params?.question || requestInputStep.description || 'Provide the missing information.')}
-                        </p>
-                        {Boolean(requestInputStep.params?.reason) && (
-                          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                            {String(requestInputStep.params.reason)}
+                        <div className="min-w-0">
+                          <div className="text-[10px] font-black uppercase tracking-widest text-amber-700 mb-1">
+                            待补充
+                          </div>
+                          <p className="text-sm font-semibold text-foreground">
+                            {inputQuestion}
                           </p>
-                        )}
+                          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                            {inputReason || '需要目标页面链接，确认后我会继续创建浏览器自动化任务。'}
+                          </p>
+                        </div>
                       </div>
                       <div className="flex flex-col gap-2 sm:flex-row">
                         <input
@@ -865,7 +879,7 @@ export function SimpleMode({
                               [plan.id]: event.target.value,
                             }))
                           }
-                          placeholder="Paste the target URL here"
+                          placeholder="粘贴目标页面 URL"
                           className="h-10 min-w-0 flex-1 rounded-xl border border-border bg-background px-3 text-sm outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/15"
                         />
                         <button
@@ -875,7 +889,7 @@ export function SimpleMode({
                           className="inline-flex h-10 items-center justify-center gap-1.5 rounded-xl bg-primary px-4 text-xs font-black text-primary-foreground transition-opacity hover:bg-primary/95 disabled:opacity-45"
                         >
                           <Play className="h-3.5 w-3.5 fill-current" />
-                          Continue
+                          继续执行
                         </button>
                       </div>
                     </div>
@@ -884,7 +898,7 @@ export function SimpleMode({
                   {visibleSteps.length > 0 && (
                     <div className="rounded-xl border border-border/60 bg-background/50 p-3">
                       <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground mb-2">
-                        What Cognix will do
+                        执行步骤
                       </div>
                       <div className="space-y-2">
                         {visibleSteps.map((step, idx) => (
@@ -900,13 +914,14 @@ export function SimpleMode({
                   )}
 
                   {/* Components discovered & recommended */}
+                  {!requestInputStep && (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 pt-1">
                     {/* Recommended work mode */}
                     {plan.recommended_agents && plan.recommended_agents.length > 0 && (
                       <div className="rounded-xl border border-border/60 bg-background/50 p-3">
                         <div className="flex items-center gap-1.5 text-xs font-black text-muted-foreground mb-2 uppercase tracking-wider">
                           <Cpu className="h-3.5 w-3.5 text-primary" />
-                          Work Mode
+                          工作方式
                         </div>
                         <div className="space-y-2">
                           {plan.recommended_agents.map((agent: any, idx: number) => (
@@ -929,7 +944,7 @@ export function SimpleMode({
                       <div className="rounded-xl border border-border/60 bg-background/50 p-3">
                         <div className="flex items-center gap-1.5 text-xs font-black text-muted-foreground mb-2 uppercase tracking-wider">
                           <Wrench className="h-3.5 w-3.5 text-primary" />
-                          Available Help
+                          可用能力
                         </div>
                         <div className="flex flex-wrap gap-1.5">
                           {plan.recommended_skills?.map((skill: any, idx: number) => (
@@ -946,12 +961,13 @@ export function SimpleMode({
                       </div>
                     )}
                   </div>
+                  )}
 
-                  {expectedOutputs.length > 0 && (
+                  {!requestInputStep && expectedOutputs.length > 0 && (
                     <div className="rounded-xl border border-border/60 bg-background/50 p-3">
                       <div className="flex items-center gap-1.5 text-xs font-black text-muted-foreground mb-2 uppercase tracking-wider">
                         <FileText className="h-3.5 w-3.5 text-primary" />
-                        Expected Outputs
+                        预期输出
                       </div>
                       <div className="flex flex-wrap gap-1.5">
                         {expectedOutputs.map((output, idx) => (
@@ -1251,6 +1267,14 @@ function resultContentFromApplyResult(result: ApplyResult) {
     return `I need a bit more information before continuing.\n\n${stepSummary || executionText}`
   }
   return `Execution completed.\n\n${stepSummary || executionText || 'The task completed.'}`
+}
+
+function cleanPlanText(value: string) {
+  return value
+    .replace(/Selected workspace sources:[\s\S]*$/i, '')
+    .replace(/Original request:[\s\S]*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 function parseBrowserFormResponse(responseStr: string) {
