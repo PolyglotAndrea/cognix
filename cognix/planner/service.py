@@ -550,6 +550,164 @@ class PlannerService:
             "plan": plan.to_dict(),
         }
 
+    async def resume_plan_approval(
+        self,
+        approval_id: str,
+        user_id: str,
+        response: str | None = None,
+    ) -> dict:
+        """Continue a plan_apply task after a human answered a question approval."""
+        from sqlalchemy import select
+
+        from cognix.local.approvals import ApprovalStore
+        from cognix.storage.database import get_session
+        from cognix.storage.models import ScheduledTaskModel, TaskState
+
+        store = ApprovalStore()
+        if response:
+            store.respond(approval_id, response)
+        approval = store.get(approval_id)
+        if not approval:
+            raise FileNotFoundError(f"Approval not found: {approval_id}")
+        if approval.metadata.get("source") != "plan_apply":
+            raise ValueError("Approval is not a planner task approval")
+        if approval.status not in {"approved", "completed"}:
+            raise ValueError(f"Approval is not approved (status: {approval.status})")
+
+        workspace_id = approval.workspace_id
+        plan_id = str(approval.metadata.get("plan_id") or "")
+        task_id = str(approval.metadata.get("task_id") or approval.arguments.get("task_id") or "")
+        answer = (response or approval.response or "").strip()
+        if not workspace_id or not plan_id or not task_id:
+            raise ValueError("Planner approval is missing workspace, plan, or task metadata")
+        if not answer:
+            raise ValueError("A response is required to continue the planner task")
+
+        plan = self._load_plan(workspace_id, plan_id)
+        if not plan:
+            raise FileNotFoundError(f"Plan not found: {plan_id}")
+
+        async with get_session() as session:
+            result = await session.execute(
+                select(ScheduledTaskModel).where(ScheduledTaskModel.id == task_id)
+            )
+            task = result.scalar_one_or_none()
+            if not task:
+                raise FileNotFoundError(f"Task not found: {task_id}")
+
+            payload = json.loads(task.payload or "{}")
+            original_message = str(payload.get("message") or "")
+            payload["message"] = (
+                f"{original_message}\n\n"
+                "The user has answered the required follow-up questions. "
+                "Use these details to continue the task without asking for the same information again.\n\n"
+                f"{answer}"
+            ).strip()
+            payload["approval_id"] = approval_id
+            payload["approval_response"] = answer
+            payload["user_id"] = user_id or payload.get("user_id", "")
+            task.payload = json.dumps(payload, ensure_ascii=False)
+            task.state = TaskState.ACTIVE
+
+        step_id = str(payload.get("step_id") or "")
+        params = {
+            "name": payload.get("name") or task_id,
+            "agent_name": payload.get("agent_name", ""),
+            "agent_id": payload.get("agent_id", ""),
+            "_resolved_agent_id": payload.get("agent_id", ""),
+            "_plan_id": plan_id,
+            "_step_id": step_id,
+            "schedule_type": "once",
+        }
+
+        if step_id:
+            plan.step_statuses[step_id] = "executing"
+        plan.status = "executing"
+        self._save_plan(plan)
+        emit_orchestration_event(
+            OrchestrationEvent(
+                workspace_id=workspace_id,
+                type="approval.resumed",
+                stage="approval",
+                status="running",
+                run_id=plan_id,
+                plan_id=plan_id,
+                step_id=step_id,
+                task_id=task_id,
+                agent_id=str(payload.get("agent_id") or ""),
+                data={"approval_id": approval_id},
+            )
+        )
+
+        exec_result = await self._trigger_task(task_id, workspace_id)
+        task_failed = bool(exec_result.get("status") == "failure" or exec_result.get("error"))
+        await self._finalize_once_task(task_id, failed=task_failed)
+
+        artifact_id = exec_result.get("artifact_id") or await self._store_task_artifact(
+            workspace_id,
+            task_id,
+            params,
+            exec_result,
+        )
+        artifacts = [artifact_id] if artifact_id else []
+        approval_ids: list[str] = []
+
+        if task_failed:
+            if step_id:
+                plan.step_statuses[step_id] = "failed"
+            plan.status = "failed"
+        elif self._result_needs_input(exec_result):
+            if step_id:
+                plan.step_statuses[step_id] = "completed"
+            new_approval_id = self._create_question_approval(
+                workspace_id=workspace_id,
+                plan_id=plan_id,
+                task_id=task_id,
+                params=params,
+                exec_result=exec_result,
+                artifact_id=artifact_id,
+            )
+            if new_approval_id:
+                approval_ids.append(new_approval_id)
+            plan.status = "needs_input"
+        else:
+            if step_id:
+                plan.step_statuses[step_id] = "completed"
+            plan.status = "applied"
+
+        self._save_plan(plan)
+        store.complete(approval_id, "Planner task continued after human input.")
+        emit_orchestration_event(
+            OrchestrationEvent(
+                workspace_id=workspace_id,
+                type="execution.completed" if not task_failed else "execution.failed",
+                stage="execution",
+                status=plan.status,
+                run_id=plan_id,
+                plan_id=plan_id,
+                step_id=step_id,
+                task_id=task_id,
+                agent_id=str(payload.get("agent_id") or ""),
+                artifact_id=artifact_id,
+                data={
+                    "approval_id": approval_id,
+                    "artifacts": artifacts,
+                    "approval_ids": approval_ids,
+                    "execution_result": exec_result,
+                },
+            )
+        )
+
+        return {
+            "plan_id": plan_id,
+            "status": plan.status,
+            "created": {},
+            "execution_results": [{"task_id": task_id, **exec_result}],
+            "artifacts": artifacts,
+            "approval_ids": approval_ids,
+            "plan": plan.to_dict(),
+        }
+
     def reject_plan(self, workspace_id: str, plan_id: str) -> dict:
         plan = self._load_plan(workspace_id, plan_id)
         if not plan:

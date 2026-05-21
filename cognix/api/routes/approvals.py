@@ -115,6 +115,27 @@ async def resume_and_continue(
     if not approval:
         raise HTTPException(404, "Approval not found")
 
+    if approval.metadata.get("source") == "plan_apply":
+        from cognix.planner.service import PlannerService
+
+        try:
+            result = await PlannerService().resume_plan_approval(
+                approval_id,
+                user.id,
+                response=body.response if body else "",
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {
+            "approval_id": approval_id,
+            "runtime": "planner",
+            "content": result.get("execution_results", [{}])[0].get("result", ""),
+            "events": [{"type": "execution.completed", "data": result}],
+            **result,
+        }
+
     # Claude Agent SDK path — delegate to runtime's resume_stream
     if approval.metadata.get("runtime") == "claude-agent-sdk":
         from cognix.claude.runtime import ClaudeAgentRuntime
@@ -177,6 +198,43 @@ async def resume_and_continue_stream(
     approval = ApprovalStore().get(approval_id)
     if not approval:
         raise HTTPException(404, "Approval not found")
+
+    if approval.metadata.get("source") == "plan_apply":
+        async def planner_event_generator():
+            try:
+                from cognix.planner.service import PlannerService
+
+                yield encode_sse_event(
+                    AgentEvent(
+                        "approval_resumed",
+                        {"approval_id": approval_id, "runtime": "planner"},
+                    )
+                )
+                result = await PlannerService().resume_plan_approval(
+                    approval_id,
+                    user.id,
+                    response=body.response if body else "",
+                )
+                yield encode_sse_event(
+                    AgentEvent(
+                        "execution.completed",
+                        {
+                            "result": result,
+                            "approval_id": approval_id,
+                            "runtime": "planner",
+                        },
+                    )
+                )
+            except FileNotFoundError as exc:
+                yield encode_sse_event(
+                    AgentEvent("error", {"message": str(exc), "error": str(exc)})
+                )
+            except ValueError as exc:
+                yield encode_sse_event(
+                    AgentEvent("error", {"message": str(exc), "error": str(exc)})
+                )
+
+        return StreamingResponse(planner_event_generator(), media_type="text/event-stream")
 
     is_sdk = approval.metadata.get("runtime") == "claude-agent-sdk"
 

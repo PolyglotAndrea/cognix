@@ -73,6 +73,7 @@ interface ApprovalRequest {
   tool_name: string
   arguments?: Record<string, unknown>
   response?: string
+  result?: string
   metadata?: Record<string, unknown>
 }
 
@@ -113,15 +114,64 @@ export function SimpleMode({
     refetchInterval: 5000,
   })
   const pendingQuestions = approvals.filter(
-    (approval) => approval.status === 'pending' && approval.kind === 'question',
+    (approval) =>
+      approval.kind === 'question' &&
+      (approval.status === 'pending' ||
+        (approval.metadata?.source === 'plan_apply' &&
+          approval.status === 'approved' &&
+          !approval.result)),
   )
 
   const respondApprovalMutation = useMutation({
-    mutationFn: ({ approvalId, response }: { approvalId: string; response: string }) =>
-      api.post(`/approvals/${approvalId}/respond`, { response }),
-    onSuccess: () => {
+    mutationFn: ({
+      approval,
+      response,
+    }: {
+      approval: ApprovalRequest
+      response: string
+    }) => {
+      const endpoint =
+        approval.metadata?.source === 'plan_apply'
+          ? `/approvals/${approval.id}/resume-and-continue`
+          : `/approvals/${approval.id}/respond`
+      return api.post(endpoint, { response }).then((r) => r.data)
+    },
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['approvals', workspaceId] })
       queryClient.invalidateQueries({ queryKey: ['workspace-events', workspaceId] })
+      queryClient.invalidateQueries({ queryKey: ['artifacts', workspaceId] })
+      queryClient.invalidateQueries({ queryKey: ['workspace-chats', workspaceId] })
+
+      if (data?.plan_id) {
+        const result = data as ApplyResult
+        const failed = result.status === 'failed'
+        const needsInput =
+          result.status === 'needs_input' || Boolean(result.approval_ids?.length)
+        const executionText =
+          result.execution_results?.[0]?.error ||
+          result.execution_results?.[0]?.result ||
+          ''
+        const content = failed
+          ? `I tried to continue the task, but it still needs attention.\n\n${executionText || 'The resumed task failed.'}`
+          : needsInput
+          ? `I continued the task and still need one more input.\n\n${executionText}`
+          : `I continued the task with your answers.\n\n${executionText || 'The task completed.'}`
+
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: 'executed',
+            content,
+            applyResult: result,
+          },
+        ])
+
+        if (result.artifacts?.length) {
+          const workspaceStore = useWorkspaceStore.getState()
+          workspaceStore.setRightPanelTab('artifacts')
+          workspaceStore.setRightPanelOpen(true)
+        }
+      }
     },
   })
 
@@ -902,7 +952,7 @@ export function SimpleMode({
             approval={approval}
             busy={respondApprovalMutation.isPending}
             onSubmit={(response) =>
-              respondApprovalMutation.mutate({ approvalId: approval.id, response })
+              respondApprovalMutation.mutate({ approval, response })
             }
           />
         ))}
@@ -966,6 +1016,8 @@ function InlineApprovalQuestion({
     'Cognix needs more information before it can continue this task.'
   const shouldUseBrowserForm =
     /浏览器|登录|授权|URL|网址|后台|入口|拉取|采集|爬取|导出/.test(question)
+  const readyToResume =
+    approval.status === 'approved' && Boolean(approval.response) && !approval.result
 
   const updateBrowserForm = (
     field: keyof typeof browserForm,
@@ -1055,7 +1107,30 @@ function InlineApprovalQuestion({
           </span>
         </div>
 
-        {shouldUseBrowserForm ? (
+        {readyToResume ? (
+          <div className="space-y-3">
+            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.04] p-4">
+              <div className="mb-2 flex items-center gap-2 text-sm font-black text-emerald-700">
+                <Check className="h-4 w-4" />
+                Your answers were saved
+              </div>
+              <div className="max-h-48 overflow-auto rounded-lg border border-border bg-background/90 p-3 text-xs leading-5 text-foreground">
+                <RichMessage content={approval.response || ''} />
+              </div>
+            </div>
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => onSubmit(approval.response || '')}
+                disabled={busy}
+                className="inline-flex h-11 items-center gap-2 rounded-xl bg-foreground px-5 text-xs font-black uppercase tracking-wider text-background transition-opacity hover:opacity-90 disabled:opacity-40"
+              >
+                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+                Continue Task
+              </button>
+            </div>
+          </div>
+        ) : shouldUseBrowserForm ? (
           <BrowserApprovalForm
             form={browserForm}
             errors={errors}
