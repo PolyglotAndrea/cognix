@@ -167,7 +167,7 @@ export function SimpleMode({
           : `/approvals/${approval.id}/respond`
       return api.post(endpoint, { response }).then((r) => r.data)
     },
-    onSuccess: (data) => {
+    onSuccess: async (data) => {
       queryClient.invalidateQueries({ queryKey: ['approvals', workspaceId, activeChatId] })
       queryClient.invalidateQueries({ queryKey: ['workspace-events', workspaceId] })
       queryClient.invalidateQueries({ queryKey: ['artifacts', workspaceId, activeChatId] })
@@ -187,6 +187,21 @@ export function SimpleMode({
           : needsInput
           ? `I continued the task and still need one more input.\n\n${executionText}`
           : `I continued the task with your answers.\n\n${executionText || 'The task completed.'}`
+
+        if (activeChatId) {
+          try {
+            await api.post(`/workspaces/${workspaceId}/chats/${activeChatId}/messages/raw`, {
+              role: 'assistant',
+              content,
+              metadata: {
+                type: 'executed',
+                applyResult: result,
+              },
+            })
+          } catch (err) {
+            console.error('Failed to persist resumed planner result:', err)
+          }
+        }
 
         setMessages((prev) => [
           ...prev,

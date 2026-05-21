@@ -671,10 +671,20 @@ class PlannerService:
         plan_id = str(approval.metadata.get("plan_id") or "")
         task_id = str(approval.metadata.get("task_id") or approval.arguments.get("task_id") or "")
         answer = (response or approval.response or "").strip()
-        if not workspace_id or not plan_id or not task_id:
-            raise ValueError("Planner approval is missing workspace, plan, or task metadata")
+        if not workspace_id or not plan_id:
+            raise ValueError("Planner approval is missing workspace or plan metadata")
         if not answer:
             raise ValueError("A response is required to continue the planner task")
+        if approval.metadata.get("approval_type") == "missing_input":
+            return await self._resume_missing_input_approval(
+                store=store,
+                approval=approval,
+                plan_id=plan_id,
+                user_id=user_id,
+                answer=answer,
+            )
+        if not task_id:
+            raise ValueError("Planner approval is missing task metadata")
         question_text = approval.reason or str(
             approval.arguments.get("question") or approval.metadata.get("question") or ""
         )
@@ -821,6 +831,147 @@ class PlannerService:
             "execution_results": [{"task_id": task_id, **exec_result}],
             "artifacts": artifacts,
             "approval_ids": approval_ids,
+            "plan": plan.to_dict(),
+        }
+
+    async def _resume_missing_input_approval(
+        self,
+        *,
+        store: Any,
+        approval: Any,
+        plan_id: str,
+        user_id: str,
+        answer: str,
+    ) -> dict:
+        """Resume a plan-level input request that did not have a task yet."""
+        workspace_id = approval.workspace_id
+        step_id = str(approval.metadata.get("step_id") or approval.arguments.get("step_id") or "")
+        plan = self._load_plan(workspace_id, plan_id)
+        if not plan:
+            raise FileNotFoundError(f"Plan not found: {plan_id}")
+
+        target_url = self._extract_first_url(answer)
+        if not target_url:
+            raise ValueError("A valid target URL is required to continue browser automation.")
+
+        question_text = approval.reason or str(approval.arguments.get("question") or "")
+        chat_id = str(approval.metadata.get("chat_id") or "")
+        params = {
+            "name": "browser-run-after-input",
+            "objective": question_text or "Run the browser automation requested by the user.",
+            "url": target_url,
+            "engine": self._select_browser_engine(answer, plan.capability_snapshot),
+            "profile": "default",
+            "extract_text": True,
+            "extract_links": True,
+            "extract_tables": True,
+            "screenshot": True,
+            "permission_mode": "workspace-write",
+            "artifact_title": "Browser Automation Result",
+            "_plan_id": plan_id,
+            "_step_id": step_id,
+            "_chat_id": chat_id,
+        }
+
+        if step_id:
+            for step in plan.steps:
+                if step.id == step_id:
+                    step.action = "browser_run"
+                    step.description = f"Run browser automation for {target_url}"
+                    step.params = params
+                    break
+            plan.step_statuses[step_id] = "executing"
+        plan.status = "executing"
+        self._save_plan(plan)
+
+        task_id = await self._apply_browser_run(workspace_id, params, user_id)
+        emit_orchestration_event(
+            OrchestrationEvent(
+                workspace_id=workspace_id,
+                type="browser_run.created",
+                stage="execution",
+                status="created",
+                run_id=plan_id,
+                plan_id=plan_id,
+                step_id=step_id,
+                task_id=task_id,
+                data={
+                    "objective": params["objective"],
+                    "url": target_url,
+                    "engine": params["engine"],
+                },
+            )
+        )
+
+        exec_result = await self._trigger_task(task_id, workspace_id)
+        task_failed = bool(exec_result.get("status") == "failure" or exec_result.get("error"))
+        await self._finalize_once_task(task_id, failed=task_failed)
+        artifact_id = exec_result.get("artifact_id") or await self._store_task_artifact(
+            workspace_id,
+            task_id,
+            params,
+            exec_result,
+        )
+        artifacts = [artifact_id] if artifact_id else []
+        approval_ids: list[str] = []
+
+        if task_failed or self._result_blocked_by_capability(exec_result):
+            if step_id:
+                plan.step_statuses[step_id] = "failed"
+            plan.status = "failed"
+        elif self._result_needs_input(exec_result):
+            if step_id:
+                plan.step_statuses[step_id] = "completed"
+            new_approval_id = self._create_question_approval(
+                workspace_id=workspace_id,
+                plan_id=plan_id,
+                task_id=task_id,
+                params=params,
+                exec_result=exec_result,
+                artifact_id=artifact_id,
+            )
+            if new_approval_id:
+                approval_ids.append(new_approval_id)
+            plan.status = "needs_input"
+        else:
+            if step_id:
+                plan.step_statuses[step_id] = "completed"
+            plan.status = "applied"
+
+        self._save_plan(plan)
+        store.complete(approval.id, "Planner task continued after missing input was provided.")
+        emit_orchestration_event(
+            OrchestrationEvent(
+                workspace_id=workspace_id,
+                type="execution.completed" if not task_failed else "execution.failed",
+                stage="execution",
+                status=plan.status,
+                run_id=plan_id,
+                plan_id=plan_id,
+                step_id=step_id,
+                task_id=task_id,
+                artifact_id=artifact_id,
+                data={
+                    "approval_id": approval.id,
+                    "artifacts": artifacts,
+                    "approval_ids": approval_ids,
+                    "execution_result": exec_result,
+                },
+            )
+        )
+        return {
+            "plan_id": plan_id,
+            "status": plan.status,
+            "created": {"tasks": [task_id], "browser_runs": [task_id]},
+            "execution_results": [{"task_id": task_id, **exec_result}],
+            "artifacts": artifacts,
+            "approval_ids": approval_ids,
+            "failed_steps": [step_id] if plan.status == "failed" and step_id else [],
+            "failed_step_errors": {
+                step_id: str(exec_result.get("error") or exec_result.get("result") or "")
+            }
+            if plan.status == "failed" and step_id
+            else {},
             "plan": plan.to_dict(),
         }
 
