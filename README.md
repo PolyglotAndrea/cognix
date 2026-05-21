@@ -70,6 +70,12 @@ COGNIX_AUTH__FRONTEND_URL=http://localhost:5173
 # CLI
 cognix --help
 
+# Local full stack helper
+scripts/dev.sh start
+scripts/dev.sh status
+scripts/dev.sh logs
+scripts/dev.sh stop
+
 # API Server
 cognix server start --port 8000
 
