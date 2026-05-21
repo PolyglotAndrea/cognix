@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
+import type { ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   CircleHelp,
@@ -946,14 +947,97 @@ function InlineApprovalQuestion({
   onSubmit: (response: string) => void
 }) {
   const [response, setResponse] = useState('')
+  const [browserForm, setBrowserForm] = useState({
+    targetUrl: '',
+    menuEntry: '',
+    authorizationConfirmed: false,
+    loginMode: '',
+    loginNotes: '',
+    scope: '',
+    outputFields: '',
+    browserAccessApproved: false,
+    exportFormat: 'structured-table',
+    notes: '',
+  })
+  const [errors, setErrors] = useState<Record<string, string>>({})
   const question =
     approval.reason ||
     String(approval.arguments?.question || approval.metadata?.question || '') ||
     'Cognix needs more information before it can continue this task.'
+  const shouldUseBrowserForm =
+    /浏览器|登录|授权|URL|网址|后台|入口|拉取|采集|爬取|导出/.test(question)
+
+  const updateBrowserForm = (
+    field: keyof typeof browserForm,
+    value: string | boolean,
+  ) => {
+    setBrowserForm((current) => ({ ...current, [field]: value }))
+    setErrors((current) => {
+      if (!current[field]) return current
+      const next = { ...current }
+      delete next[field]
+      return next
+    })
+  }
+
+  const validateBrowserForm = () => {
+    const nextErrors: Record<string, string> = {}
+    const url = browserForm.targetUrl.trim()
+
+    if (!url) {
+      nextErrors.targetUrl = '请填写后台地址或目标入口 URL'
+    } else {
+      try {
+        const parsed = new URL(url)
+        if (!['http:', 'https:'].includes(parsed.protocol)) {
+          nextErrors.targetUrl = 'URL 必须以 http:// 或 https:// 开头'
+        }
+      } catch {
+        nextErrors.targetUrl = '请输入有效 URL，例如 https://example.com'
+      }
+    }
+
+    if (!browserForm.authorizationConfirmed) {
+      nextErrors.authorizationConfirmed = '必须确认你拥有合法授权'
+    }
+    if (!browserForm.loginMode) {
+      nextErrors.loginMode = '请选择登录方式'
+    }
+    if (!browserForm.scope.trim()) {
+      nextErrors.scope = '请说明本次需要拉取的数据范围'
+    }
+    if (!browserForm.browserAccessApproved) {
+      nextErrors.browserAccessApproved = '必须明确批准浏览器访问和站内操作'
+    }
+
+    setErrors(nextErrors)
+    return Object.keys(nextErrors).length === 0
+  }
+
+  const submitBrowserForm = () => {
+    if (!validateBrowserForm()) return
+
+    onSubmit(
+      [
+        '已补充本次任务所需信息：',
+        '',
+        `1. 目标入口：${browserForm.targetUrl.trim()}`,
+        `2. 菜单入口：${browserForm.menuEntry.trim() || '未指定，请按页面实际入口判断'}`,
+        '3. 合法授权：我确认已获得合法授权，可访问并提取目标系统内的券码数据。',
+        `4. 登录方式：${browserForm.loginMode}`,
+        `5. 登录补充说明：${browserForm.loginNotes.trim() || '无'}`,
+        `6. 拉取范围：${browserForm.scope.trim()}`,
+        `7. 输出字段：${browserForm.outputFields.trim() || '默认字段：券码、状态、批次/活动名称、创建时间/领取时间、有效期'}`,
+        '8. 操作批准：我批准 Cognix 使用浏览器自动化访问目标站点、站内查询、筛选、分页和导出可用数据。',
+        `9. 输出格式：${browserForm.exportFormat}`,
+        `10. 其他说明：${browserForm.notes.trim() || '无'}`,
+      ].join('\n'),
+    )
+  }
 
   return (
     <div className="flex justify-start w-full">
-      <div className="w-full max-w-2xl rounded-2xl border border-amber-500/25 bg-amber-500/[0.04] p-4 shadow-sm">
+      <div className="w-full max-w-3xl rounded-2xl border border-amber-500/25 bg-amber-500/[0.04] p-4 shadow-sm">
         <div className="mb-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-amber-500/10 text-amber-600">
@@ -971,29 +1055,245 @@ function InlineApprovalQuestion({
           </span>
         </div>
 
-        <div className="rounded-xl border border-border bg-background/95 p-4 text-sm leading-6 text-foreground">
-          <RichMessage content={question} />
-        </div>
-
-        <div className="mt-3 flex items-end gap-2">
-          <textarea
-            value={response}
-            onChange={(event) => setResponse(event.target.value)}
-            placeholder="Reply with the missing details, authorization, login status, scope, or fields to extract..."
-            className="min-h-24 flex-1 resize-none rounded-xl border border-border bg-background px-3 py-2 text-xs leading-5 text-foreground outline-none focus:border-amber-500/40 focus:ring-2 focus:ring-amber-500/15"
+        {shouldUseBrowserForm ? (
+          <BrowserApprovalForm
+            form={browserForm}
+            errors={errors}
+            busy={busy}
+            onChange={updateBrowserForm}
+            onSubmit={submitBrowserForm}
           />
-          <button
-            type="button"
-            onClick={() => {
-              if (response.trim()) onSubmit(response.trim())
-            }}
-            disabled={busy || !response.trim()}
-            className="h-10 shrink-0 rounded-xl bg-foreground px-4 text-xs font-black text-background transition-opacity hover:opacity-90 disabled:opacity-40"
-          >
-            Send
-          </button>
-        </div>
+        ) : (
+          <>
+            <div className="rounded-xl border border-border bg-background/95 p-4 text-sm leading-6 text-foreground">
+              <RichMessage content={question} />
+            </div>
+
+            <div className="mt-3 flex items-end gap-2">
+              <textarea
+                value={response}
+                onChange={(event) => setResponse(event.target.value)}
+                placeholder="Reply with the missing details, authorization, login status, scope, or fields to extract..."
+                className="min-h-24 flex-1 resize-none rounded-xl border border-border bg-background px-3 py-2 text-xs leading-5 text-foreground outline-none focus:border-amber-500/40 focus:ring-2 focus:ring-amber-500/15"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  if (response.trim()) onSubmit(response.trim())
+                }}
+                disabled={busy || !response.trim()}
+                className="h-10 shrink-0 rounded-xl bg-foreground px-4 text-xs font-black text-background transition-opacity hover:opacity-90 disabled:opacity-40"
+              >
+                Send
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
+  )
+}
+
+function BrowserApprovalForm({
+  form,
+  errors,
+  busy,
+  onChange,
+  onSubmit,
+}: {
+  form: {
+    targetUrl: string
+    menuEntry: string
+    authorizationConfirmed: boolean
+    loginMode: string
+    loginNotes: string
+    scope: string
+    outputFields: string
+    browserAccessApproved: boolean
+    exportFormat: string
+    notes: string
+  }
+  errors: Record<string, string>
+  busy: boolean
+  onChange: (field: keyof BrowserApprovalFormProps, value: string | boolean) => void
+  onSubmit: () => void
+}) {
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border border-border bg-background/95 p-4">
+        <div className="mb-4 flex items-start gap-3">
+          <div className="mt-0.5 flex h-7 w-7 items-center justify-center rounded-lg bg-amber-500/10 text-amber-600">
+            <AlertCircle className="h-4 w-4" />
+          </div>
+          <div>
+            <div className="text-sm font-black text-foreground">需要你确认下面的信息后继续</div>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              每项都会合并成一次确认回复。带 * 的项目必须填写，通过校验后 Cognix 才会继续执行浏览器访问、登录后操作或数据导出。
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <FieldShell label="目标入口 URL *" error={errors.targetUrl} className="md:col-span-2">
+            <input
+              value={form.targetUrl}
+              onChange={(event) => onChange('targetUrl', event.target.value)}
+              placeholder="https://..."
+              className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm text-foreground outline-none focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/15"
+            />
+          </FieldShell>
+
+          <FieldShell label="菜单入口 / 页面位置">
+            <input
+              value={form.menuEntry}
+              onChange={(event) => onChange('menuEntry', event.target.value)}
+              placeholder="例如：营销中心 > 券码管理"
+              className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm text-foreground outline-none focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/15"
+            />
+          </FieldShell>
+
+          <FieldShell label="登录方式 *" error={errors.loginMode}>
+            <select
+              value={form.loginMode}
+              onChange={(event) => onChange('loginMode', event.target.value)}
+              className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm text-foreground outline-none focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/15"
+            >
+              <option value="">请选择</option>
+              <option value="我会先手动登录，Cognix 使用已登录会话继续">我先手动登录</option>
+              <option value="当前浏览器已有可用登录态">已有登录态</option>
+              <option value="遇到短信、扫码或二次验证时暂停等待我处理">需要验证码时暂停</option>
+              <option value="其他登录方式，见补充说明">其他</option>
+            </select>
+          </FieldShell>
+
+          <FieldShell label="拉取范围 *" error={errors.scope} className="md:col-span-2">
+            <textarea
+              value={form.scope}
+              onChange={(event) => onChange('scope', event.target.value)}
+              placeholder="例如：近 30 天全部券码；或某个店铺/活动/批次"
+              className="min-h-20 w-full resize-none rounded-lg border border-border bg-card px-3 py-2 text-sm leading-5 text-foreground outline-none focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/15"
+            />
+          </FieldShell>
+
+          <FieldShell label="输出字段">
+            <textarea
+              value={form.outputFields}
+              onChange={(event) => onChange('outputFields', event.target.value)}
+              placeholder="默认：券码、状态、活动名、创建/领取时间、有效期"
+              className="min-h-20 w-full resize-none rounded-lg border border-border bg-card px-3 py-2 text-sm leading-5 text-foreground outline-none focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/15"
+            />
+          </FieldShell>
+
+          <FieldShell label="登录补充说明">
+            <textarea
+              value={form.loginNotes}
+              onChange={(event) => onChange('loginNotes', event.target.value)}
+              placeholder="例如：扫码登录、短信验证、账号角色限制"
+              className="min-h-20 w-full resize-none rounded-lg border border-border bg-card px-3 py-2 text-sm leading-5 text-foreground outline-none focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/15"
+            />
+          </FieldShell>
+
+          <FieldShell label="输出格式">
+            <select
+              value={form.exportFormat}
+              onChange={(event) => onChange('exportFormat', event.target.value)}
+              className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm text-foreground outline-none focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/15"
+            >
+              <option value="structured-table">结构化表格 + 摘要说明</option>
+              <option value="xlsx">Excel 文件</option>
+              <option value="csv">CSV 文件</option>
+              <option value="markdown-report">Markdown 报告</option>
+            </select>
+          </FieldShell>
+
+          <FieldShell label="其他说明">
+            <input
+              value={form.notes}
+              onChange={(event) => onChange('notes', event.target.value)}
+              placeholder="可选"
+              className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm text-foreground outline-none focus:border-amber-500/50 focus:ring-2 focus:ring-amber-500/15"
+            />
+          </FieldShell>
+        </div>
+
+        <div className="mt-4 space-y-2 rounded-xl border border-border/70 bg-card/60 p-3">
+          <label className="flex items-start gap-2 text-xs leading-5 text-foreground">
+            <input
+              type="checkbox"
+              checked={form.authorizationConfirmed}
+              onChange={(event) => onChange('authorizationConfirmed', event.target.checked)}
+              className="mt-1 h-4 w-4 rounded border-border text-amber-600 focus:ring-amber-500"
+            />
+            <span>我确认已获得合法授权，可访问并提取目标系统内的数据。*</span>
+          </label>
+          {errors.authorizationConfirmed && (
+            <p className="pl-6 text-[11px] font-bold text-red-600">{errors.authorizationConfirmed}</p>
+          )}
+
+          <label className="flex items-start gap-2 text-xs leading-5 text-foreground">
+            <input
+              type="checkbox"
+              checked={form.browserAccessApproved}
+              onChange={(event) => onChange('browserAccessApproved', event.target.checked)}
+              className="mt-1 h-4 w-4 rounded border-border text-amber-600 focus:ring-amber-500"
+            />
+            <span>我批准 Cognix 使用浏览器自动化访问目标站点，并在站内查询、筛选、分页和导出可用数据。*</span>
+          </label>
+          {errors.browserAccessApproved && (
+            <p className="pl-6 text-[11px] font-bold text-red-600">{errors.browserAccessApproved}</p>
+          )}
+        </div>
+      </div>
+
+      <div className="flex items-center justify-end gap-2">
+        {Object.keys(errors).length > 0 && (
+          <span className="mr-auto text-xs font-bold text-red-600">请先补齐标红项目</span>
+        )}
+        <button
+          type="button"
+          onClick={onSubmit}
+          disabled={busy}
+          className="inline-flex h-11 items-center gap-2 rounded-xl bg-foreground px-5 text-xs font-black uppercase tracking-wider text-background transition-opacity hover:opacity-90 disabled:opacity-40"
+        >
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+          Confirm and Continue
+        </button>
+      </div>
+    </div>
+  )
+}
+
+type BrowserApprovalFormProps = {
+  targetUrl: string
+  menuEntry: string
+  authorizationConfirmed: boolean
+  loginMode: string
+  loginNotes: string
+  scope: string
+  outputFields: string
+  browserAccessApproved: boolean
+  exportFormat: string
+  notes: string
+}
+
+function FieldShell({
+  label,
+  error,
+  className = '',
+  children,
+}: {
+  label: string
+  error?: string
+  className?: string
+  children: ReactNode
+}) {
+  return (
+    <label className={`block space-y-1.5 ${className}`}>
+      <span className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+        {label}
+      </span>
+      {children}
+      {error && <span className="block text-[11px] font-bold text-red-600">{error}</span>}
+    </label>
   )
 }
