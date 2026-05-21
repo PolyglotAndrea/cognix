@@ -19,6 +19,15 @@ class ApprovalResponseBody(BaseModel):
     response: str = ""
 
 
+class ApprovalSuggestion(BaseModel):
+    approval_id: str
+    response: str
+    reason: str
+    score: float
+    created_at: str
+    source: str = "approval_history"
+
+
 @router.get("")
 async def list_approvals(
     workspace_id: str | None = None,
@@ -36,6 +45,59 @@ async def list_approvals(
             include_resolved=include_resolved,
         )
     ]
+
+
+@router.get("/{approval_id}/suggestions")
+async def approval_suggestions(
+    approval_id: str,
+    limit: int = 5,
+    history_limit: int = 100,
+    user: CurrentUser = Depends(get_current_user),
+) -> list[ApprovalSuggestion]:
+    """Return reusable answer suggestions from recent similar approval history."""
+    store = ApprovalStore()
+    current = store.get(approval_id)
+    if not current:
+        raise HTTPException(404, "Approval not found")
+
+    current_text = _approval_text(current)
+    current_tokens = _tokens(current_text)
+    rows = store.list_all(
+        workspace_id=current.workspace_id,
+        include_resolved=True,
+    )
+    recent_rows = rows[: max(1, min(history_limit, 100))]
+    suggestions: list[ApprovalSuggestion] = []
+    seen: set[str] = set()
+    for item in recent_rows:
+        if item.id == current.id:
+            continue
+        if item.kind != "question":
+            continue
+        if item.status == "pending":
+            continue
+        response = item.response.strip()
+        if not response or response in seen:
+            continue
+        seen.add(response)
+        score = _approval_similarity(
+            current_tokens=current_tokens,
+            current=current,
+            candidate=item,
+        )
+        if score <= 0:
+            continue
+        suggestions.append(
+            ApprovalSuggestion(
+                approval_id=item.id,
+                response=response,
+                reason=_approval_text(item)[:500],
+                score=round(score, 4),
+                created_at=item.created_at,
+            )
+        )
+    suggestions.sort(key=lambda row: row.score, reverse=True)
+    return suggestions[: max(1, min(limit, 10))]
 
 
 @router.post("/{approval_id}/approve")
@@ -202,6 +264,7 @@ async def resume_and_continue_stream(
         raise HTTPException(404, "Approval not found")
 
     if approval.metadata.get("source") == "plan_apply":
+
         async def planner_event_generator():
             try:
                 from cognix.planner.service import PlannerService
@@ -266,6 +329,45 @@ async def resume_and_continue_stream(
             yield encode_sse_event(AgentEvent("error", {"message": str(exc), "error": str(exc)}))
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+def _approval_text(approval) -> str:
+    return (
+        approval.reason
+        or str(approval.arguments.get("question") or approval.metadata.get("question") or "")
+        or approval.tool_name
+        or ""
+    )
+
+
+def _tokens(text: str) -> set[str]:
+    import re
+
+    return {
+        token.lower()
+        for token in re.findall(r"[a-zA-Z0-9_]+|[\u4e00-\u9fff]{2,}", text)
+        if len(token.strip()) > 1
+    }
+
+
+def _approval_similarity(*, current_tokens: set[str], current, candidate) -> float:
+    candidate_tokens = _tokens(_approval_text(candidate))
+    score = 0.0
+    if current.tool_name and candidate.tool_name == current.tool_name:
+        score += 3.0
+    if current.metadata.get("source") and candidate.metadata.get("source") == current.metadata.get(
+        "source"
+    ):
+        score += 2.0
+    if current.kind == candidate.kind:
+        score += 1.0
+    if current_tokens and candidate_tokens:
+        overlap = len(current_tokens & candidate_tokens)
+        union = len(current_tokens | candidate_tokens)
+        score += (overlap / union) * 10
+    if "目标入口" in candidate.response or "登录方式" in candidate.response:
+        score += 1.0
+    return score
 
 
 @router.post("/{approval_id}/resume/stream")

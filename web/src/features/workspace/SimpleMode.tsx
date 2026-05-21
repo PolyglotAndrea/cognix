@@ -15,6 +15,7 @@ import {
   AlertCircle,
   FileText,
   ChevronRight,
+  Sparkles,
 } from 'lucide-react'
 import { api } from '@/shared/api/client'
 import { useAuthStore } from '@/features/auth/store'
@@ -76,6 +77,15 @@ interface ApprovalRequest {
   metadata?: Record<string, unknown>
 }
 
+interface ApprovalSuggestion {
+  approval_id: string
+  response: string
+  reason: string
+  score: number
+  created_at: string
+  source: string
+}
+
 export function SimpleMode({
   workspaceId,
   onSwitchToAdvanced,
@@ -123,13 +133,27 @@ export function SimpleMode({
   )
 
   const respondApprovalMutation = useMutation({
-    mutationFn: ({
+    mutationFn: async ({
       approval,
       response,
     }: {
       approval: ApprovalRequest
       response: string
     }) => {
+      // Auto approve referenced browser permission first if it is pending
+      const question =
+        approval.reason ||
+        String(approval.arguments?.question || approval.metadata?.question || '')
+      const match = question.match(/approval_id[：:]\s*`?([a-f0-9]+)`?/i)
+      if (match) {
+        const refId = match[1]
+        try {
+          await api.post(`/approvals/${refId}/approve`)
+        } catch (e) {
+          console.warn('Failed to auto-approve referenced browser permission', e)
+        }
+      }
+
       const endpoint =
         approval.metadata?.source === 'plan_apply'
           ? `/approvals/${approval.id}/resume-and-continue`
@@ -932,6 +956,7 @@ export function SimpleMode({
           <InlineApprovalQuestion
             key={approval.id}
             approval={approval}
+            allApprovals={approvals}
             busy={respondApprovalMutation.isPending}
             onSubmit={(response) =>
               respondApprovalMutation.mutate({ approval, response })
@@ -969,16 +994,138 @@ export function SimpleMode({
   )
 }
 
+function getSuggestions(currentApproval: ApprovalRequest, allApprovals: ApprovalRequest[]) {
+  const currentReason =
+    currentApproval.reason ||
+    String(currentApproval.arguments?.question || currentApproval.metadata?.question || '') ||
+    ''
+  const currentTool = currentApproval.tool_name || ''
+
+  const candidates = allApprovals.filter((app) => {
+    if (app.id === currentApproval.id) return false
+    if (app.kind !== 'question') return false
+    if (app.status === 'pending') return false
+    if (!app.response || !app.response.trim()) return false
+    return true
+  })
+
+  const scored = candidates.map((app) => {
+    let score = 0
+    if (currentTool && app.tool_name === currentTool) {
+      score += 10
+    }
+    const appReason =
+      app.reason || String(app.arguments?.question || app.metadata?.question || '') || ''
+    const w1 = new Set(currentReason.toLowerCase().split(/\s+/).filter(Boolean))
+    const w2 = new Set(appReason.toLowerCase().split(/\s+/).filter(Boolean))
+    if (w1.size > 0 && w2.size > 0) {
+      const intersection = new Set([...w1].filter((x) => w2.has(x)))
+      const jaccard = intersection.size / new Set([...w1, ...w2]).size
+      score += jaccard * 20
+    }
+    if (currentReason && appReason === currentReason) {
+      score += 50
+    }
+    return {
+      response: app.response!.trim(),
+      score,
+    }
+  })
+
+  scored.sort((a, b) => b.score - a.score)
+
+  const uniqueResponses: string[] = []
+  for (const item of scored) {
+    if (!uniqueResponses.includes(item.response)) {
+      uniqueResponses.push(item.response)
+    }
+    if (uniqueResponses.length >= 5) break
+  }
+
+  return uniqueResponses
+}
+
+function parseBrowserFormResponse(responseStr: string) {
+  const form = {
+    targetUrl: '',
+    menuEntry: '',
+    authorizationConfirmed: false,
+    loginMode: '',
+    loginNotes: '',
+    scope: '',
+    outputFields: '',
+    browserAccessApproved: false,
+    exportFormat: 'structured-table',
+    notes: '',
+  }
+
+  const targetUrlMatch = responseStr.match(/1\.\s*目标入口[：:]\s*(.*)/)
+  if (targetUrlMatch) form.targetUrl = targetUrlMatch[1].trim()
+
+  const menuEntryMatch = responseStr.match(/2\.\s*菜单入口[：:]\s*(.*)/)
+  if (menuEntryMatch) {
+    const val = menuEntryMatch[1].trim()
+    form.menuEntry = val === '未指定，请按页面实际入口判断' ? '' : val
+  }
+
+  if (responseStr.includes('3. 合法授权：我确认已获得合法授权')) {
+    form.authorizationConfirmed = true
+  }
+
+  const loginModeMatch = responseStr.match(/4\.\s*登录方式[：:]\s*(.*)/)
+  if (loginModeMatch) form.loginMode = loginModeMatch[1].trim()
+
+  const loginNotesMatch = responseStr.match(/5\.\s*登录补充说明[：:]\s*(.*)/)
+  if (loginNotesMatch) {
+    const val = loginNotesMatch[1].trim()
+    form.loginNotes = val === '无' ? '' : val
+  }
+
+  const scopeMatch = responseStr.match(/6\.\s*拉取范围[：:]\s*(.*)/)
+  if (scopeMatch) form.scope = scopeMatch[1].trim()
+
+  const outputFieldsMatch = responseStr.match(/7\.\s*输出字段[：:]\s*(.*)/)
+  if (outputFieldsMatch) {
+    const val = outputFieldsMatch[1].trim()
+    form.outputFields = val.startsWith('默认字段') ? '' : val
+  }
+
+  if (responseStr.includes('8. 操作批准：我批准')) {
+    form.browserAccessApproved = true
+  }
+
+  const exportFormatMatch = responseStr.match(/9\.\s*输出格式[：:]\s*(.*)/)
+  if (exportFormatMatch) form.exportFormat = exportFormatMatch[1].trim()
+
+  const notesMatch = responseStr.match(/10\.\s*其他说明[：:]\s*(.*)/)
+  if (notesMatch) {
+    const val = notesMatch[1].trim()
+    form.notes = val === '无' ? '' : val
+  }
+
+  return form
+}
+
 function InlineApprovalQuestion({
   approval,
+  allApprovals = [],
   busy,
   onSubmit,
 }: {
   approval: ApprovalRequest
+  allApprovals?: ApprovalRequest[]
   busy: boolean
   onSubmit: (response: string) => void
 }) {
-  const [response, setResponse] = useState('')
+  const question =
+    approval.reason ||
+    String(approval.arguments?.question || approval.metadata?.question || '') ||
+    'Cognix needs more information before it can continue this task.'
+  const isApprovalContinuation =
+    /已批准，继续|审批弹窗|审批后|允许后|approval/i.test(question)
+  const [response, setResponse] = useState(() => {
+    return isApprovalContinuation ? '已批准，继续' : ''
+  })
   const [browserForm, setBrowserForm] = useState({
     targetUrl: '',
     menuEntry: '',
@@ -992,20 +1139,27 @@ function InlineApprovalQuestion({
     notes: '',
   })
   const [errors, setErrors] = useState<Record<string, string>>({})
-  const question =
-    approval.reason ||
-    String(approval.arguments?.question || approval.metadata?.question || '') ||
-    'Cognix needs more information before it can continue this task.'
-  const isApprovalContinuation =
-    /已批准，继续|审批弹窗|审批后|允许后|approval/i.test(question)
   const shouldUseBrowserForm =
     !isApprovalContinuation &&
     /浏览器|登录|授权|URL|网址|后台|入口|拉取|采集|爬取|导出/.test(question)
   const readyToResume =
     approval.status === 'approved' && Boolean(approval.response) && !approval.result
+  const { data: approvalSuggestions = [] } = useQuery<ApprovalSuggestion[]>({
+    queryKey: ['approval-suggestions', approval.id],
+    queryFn: () => api.get(`/approvals/${approval.id}/suggestions`).then((r) => r.data),
+    enabled: approval.status === 'pending',
+  })
+  const suggestions =
+    approvalSuggestions.length > 0
+      ? approvalSuggestions.map((item) => item.response)
+      : getSuggestions(approval, allApprovals)
+  const match = question.match(/approval_id[：:]\s*`?([a-f0-9]+)`?/i)
+  const refApprovalId = match ? match[1] : null
+  const refApproval = refApprovalId ? allApprovals.find((a) => a.id === refApprovalId) : null
 
   useEffect(() => {
-    setResponse('')
+    const isCont = /已批准，继续|审批弹窗|审批后|允许后|approval/i.test(question)
+    setResponse(isCont ? '已批准，继续' : '')
     setErrors({})
     setBrowserForm({
       targetUrl: '',
@@ -1082,7 +1236,7 @@ function InlineApprovalQuestion({
         `5. 登录补充说明：${browserForm.loginNotes.trim() || '无'}`,
         `6. 拉取范围：${browserForm.scope.trim()}`,
         `7. 输出字段：${browserForm.outputFields.trim() || '默认字段：券码、状态、批次/活动名称、创建时间/领取时间、有效期'}`,
-        '8. 操作批准：我批准 Cognix 使用浏览器自动化访问目标站点、站内查询、筛选、分页和导出可用数据。',
+        '8. 操作批准：我批准 Cognix 使用浏览器自动化访问目标站点、站内操作。',
         `9. 输出格式：${browserForm.exportFormat}`,
         `10. 其他说明：${browserForm.notes.trim() || '无'}`,
       ].join('\n'),
@@ -1116,7 +1270,7 @@ function InlineApprovalQuestion({
                 <Check className="h-4 w-4" />
                 Your answers were saved
               </div>
-              <div className="max-h-48 overflow-auto rounded-lg border border-border bg-background/90 p-3 text-xs leading-5 text-foreground">
+              <div className="max-h-48 overflow-auto rounded-lg border border-border bg-background/95 p-3 text-xs leading-5 text-foreground">
                 <RichMessage content={approval.response || ''} />
               </div>
             </div>
@@ -1139,18 +1293,32 @@ function InlineApprovalQuestion({
             busy={busy}
             onChange={updateBrowserForm}
             onSubmit={submitBrowserForm}
+            suggestions={suggestions.filter((s) => s.includes('目标入口') && s.includes('登录方式'))}
+            onUseSuggestion={(value) => onSubmit(value)}
+            onAutofill={(fields: BrowserApprovalFormProps) => {
+              setBrowserForm(fields)
+              setErrors({})
+            }}
           />
         ) : isApprovalContinuation ? (
           <div className="space-y-3">
             <div className="rounded-xl border border-border bg-background/95 p-4 text-sm leading-6 text-foreground">
               <RichMessage content={question} />
             </div>
-            <div className="flex justify-end">
+            <div className="flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setResponse('已批准，继续')}
+                disabled={busy}
+                className="h-10 rounded-xl border border-border bg-background px-4 text-xs font-black text-foreground transition-colors hover:bg-muted disabled:opacity-40"
+              >
+                填入
+              </button>
               <button
                 type="button"
                 onClick={() => onSubmit('已批准，继续')}
                 disabled={busy}
-                className="inline-flex h-11 items-center gap-2 rounded-xl bg-foreground px-5 text-xs font-black uppercase tracking-wider text-background transition-opacity hover:opacity-90 disabled:opacity-40"
+                className="inline-flex h-10 items-center gap-2 rounded-xl bg-foreground px-5 text-xs font-black uppercase tracking-wider text-background transition-opacity hover:opacity-90 disabled:opacity-40"
               >
                 {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
                 已批准，继续
@@ -1162,6 +1330,72 @@ function InlineApprovalQuestion({
             <div className="rounded-xl border border-border bg-background/95 p-4 text-sm leading-6 text-foreground">
               <RichMessage content={question} />
             </div>
+
+            {refApproval && refApproval.status === 'pending' && (
+              <div className="mt-3 rounded-xl border border-amber-500/20 bg-amber-500/[0.03] p-3 text-xs">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="font-bold text-foreground flex items-center gap-1.5">
+                    <span className="h-2.5 w-2.5 rounded-full bg-amber-500 animate-pulse" />
+                    关联浏览器访问审批 / Associated Browser Access Request
+                  </span>
+                  <span className="px-1.5 py-0.5 rounded text-[9px] font-black uppercase tracking-widest bg-amber-500/10 text-amber-500 border border-amber-500/20">
+                    Pending
+                  </span>
+                </div>
+                <div className="mt-2 space-y-1.5 text-muted-foreground leading-relaxed">
+                  <div>
+                    <span className="font-semibold text-foreground">目标页面 / Target URL: </span>
+                    <code className="text-[10px] break-all bg-background/50 px-1 py-0.5 rounded border border-border text-foreground">
+                      {String(refApproval.arguments?.url || 'Unknown URL')}
+                    </code>
+                  </div>
+                  {Boolean(refApproval.arguments?.objective) && (
+                    <div>
+                      <span className="font-semibold text-foreground">执行目标 / Objective: </span>
+                      <span className="text-foreground">{String(refApproval.arguments?.objective || '')}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {suggestions.length > 0 && (
+              <div className="mt-3 space-y-1.5">
+                <div className="flex items-center gap-1.5 text-[10px] font-bold text-amber-700/80 dark:text-amber-400/80">
+                  <Sparkles className="h-3 w-3" />
+                  <span>Suggestions from past answers</span>
+                </div>
+                <div className="space-y-2">
+                  {suggestions.map((s, idx) => (
+                    <div
+                      key={idx}
+                      className="rounded-xl border border-amber-500/20 bg-amber-500/[0.035] p-3"
+                    >
+                      <div className="max-h-[4.75rem] overflow-hidden text-[11px] leading-5 text-foreground">
+                        {s}
+                      </div>
+                      <div className="mt-2 flex justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setResponse(s)}
+                          className="h-8 rounded-lg border border-border bg-background px-3 text-[10px] font-black uppercase tracking-wider text-foreground hover:bg-muted"
+                        >
+                          填入
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onSubmit(s)}
+                          disabled={busy}
+                          className="h-8 rounded-lg bg-foreground px-3 text-[10px] font-black uppercase tracking-wider text-background disabled:opacity-40"
+                        >
+                          一键继续
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="mt-3 flex items-end gap-2">
               <textarea
@@ -1194,6 +1428,9 @@ function BrowserApprovalForm({
   busy,
   onChange,
   onSubmit,
+  suggestions = [],
+  onUseSuggestion,
+  onAutofill,
 }: {
   form: {
     targetUrl: string
@@ -1211,9 +1448,59 @@ function BrowserApprovalForm({
   busy: boolean
   onChange: (field: keyof BrowserApprovalFormProps, value: string | boolean) => void
   onSubmit: () => void
+  suggestions?: string[]
+  onUseSuggestion?: (response: string) => void
+  onAutofill?: (fields: BrowserApprovalFormProps) => void
 }) {
   return (
     <div className="space-y-4">
+      {suggestions.length > 0 && onAutofill && (
+        <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.03] p-3">
+          <div className="flex items-center gap-1.5 text-xs font-bold text-amber-700/80 dark:text-amber-400/80 mb-2">
+            <Sparkles className="h-3.5 w-3.5" />
+            <span>历史填写记录 (点击一键填充) / History (Click to autofill)</span>
+          </div>
+          <div className="space-y-2">
+            {suggestions.map((s, idx) => {
+              const parsed = parseBrowserFormResponse(s)
+              const displayUrl = parsed.targetUrl || '未知 URL'
+              return (
+                <div
+                  key={idx}
+                  className="rounded-xl border border-amber-500/20 bg-background/70 p-3"
+                >
+                  <div className="text-[11px] font-bold text-foreground">
+                    {displayUrl}
+                  </div>
+                  <div className="mt-1 text-[10px] text-muted-foreground">
+                    {parsed.loginMode || '无登录方式'}
+                  </div>
+                  <div className="mt-2 flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => onAutofill(parsed)}
+                      className="h-8 rounded-lg border border-border bg-background px-3 text-[10px] font-black uppercase tracking-wider text-foreground hover:bg-muted"
+                    >
+                      填入
+                    </button>
+                    {onUseSuggestion && (
+                      <button
+                        type="button"
+                        onClick={() => onUseSuggestion(s)}
+                        disabled={busy}
+                        className="h-8 rounded-lg bg-foreground px-3 text-[10px] font-black uppercase tracking-wider text-background disabled:opacity-40"
+                      >
+                        一键继续
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       <div className="rounded-xl border border-border bg-background/95 p-4">
         <div className="mb-4 flex items-start gap-3">
           <div className="mt-0.5 flex h-7 w-7 items-center justify-center rounded-lg bg-amber-500/10 text-amber-600">

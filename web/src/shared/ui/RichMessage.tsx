@@ -50,6 +50,10 @@ function MermaidBlock({ code }: { code: string }) {
 export function RichMessage({ content, compact = false }: RichMessageProps) {
   const plugins = useMemo(() => [remarkGfm, remarkMath], [])
   const rehypePlugins = useMemo(() => [rehypeKatex, rehypeHighlight], [])
+  const normalizedContent = useMemo(
+    () => content.replace(/(^|\n)\s*•\s+/g, '$1- '),
+    [content],
+  )
 
   if (!content) return null
 
@@ -81,7 +85,7 @@ export function RichMessage({ content, compact = false }: RichMessageProps) {
           },
         }}
       >
-        {content}
+        {normalizedContent}
       </ReactMarkdown>
     </div>
   )
