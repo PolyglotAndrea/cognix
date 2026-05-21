@@ -71,6 +71,7 @@ Output ONLY valid JSON matching this schema:
 Actions:
 - create_agent: params = { name, model, system_prompt }
 - create_task: params = { name, agent_name, schedule_type, cron_or_interval, input }
+- request_input: params = { question, reason, fields }
 - install_skill: params = { skill_name }
 - configure_mcp: params = { name, command, args }
 - browser_run: params = { objective, url, engine, profile,
@@ -286,6 +287,8 @@ class PlannerService:
         code_project_name_to_id: dict[str, str] = {}
         failed_steps: list[str] = []
         failed_step_errors: dict[str, str] = {}
+        approval_ids: list[str] = []
+        needs_input_steps: list[str] = []
 
         # Topological sort: ensures create_agent runs before create_task that depends on it
         sorted_steps = self._sort_steps(plan.steps)
@@ -433,6 +436,36 @@ class PlannerService:
                             },
                         )
                     )
+                elif step.action == "request_input":
+                    step.params["_plan_id"] = plan_id
+                    step.params["_step_id"] = step.id
+                    if chat_id:
+                        step.params["_chat_id"] = chat_id
+                    approval_id = self._create_plan_input_approval(
+                        workspace_id=workspace_id,
+                        plan_id=plan_id,
+                        step_id=step.id,
+                        params=step.params,
+                    )
+                    approval_ids.append(approval_id)
+                    needs_input_steps.append(step.id)
+                    plan.step_statuses[step.id] = "needs_input"
+                    emit_orchestration_event(
+                        OrchestrationEvent(
+                            workspace_id=workspace_id,
+                            type="approval.requested",
+                            stage="approval",
+                            status="needs_input",
+                            run_id=plan_id,
+                            plan_id=plan_id,
+                            step_id=step.id,
+                            data={
+                                "approval_id": approval_id,
+                                "question": step.params.get("question", ""),
+                            },
+                        )
+                    )
+                    continue
                 elif step.action == "install_skill":
                     skill_name = step.params.get("name", step.params.get("skill_name", ""))
                     if skill_name:
@@ -522,8 +555,6 @@ class PlannerService:
         # Trigger immediate execution for "once" tasks
         execution_results = []
         artifacts: list[str] = []
-        approval_ids: list[str] = []
-        needs_input_steps: list[str] = []
         for task_id, params, step_id in task_steps:
             if step_id in failed_steps:
                 continue
@@ -1510,19 +1541,27 @@ class PlannerService:
                 params = step.setdefault("params", {})
                 params["url"] = params.get("url") or params.get("target_url") or browser_url
                 if not params["url"]:
-                    step["action"] = "create_task"
+                    step["action"] = "request_input"
                     step["description"] = "Ask for the target URL before browser automation"
                     params.clear()
                     params.update(
                         {
-                            "name": "browser-automation-needs-url",
-                            "agent_name": "task-agent",
-                            "schedule_type": "once",
-                            "input": (
-                                "Before running browser automation, ask the user for the exact "
-                                "target URL or select a URL source. Do not attempt browser "
-                                "automation until a URL is available."
+                            "question": (
+                                "Please provide the exact target URL before I run browser "
+                                "automation."
                             ),
+                            "reason": (
+                                "Browser automation needs a concrete URL. I will not create an "
+                                "agent task or open a browser until the target page is confirmed."
+                            ),
+                            "fields": [
+                                {
+                                    "name": "target_url",
+                                    "label": "Target URL",
+                                    "type": "url",
+                                    "required": True,
+                                }
+                            ],
                         }
                     )
                     continue
@@ -1581,18 +1620,25 @@ class PlannerService:
             "steps": [
                 {
                     "id": "step_1",
-                    "action": "create_task",
+                    "action": "request_input",
                     "description": "Ask for the target URL before browser automation",
                     "params": {
-                        "name": "browser-automation-needs-url",
-                        "agent_name": "task-agent",
-                        "schedule_type": "once",
-                        "input": (
-                            "Before running browser automation, ask the user for the exact "
-                            "target URL or select a URL source. Do not attempt browser "
-                            "automation until a URL is available.\n\n"
+                        "question": (
+                            "Please provide the exact target URL before I run browser automation."
+                        ),
+                        "reason": (
+                            "Browser automation needs a concrete URL. I will not create an agent "
+                            "task or open a browser until the target page is confirmed.\n\n"
                             f"Original request: {user_intent}"
                         ),
+                        "fields": [
+                            {
+                                "name": "target_url",
+                                "label": "Target URL",
+                                "type": "url",
+                                "required": True,
+                            }
+                        ],
                     },
                     "depends_on": [],
                 }
@@ -1882,6 +1928,45 @@ class PlannerService:
             "browser_automation / browser_mcp / playwright",
         )
         return any(signal.lower() in text for signal in blockers)
+
+    @staticmethod
+    def _create_plan_input_approval(
+        *,
+        workspace_id: str,
+        plan_id: str,
+        step_id: str,
+        params: dict,
+    ) -> str:
+        """Create a direct human-input request for plans missing required data."""
+        from cognix.local.approvals import ApprovalStore
+
+        question = str(
+            params.get("question")
+            or params.get("reason")
+            or "Please provide the missing information before I continue."
+        )
+        request = ApprovalStore().create(
+            agent_id="planner",
+            workspace_id=workspace_id,
+            tool_name="user_input",
+            arguments={
+                "question": question,
+                "fields": list(params.get("fields") or []),
+                "step_id": step_id,
+            },
+            access_level="user_input",
+            reason=str(params.get("reason") or question),
+            kind="question",
+            metadata={
+                "source": "plan_apply",
+                "plan_id": plan_id,
+                "step_id": step_id,
+                "chat_id": params.get("_chat_id", ""),
+                "approval_type": "missing_input",
+                "resume_hint": "Provide the missing information, then continue the plan.",
+            },
+        )
+        return request.id
 
     @staticmethod
     def _create_question_approval(
