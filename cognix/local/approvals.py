@@ -108,6 +108,44 @@ class ApprovalStore:
             approvals = [approval for approval in approvals if approval.status == "pending"]
         return sorted(approvals, key=lambda item: item.created_at, reverse=True)
 
+    def complete_capability_blocked_questions(
+        self,
+        workspace_id: str | None = None,
+    ) -> list[ApprovalRequest]:
+        """Close stale question approvals that are actually capability blocks."""
+        approvals = self.list_all(include_resolved=True)
+        updated: list[ApprovalRequest] = []
+        next_rows: list[ApprovalRequest] = []
+        now = datetime.now(UTC).isoformat()
+        for approval in approvals:
+            if (
+                approval.status == "pending"
+                and approval.kind == "question"
+                and approval.metadata.get("source") == "plan_apply"
+                and (not workspace_id or approval.workspace_id == workspace_id)
+                and self._is_capability_blocked_question(approval)
+            ):
+                replacement = ApprovalRequest(
+                    **{
+                        **asdict(approval),
+                        "status": "completed",
+                        "result": (
+                            "Closed automatically: execution is blocked by missing browser "
+                            "runtime, not by missing user input."
+                        ),
+                        "updated_at": now,
+                    }
+                )
+                next_rows.append(replacement)
+                updated.append(replacement)
+            else:
+                next_rows.append(approval)
+        if updated:
+            self._write(next_rows)
+            for approval in updated:
+                self._emit_approval_event(approval, "approval.completed")
+        return updated
+
     def approve(self, approval_id: str) -> ApprovalRequest | None:
         existing = self.get(approval_id)
         if existing and existing.status != "pending":
@@ -209,3 +247,29 @@ class ApprovalStore:
             json.dumps([asdict(item) for item in approvals], indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
+
+    @staticmethod
+    def _is_capability_blocked_question(approval: ApprovalRequest) -> bool:
+        text = " ".join(
+            str(part or "")
+            for part in (
+                approval.reason,
+                approval.arguments.get("question", ""),
+                approval.result,
+            )
+        ).lower()
+        blockers = (
+            "没有实际可调用的浏览器自动化执行器",
+            "没有可调用的浏览器自动化",
+            "未暴露可直接实际点击网页",
+            "未接入可实际操作页面",
+            "未接入实际浏览器执行通道",
+            "不能直接替你打开网页",
+            "无法在本条消息内真正发起浏览器",
+            "尚未接入可实际操作页面的浏览器执行通道",
+            "browser runtime",
+            "browser_automation 工具实例",
+            "browser_automation / playwright / browser mcp",
+            "playwright 执行接口",
+        )
+        return any(blocker.lower() in text for blocker in blockers)

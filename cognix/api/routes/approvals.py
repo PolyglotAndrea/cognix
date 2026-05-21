@@ -26,9 +26,11 @@ async def list_approvals(
     include_resolved: bool = False,
     user: CurrentUser = Depends(get_current_user),
 ) -> list[dict]:
+    store = ApprovalStore()
+    store.complete_capability_blocked_questions(workspace_id=workspace_id)
     return [
         approval.__dict__
-        for approval in ApprovalStore().list_all(
+        for approval in store.list_all(
             workspace_id=workspace_id,
             status=status,
             include_resolved=include_resolved,

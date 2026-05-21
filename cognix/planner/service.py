@@ -1443,15 +1443,23 @@ class PlannerService:
         if not text:
             return False
         blockers = (
+            "没有实际可调用的浏览器自动化执行器",
+            "没有实际可调用的 browser",
+            "没有可调用的浏览器自动化",
             "未暴露可直接实际点击网页",
             "未接入可实际操作页面",
             "未接入实际浏览器执行通道",
             "未提供可直接执行网页操作",
+            "不能直接替你打开网页",
             "无法在本条消息内真正发起浏览器",
             "无法在本轮消息内完成真实页面",
+            "尚未接入可实际操作页面的浏览器执行通道",
+            "尚未接入实际浏览器执行通道",
             "只有“规划与结果模板”能力",
             "只能完成合规规划",
             "browser runtime",
+            "browser_automation 工具实例",
+            "browser_automation / playwright / browser mcp",
             "playwright 执行接口",
             "browser_automation / browser_mcp / playwright",
         )
