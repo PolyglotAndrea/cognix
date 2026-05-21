@@ -172,6 +172,7 @@ async def apply_plan_stream(
                 "status": event.status,
                 "agent_id": event.agent_id,
                 "task_id": event.task_id,
+                "step_id": event.step_id,
                 "artifact_id": event.artifact_id,
                 "data": event.data,
                 "timestamp": event.timestamp,

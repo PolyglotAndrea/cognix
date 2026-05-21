@@ -406,6 +406,14 @@ export function SimpleMode({
             if (event.type === 'agent.created') {
               stepId = `agent-${event.agent_id || 'new'}`
               stepLabel = 'Prepared a workspace worker for this request'
+            } else if (event.type === 'plan.step.failed') {
+              stepId = event.data?.action
+                ? `plan-step-${event.data.action}-${event.step_id || event.task_id || 'failed'}`
+                : `plan-step-${event.step_id || event.task_id || 'failed'}`
+              stepLabel = event.data?.error
+                ? `Plan step failed: ${event.data.error}`
+                : 'Plan step failed'
+              status = 'failed'
             } else if (event.type === 'task.created') {
               stepId = `task-${event.task_id || 'new'}`
               stepLabel = 'Prepared the execution task'
@@ -448,7 +456,12 @@ export function SimpleMode({
               finalApplyResultFromStream = event.result
             } else if (event.type === 'execution.failed') {
               stepId = 'execution-failed'
-              stepLabel = `Execution error: ${event.error || 'unknown error'}`
+              const stepErrors = event.data?.failed_step_errors || {}
+              const firstStepError =
+                typeof stepErrors === 'object'
+                  ? Object.values(stepErrors).find(Boolean)
+                  : ''
+              stepLabel = `Execution error: ${event.error || firstStepError || 'unknown error'}`
               status = 'failed'
             }
 
@@ -496,6 +509,8 @@ export function SimpleMode({
         artifacts: finalApplyResultFromStream?.artifacts || [],
         code_projects: finalApplyResultFromStream?.created?.code_projects || [],
         approval_ids: finalApplyResultFromStream?.approval_ids || [],
+        failed_steps: finalApplyResultFromStream?.failed_steps || [],
+        failed_step_errors: finalApplyResultFromStream?.failed_step_errors || {},
         plan: finalApplyResultFromStream?.plan || updatedPlan,
       }
       const failed = finalApplyResult.status === 'failed'
@@ -504,6 +519,8 @@ export function SimpleMode({
         Boolean(finalApplyResult.approval_ids?.length)
       const firstError =
         finalApplyResult.execution_results?.find((item) => item.error)?.error ||
+        Object.values(finalApplyResult.failed_step_errors || {}).find(Boolean) ||
+        stepsList.find((step) => step.status === 'failed')?.label ||
         (failed ? 'The workflow could not complete with the current configuration.' : '')
       const resultContent = failed
         ? `Execution needs attention.\n\n${firstError}\n\nRecommended next step: review the highlighted issue, adjust the source/provider/capability access if needed, then run the plan again.`

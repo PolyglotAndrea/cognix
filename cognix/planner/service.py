@@ -276,6 +276,7 @@ class PlannerService:
         agent_name_to_id: dict[str, str] = {}
         code_project_name_to_id: dict[str, str] = {}
         failed_steps: list[str] = []
+        failed_step_errors: dict[str, str] = {}
 
         # Topological sort: ensures create_agent runs before create_task that depends on it
         sorted_steps = self._sort_steps(plan.steps)
@@ -307,6 +308,9 @@ class PlannerService:
                 )
                 plan.step_statuses[step.id] = "failed"
                 failed_steps.append(step.id)
+                failed_step_errors[step.id] = (
+                    f"Dependency step(s) failed: {', '.join(failed_deps)}"
+                )
                 self._save_plan(plan)
                 emit_orchestration_event(
                     OrchestrationEvent(
@@ -457,9 +461,11 @@ class PlannerService:
                     )
                 )
             except Exception as exc:
-                logger.warning("Plan step %s failed: %s", step.id, exc)
+                error = str(exc)
+                logger.warning("Plan step %s failed: %s", step.id, error)
                 plan.step_statuses[step.id] = "failed"
                 failed_steps.append(step.id)
+                failed_step_errors[step.id] = error
                 emit_orchestration_event(
                     OrchestrationEvent(
                         workspace_id=workspace_id,
@@ -469,7 +475,7 @@ class PlannerService:
                         run_id=plan_id,
                         plan_id=plan_id,
                         step_id=step.id,
-                        data={"action": step.action, "error": str(exc)},
+                        data={"action": step.action, "error": error},
                     )
                 )
             self._save_plan(plan)
@@ -494,7 +500,13 @@ class PlannerService:
                 await self._finalize_once_task(task_id, failed=task_failed)
                 if exec_result.get("status") == "failure" or exec_result.get("error"):
                     plan.step_statuses[step_id] = "failed"
-                    failed_steps.append(step_id)
+                    if step_id not in failed_steps:
+                        failed_steps.append(step_id)
+                    failed_step_errors[step_id] = str(
+                        exec_result.get("error")
+                        or exec_result.get("result")
+                        or "Task execution failed."
+                    )
                 else:
                     plan.step_statuses[step_id] = "completed"
                 # TaskExecutor creates success artifacts; fall back to plan-level artifact creation.
@@ -508,7 +520,12 @@ class PlannerService:
                     artifacts.append(artifact_id)
                 if self._result_blocked_by_capability(exec_result):
                     plan.step_statuses[step_id] = "failed"
-                    failed_steps.append(step_id)
+                    if step_id not in failed_steps:
+                        failed_steps.append(step_id)
+                    failed_step_errors[step_id] = (
+                        "The selected capability cannot perform this browser action yet. "
+                        "Enable a browser runtime/MCP tool or choose a supported execution path."
+                    )
                 elif self._result_needs_input(exec_result):
                     approval_id = self._create_question_approval(
                         workspace_id=workspace_id,
@@ -536,6 +553,7 @@ class PlannerService:
                 data={
                     "created": created,
                     "failed_steps": failed_steps,
+                    "failed_step_errors": failed_step_errors,
                     "artifacts": artifacts,
                     "approval_ids": approval_ids,
                     "needs_input_steps": needs_input_steps,
@@ -550,6 +568,8 @@ class PlannerService:
             "execution_results": execution_results,
             "artifacts": artifacts,
             "approval_ids": approval_ids,
+            "failed_steps": failed_steps,
+            "failed_step_errors": failed_step_errors,
             "plan": plan.to_dict(),
         }
 
@@ -1583,6 +1603,26 @@ class PlannerService:
             counter += 1
 
     @staticmethod
+    async def _resolve_existing_agent_id(workspace_id: str, agent_name: str) -> str:
+        """Resolve a persisted workspace agent by name for plans that reuse agents."""
+        if not agent_name:
+            return ""
+        from sqlalchemy import select
+
+        from cognix.storage.database import get_session
+        from cognix.storage.models import AgentModel
+
+        async with get_session() as session:
+            result = await session.execute(
+                select(AgentModel).where(
+                    AgentModel.name == agent_name,
+                    AgentModel.workspace_id == workspace_id,
+                )
+            )
+            agent = result.scalar_one_or_none()
+            return str(agent.id) if agent else ""
+
+    @staticmethod
     async def _apply_create_task(
         workspace_id: str,
         params: dict,
@@ -1604,6 +1644,8 @@ class PlannerService:
         agent_name = params.get("agent_name", "")
         if not agent_id and agent_name and agent_name_to_id:
             agent_id = agent_name_to_id.get(agent_name, "")
+        if not agent_id and agent_name:
+            agent_id = await PlannerService._resolve_existing_agent_id(workspace_id, agent_name)
         if not agent_id:
             raise ValueError(
                 "Cannot create agent task because no agent_id was resolved. "

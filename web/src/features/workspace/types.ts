@@ -46,6 +46,8 @@ export interface ApplyResult {
   artifacts?: string[]
   code_projects?: string[]
   approval_ids?: string[]
+  failed_steps?: string[]
+  failed_step_errors?: Record<string, string>
   plan?: WorkspacePlan
 }
 
