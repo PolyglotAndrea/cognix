@@ -5,7 +5,6 @@ import {
   Check,
   FileText,
   Globe2,
-  History,
   Link2,
   ListChecks,
   MemoryStick,
@@ -17,8 +16,6 @@ import { cn } from '@/shared/lib/cn'
 import { useWorkspaceStore, type NotebookSource } from './store'
 
 const EMPTY_FILES: WorkspaceFile[] = []
-const EMPTY_ARTIFACTS: ArtifactSource[] = []
-const EMPTY_PLANS: WorkspacePlanSource[] = []
 const EMPTY_TASKS: ScheduledTaskSource[] = []
 
 interface WorkspaceFile {
@@ -27,22 +24,6 @@ interface WorkspaceFile {
   is_dir: boolean
   size?: number
   modified_at?: string
-}
-
-interface ArtifactSource {
-  id: string
-  title: string
-  artifact_type: string
-  source: string
-  updated_at: string
-}
-
-interface WorkspacePlanSource {
-  id: string
-  summary: string
-  status: string
-  execution_mode: string
-  created_at?: string
 }
 
 interface ScheduledTaskSource {
@@ -77,23 +58,16 @@ export function SourcesPanel({ workspaceId }: { workspaceId: string }) {
     enabled: !!workspaceId,
   })
 
-  const { data: artifacts = EMPTY_ARTIFACTS } = useQuery<ArtifactSource[]>({
-    queryKey: ['artifacts', workspaceId],
-    queryFn: () => api.get(`/workspaces/${workspaceId}/artifacts`).then((r) => r.data),
-    enabled: !!workspaceId,
-  })
-
-  const { data: plans = EMPTY_PLANS } = useQuery<WorkspacePlanSource[]>({
-    queryKey: ['workspace-plans', workspaceId, 'notebook-tasks'],
-    queryFn: () => api.get(`/workspaces/${workspaceId}/plans`).then((r) => r.data),
-    enabled: !!workspaceId,
-  })
-
   const { data: tasks = EMPTY_TASKS } = useQuery<ScheduledTaskSource[]>({
     queryKey: ['tasks', workspaceId, 'notebook-tasks'],
-    queryFn: () => api.get('/tasks').then((r) => r.data),
+    queryFn: () => api.get('/tasks', { params: { workspace_id: workspaceId } }).then((r) => r.data),
     enabled: !!workspaceId,
-    select: (rows) => rows.filter((task) => !task.workspace_id || task.workspace_id === workspaceId),
+    select: (rows) =>
+      rows.filter(
+        (task) =>
+          task.schedule !== 'once' &&
+          ['active', 'paused'].includes(String(task.state || '').toLowerCase()),
+      ),
   })
 
   const sources = useMemo<SourceItem[]>(() => {
@@ -106,13 +80,6 @@ export function SourcesPanel({ workspaceId }: { workspaceId: string }) {
         subtitle: file.path,
         selected: selected[`file:${file.path}`] ?? true,
       }))
-    const artifactSources = artifacts.slice(0, 12).map((artifact) => ({
-      id: `artifact:${artifact.id}`,
-      kind: 'artifact' as const,
-      title: artifact.title,
-      subtitle: `${artifact.artifact_type} · ${artifact.source}`,
-      selected: selected[`artifact:${artifact.id}`] ?? false,
-    }))
     const memorySource: SourceItem = {
       id: 'memory:workspace',
       kind: 'memory',
@@ -120,17 +87,10 @@ export function SourcesPanel({ workspaceId }: { workspaceId: string }) {
       subtitle: 'Hot, cold, procedural, and approved long-term context',
       selected: selected['memory:workspace'] ?? true,
     }
-    return [memorySource, ...urlSources, ...fileSources, ...artifactSources]
-  }, [artifacts, files, selected, urlSources])
+    return [memorySource, ...urlSources, ...fileSources]
+  }, [files, selected, urlSources])
 
   const taskItems = useMemo(() => {
-    const planItems = plans.slice(0, 8).map((plan) => ({
-      id: `plan:${plan.id}`,
-      kind: 'plan' as const,
-      title: plan.summary || plan.id,
-      subtitle: `${plan.execution_mode || 'once'} · ${plan.status}`,
-      status: plan.status,
-    }))
     const scheduledItems = tasks.slice(0, 10).map((task) => ({
       id: `task:${task.id}`,
       kind: 'task' as const,
@@ -139,8 +99,8 @@ export function SourcesPanel({ workspaceId }: { workspaceId: string }) {
       status: task.state,
       runCount: task.run_count || 0,
     }))
-    return [...planItems, ...scheduledItems]
-  }, [plans, tasks])
+    return scheduledItems
+  }, [tasks])
 
   const filtered = search.trim()
     ? sources.filter((source) =>
@@ -273,7 +233,7 @@ export function SourcesPanel({ workspaceId }: { workspaceId: string }) {
               <ListChecks className="mx-auto mb-2 h-6 w-6 text-muted-foreground/30" />
               <p className="text-xs font-semibold text-muted-foreground">No plans or tasks yet</p>
               <p className="mt-1 text-[10px] leading-4 text-muted-foreground/70">
-                Plans created from chat will appear here and can later become scheduled or long-running tasks.
+                Completed plans stay in chat. Confirm “save as task” after a run to keep it here as a scheduled or long-running task.
               </p>
             </div>
           ) : (
@@ -284,11 +244,7 @@ export function SourcesPanel({ workspaceId }: { workspaceId: string }) {
                 className="flex w-full items-center gap-3 rounded-2xl px-2.5 py-2.5 text-left transition-colors hover:bg-muted/55"
               >
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary/8 text-primary">
-                  {item.kind === 'plan' ? (
-                    <ListChecks className="h-4 w-4" />
-                  ) : (
-                    <CalendarClock className="h-4 w-4" />
-                  )}
+                  <CalendarClock className="h-4 w-4" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="line-clamp-2 text-xs font-semibold leading-4 text-foreground">
@@ -358,7 +314,6 @@ function sameNotebookSources(a: NotebookSource[], b: NotebookSource[]) {
 
 function SourceIcon({ kind }: { kind: SourceItem['kind'] }) {
   if (kind === 'url') return <Globe2 className="h-4 w-4" />
-  if (kind === 'artifact') return <History className="h-4 w-4" />
   if (kind === 'memory') return <MemoryStick className="h-4 w-4" />
   return <FileText className="h-4 w-4" />
 }
