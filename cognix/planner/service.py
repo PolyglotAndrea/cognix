@@ -616,7 +616,7 @@ class PlannerService:
 
         from cognix.local.approvals import ApprovalStore
         from cognix.storage.database import get_session
-        from cognix.storage.models import ScheduledTaskModel, TaskState
+        from cognix.storage.models import ScheduledTaskModel, TaskState, TaskType
 
         store = ApprovalStore()
         if response:
@@ -637,6 +637,7 @@ class PlannerService:
             raise ValueError("Planner approval is missing workspace, plan, or task metadata")
         if not answer:
             raise ValueError("A response is required to continue the planner task")
+        answer_context = self._approval_context_for_task(store, approval, answer)
 
         plan = self._load_plan(workspace_id, plan_id)
         if not plan:
@@ -656,11 +657,24 @@ class PlannerService:
                 f"{original_message}\n\n"
                 "The user has answered the required follow-up questions. "
                 "Use these details to continue the task without asking for the same information again.\n\n"
-                f"{answer}"
+                f"{answer_context}"
             ).strip()
             payload["approval_id"] = approval_id
-            payload["approval_response"] = answer
+            payload["approval_response"] = answer_context
             payload["user_id"] = user_id or payload.get("user_id", "")
+
+            browser_payload = self._browser_payload_from_approval_response(
+                payload=payload,
+                answer_context=answer_context,
+                workspace_id=workspace_id,
+                user_id=user_id,
+                plan_id=plan_id,
+                task_id=task_id,
+            )
+            if browser_payload:
+                payload.update(browser_payload)
+                task.task_type = TaskType.BROWSER_AUTOMATION
+
             task.payload = json.dumps(payload, ensure_ascii=False)
             task.state = TaskState.ACTIVE
 
@@ -765,6 +779,105 @@ class PlannerService:
             "artifacts": artifacts,
             "approval_ids": approval_ids,
             "plan": plan.to_dict(),
+        }
+
+    @staticmethod
+    def _approval_context_for_task(store: Any, approval: Any, answer: str) -> str:
+        """Include prior answers for the same task so continuation approvals keep context."""
+        task_id = str(approval.metadata.get("task_id") or approval.arguments.get("task_id") or "")
+        parts = [answer.strip()]
+        if task_id:
+            try:
+                related = [
+                    item
+                    for item in store.list_all(include_resolved=True)
+                    if item.id != approval.id
+                    and item.metadata.get("source") == "plan_apply"
+                    and (
+                        item.metadata.get("task_id") == task_id
+                        or item.arguments.get("task_id") == task_id
+                    )
+                    and item.response
+                ]
+                related.sort(key=lambda item: item.updated_at)
+                for item in related[-3:]:
+                    response = str(item.response or "").strip()
+                    if response and response not in parts:
+                        parts.append(response)
+            except Exception:
+                logger.debug("Failed to merge related approval responses", exc_info=True)
+        return "\n\n".join(part for part in parts if part).strip()
+
+    @classmethod
+    def _browser_payload_from_approval_response(
+        cls,
+        *,
+        payload: dict[str, Any],
+        answer_context: str,
+        workspace_id: str,
+        user_id: str | None,
+        plan_id: str,
+        task_id: str,
+    ) -> dict[str, Any] | None:
+        """Upgrade legacy agent_call browser tasks to real browser_automation tasks."""
+        if str(payload.get("task_type") or "agent_call") == "browser_automation":
+            return None
+
+        objective = " ".join(
+            str(value or "")
+            for value in (
+                payload.get("objective"),
+                payload.get("message"),
+                payload.get("input"),
+                payload.get("name"),
+                answer_context,
+            )
+        )
+        if not cls._is_browser_intent(objective):
+            return None
+
+        approved = any(
+            token in answer_context
+            for token in (
+                "我批准",
+                "已批准",
+                "授权",
+                "合法授权",
+                "可访问",
+                "浏览器自动化",
+            )
+        )
+        url = (
+            str(payload.get("url") or payload.get("target_url") or "").strip()
+            or cls._extract_first_url(answer_context)
+            or cls._extract_first_url(objective)
+        )
+        if not approved or not url:
+            return None
+
+        return {
+            "task_type": "browser_automation",
+            "task_id": task_id,
+            "name": payload.get("name") or "browser-automation-task",
+            "objective": objective.strip(),
+            "url": url,
+            "engine": cls._select_browser_engine(answer_context or objective, {}),
+            "profile": payload.get("profile") or "default",
+            "cdp_endpoint": payload.get("cdp_endpoint") or "",
+            "selectors": payload.get("selectors") or {},
+            "extract_text": payload.get("extract_text", True),
+            "extract_links": payload.get("extract_links", True),
+            "extract_tables": payload.get("extract_tables", True),
+            "screenshot": payload.get("screenshot", True),
+            "wait_for_selector": payload.get("wait_for_selector", ""),
+            "permission_mode": payload.get("permission_mode", "workspace-write"),
+            "workspace_id": workspace_id,
+            "user_id": user_id or payload.get("user_id", ""),
+            "plan_id": plan_id,
+            "step_id": payload.get("step_id", ""),
+            "artifact_title": payload.get("artifact_title")
+            or payload.get("name")
+            or "Browser Automation Result",
         }
 
     def reject_plan(self, workspace_id: str, plan_id: str) -> dict:
