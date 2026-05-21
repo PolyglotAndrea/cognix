@@ -506,7 +506,10 @@ class PlannerService:
                 )
                 if artifact_id:
                     artifacts.append(artifact_id)
-                if self._result_needs_input(exec_result):
+                if self._result_blocked_by_capability(exec_result):
+                    plan.step_statuses[step_id] = "failed"
+                    failed_steps.append(step_id)
+                elif self._result_needs_input(exec_result):
                     approval_id = self._create_question_approval(
                         workspace_id=workspace_id,
                         plan_id=plan_id,
@@ -653,6 +656,10 @@ class PlannerService:
         approval_ids: list[str] = []
 
         if task_failed:
+            if step_id:
+                plan.step_statuses[step_id] = "failed"
+            plan.status = "failed"
+        elif self._result_blocked_by_capability(exec_result):
             if step_id:
                 plan.step_statuses[step_id] = "failed"
             plan.status = "failed"
@@ -1383,25 +1390,52 @@ class PlannerService:
         text = str(exec_result.get("result") or "")
         if not text:
             return False
+        if PlannerService._result_blocked_by_capability(exec_result):
+            return False
         signals = (
             "请提供",
-            "还缺",
-            "缺少",
-            "需要你",
-            "需要您",
+            "请一次性回复",
+            "请明确回复",
+            "请说明",
+            "请补充",
+            "还缺少关键信息",
+            "缺少关键信息",
             "等待批准",
             "等待确认",
+            "等待你",
+            "等待您",
             "人工登录",
             "二次验证",
-            "目标入口",
-            "授权确认",
             "provide",
             "need you to",
-            "missing",
+            "missing information",
             "waiting for approval",
         )
         lowered = text.lower()
         return any(signal.lower() in lowered for signal in signals)
+
+    @staticmethod
+    def _result_blocked_by_capability(exec_result: dict) -> bool:
+        """Detect outputs that are blocked by missing execution capability, not user input."""
+        if exec_result.get("status") == "failure" or exec_result.get("error"):
+            return False
+        text = str(exec_result.get("result") or "").lower()
+        if not text:
+            return False
+        blockers = (
+            "未暴露可直接实际点击网页",
+            "未接入可实际操作页面",
+            "未接入实际浏览器执行通道",
+            "未提供可直接执行网页操作",
+            "无法在本条消息内真正发起浏览器",
+            "无法在本轮消息内完成真实页面",
+            "只有“规划与结果模板”能力",
+            "只能完成合规规划",
+            "browser runtime",
+            "playwright 执行接口",
+            "browser_automation / browser_mcp / playwright",
+        )
+        return any(signal.lower() in text for signal in blockers)
 
     @staticmethod
     def _create_question_approval(
