@@ -36,6 +36,26 @@ interface StoredMessage {
   metadata?: Record<string, unknown>
 }
 
+interface ApprovalRequest {
+  id: string
+  kind: string
+  status: string
+  reason: string
+  tool_name?: string
+  arguments?: Record<string, unknown>
+  response?: string
+  result?: string
+  metadata?: Record<string, unknown>
+}
+
+interface ConversationRun {
+  id: string
+  state: string
+  chat_id: string
+  intent?: Record<string, unknown>
+  requirements?: Array<Record<string, unknown>>
+}
+
 type AssistantMessage = ThreadMessageLike & {
   id: string
   role: 'system' | 'user' | 'assistant'
@@ -210,7 +230,13 @@ function ThinkingCard({ loading }: { loading: LoadingState }) {
   )
 }
 
-function AssistantSurface({ runtime }: { runtime: ReturnType<typeof useExternalStoreRuntime> }) {
+function AssistantSurface({
+  runtime,
+  workflowPanel,
+}: {
+  runtime: ReturnType<typeof useExternalStoreRuntime>
+  workflowPanel?: React.ReactNode
+}) {
   return (
     <AssistantRuntimeProvider runtime={runtime}>
       <ThreadPrimitive.Root className="flex h-full min-h-0 flex-col">
@@ -229,6 +255,7 @@ function AssistantSurface({ runtime }: { runtime: ReturnType<typeof useExternalS
               </div>
             </ThreadPrimitive.Empty>
             <ThreadPrimitive.Messages components={{ Message: CognixAssistantMessage }} />
+            {workflowPanel}
           </div>
         </ThreadPrimitive.Viewport>
         <ThreadPrimitive.ViewportFooter className="border-t border-border/80 bg-background/95 px-5 py-4">
@@ -270,6 +297,93 @@ export function CognixAssistantConversation({
       api.get(`/workspaces/${workspaceId}/chats/${activeChatId}/messages`).then((r) => r.data),
     enabled: !!workspaceId && !!activeChatId && !isRunning,
   })
+
+  const { data: latestRun } = useQuery<ConversationRun | null>({
+    queryKey: ['conversation-run-latest', workspaceId, activeChatId],
+    queryFn: () =>
+      api
+        .get(`/workspaces/${workspaceId}/runs/latest`, { params: { chat_id: activeChatId } })
+        .then((r) => r.data)
+        .catch((error) => {
+          if (error?.response?.status === 404) return null
+          throw error
+        }),
+    enabled: !!workspaceId && !!activeChatId,
+    refetchOnWindowFocus: false,
+  })
+
+  const { data: approvals = [] } = useQuery<ApprovalRequest[]>({
+    queryKey: ['approvals', workspaceId, activeChatId],
+    queryFn: () =>
+      api
+        .get('/approvals', {
+          params: {
+            workspace_id: workspaceId,
+            chat_id: activeChatId,
+            include_resolved: false,
+          },
+        })
+        .then((r) => r.data),
+    enabled: !!workspaceId && !!activeChatId,
+    refetchOnWindowFocus: false,
+  })
+
+  const pendingApproval = approvals.find(
+    (approval) =>
+      approval.kind === 'question' &&
+      (approval.status === 'pending' ||
+        (approval.status === 'approved' && Boolean(approval.response) && !approval.result)),
+  )
+
+  const refreshWorkflowState = useCallback(
+    async (chatId: string | null | undefined) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['approvals', workspaceId, chatId] }),
+        queryClient.invalidateQueries({ queryKey: ['conversation-run-latest', workspaceId, chatId] }),
+        queryClient.invalidateQueries({ queryKey: ['workspace-chat-messages', workspaceId, chatId] }),
+        queryClient.invalidateQueries({ queryKey: ['artifacts', workspaceId, chatId] }),
+        queryClient.invalidateQueries({ queryKey: ['workspace-events', workspaceId] }),
+      ])
+    },
+    [queryClient, workspaceId],
+  )
+
+  const handleApprovalSubmit = useCallback(
+    async (approval: ApprovalRequest, response: string) => {
+      const question =
+        approval.reason ||
+        String(approval.arguments?.question || approval.metadata?.question || '')
+      const match = question.match(/approval_id[：:]\s*`?([a-f0-9]+)`?/i)
+      if (match) {
+        await api.post(`/approvals/${match[1]}/approve`).catch(() => null)
+      }
+      const endpoint =
+        approval.metadata?.source === 'plan_apply'
+          ? `/approvals/${approval.id}/resume-and-continue`
+          : `/approvals/${approval.id}/respond`
+      await api.post(endpoint, { response })
+      await refreshWorkflowState(activeChatId)
+      setMessages((current) => [
+        ...current,
+        {
+          id: crypto.randomUUID(),
+          role: 'user',
+          content: response,
+          createdAt: new Date(),
+          metadata: { custom: { local: true, approval_id: approval.id } },
+        },
+        {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: '我已收到补充信息，正在继续推进任务。',
+          createdAt: new Date(),
+          status: { type: 'complete', reason: 'stop' },
+          metadata: { custom: { local: true, approval_id: approval.id } },
+        },
+      ])
+    },
+    [activeChatId, refreshWorkflowState],
+  )
 
   useEffect(() => {
     if (!storedMessages || isRunning) return
@@ -505,6 +619,7 @@ export function CognixAssistantConversation({
               : message,
           ),
         )
+        await refreshWorkflowState(chatId)
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to send message.'
         setMessages((current) =>
@@ -526,6 +641,7 @@ export function CognixAssistantConversation({
         setIsRunning(false)
         queryClient.invalidateQueries({ queryKey: ['workspace-chats', workspaceId] })
         queryClient.invalidateQueries({ queryKey: ['workspace-chat-messages', workspaceId, chatId] })
+        refreshWorkflowState(chatId)
       }
     },
     [
@@ -535,6 +651,7 @@ export function CognixAssistantConversation({
       isRunning,
       notebookSources,
       queryClient,
+      refreshWorkflowState,
       workspaceId,
     ],
   )
@@ -562,5 +679,150 @@ export function CognixAssistantConversation({
     ),
   )
 
-  return <AssistantSurface runtime={runtime} />
+  return (
+    <AssistantSurface
+      runtime={runtime}
+      workflowPanel={
+        <WorkflowStatePanel
+          latestRun={latestRun}
+          pendingApproval={pendingApproval}
+          busy={isRunning}
+          onSubmit={handleApprovalSubmit}
+        />
+      }
+    />
+  )
+}
+
+function WorkflowStatePanel({
+  latestRun,
+  pendingApproval,
+  busy,
+  onSubmit,
+}: {
+  latestRun?: ConversationRun | null
+  pendingApproval?: ApprovalRequest
+  busy: boolean
+  onSubmit: (approval: ApprovalRequest, response: string) => Promise<void>
+}) {
+  const [value, setValue] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    setValue('')
+    setError('')
+  }, [pendingApproval?.id])
+
+  if (!pendingApproval) return null
+
+  const question =
+    pendingApproval.reason ||
+    String(pendingApproval.arguments?.question || pendingApproval.metadata?.question || '') ||
+    'Cognix needs more information before it can continue.'
+  const isUrlQuestion = /url|网址|入口|后台|链接/i.test(question)
+  const intentSummary =
+    String(latestRun?.intent?.summary || latestRun?.intent?.description || '') ||
+    '已识别你想让 Cognix 完成一个需要工作区能力支持的任务。'
+
+  const handleContinue = async () => {
+    const trimmed = value.trim()
+    if (!trimmed) {
+      setError(isUrlQuestion ? '请先填写目标页面 URL。' : '请先填写补充信息。')
+      return
+    }
+    if (isUrlQuestion) {
+      try {
+        const parsed = new URL(trimmed)
+        if (!['http:', 'https:'].includes(parsed.protocol)) {
+          setError('URL 需要以 http:// 或 https:// 开头。')
+          return
+        }
+      } catch {
+        setError('请输入有效 URL，例如 https://example.com。')
+        return
+      }
+    }
+    setSubmitting(true)
+    setError('')
+    try {
+      await onSubmit(pendingApproval, trimmed)
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="flex w-full justify-start">
+      <div className="w-full max-w-3xl rounded-3xl border border-amber-500/25 bg-amber-50/70 p-5 shadow-sm">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="text-[10px] font-black uppercase tracking-widest text-amber-700">
+              Needs input
+            </div>
+            <h3 className="mt-1 text-base font-black text-foreground">
+              我先确认意图，再补齐执行信息
+            </h3>
+          </div>
+          <span className="rounded-full border border-amber-500/30 bg-white px-3 py-1 text-[10px] font-black uppercase tracking-widest text-amber-700">
+            Pending
+          </span>
+        </div>
+
+        <div className="mt-4 grid gap-3">
+          <div className="rounded-2xl border border-border/70 bg-white/80 p-4">
+            <div className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-emerald-700">
+              <CheckCircle2 className="h-4 w-4" />
+              Step 1 · Intent understood
+            </div>
+            <p className="mt-2 text-sm leading-6 text-foreground">{intentSummary}</p>
+          </div>
+
+          <div className="rounded-2xl border border-amber-500/25 bg-white p-4">
+            <div className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-amber-700">
+              <Loader2 className="h-4 w-4" />
+              Step 2 · Missing information
+            </div>
+            <p className="mt-2 text-sm font-bold leading-6 text-foreground">
+              {isUrlQuestion
+                ? '为了安全执行浏览器自动化，我需要先确认目标入口。'
+                : '继续前还需要你补充下面的信息。'}
+            </p>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">{question}</p>
+            <div className="mt-4 flex gap-2">
+              <input
+                value={value}
+                onChange={(event) => {
+                  setValue(event.target.value)
+                  setError('')
+                }}
+                placeholder={isUrlQuestion ? '粘贴目标页面 URL' : '填写补充信息'}
+                className="h-11 min-w-0 flex-1 rounded-xl border border-border bg-background px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/15"
+              />
+              <button
+                type="button"
+                disabled={busy || submitting}
+                onClick={handleContinue}
+                className="inline-flex h-11 items-center gap-2 rounded-xl bg-primary px-4 text-xs font-black text-primary-foreground shadow-sm transition hover:bg-primary/90 disabled:opacity-40"
+              >
+                {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                Continue
+              </button>
+            </div>
+            {error && <div className="mt-2 text-xs font-bold text-rose-600">{error}</div>}
+          </div>
+
+          <div className="rounded-2xl border border-border/70 bg-white/70 p-4">
+            <div className="flex items-center gap-2 text-xs font-black uppercase tracking-widest text-muted-foreground">
+              <Circle className="h-4 w-4" />
+              Step 3 · Plan and execute
+            </div>
+            <p className="mt-2 text-xs leading-5 text-muted-foreground">
+              信息补齐后，Cognix 会继续生成或恢复执行计划，再根据需要调用浏览器、Skill、MCP、CLI 或其他内部能力。
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
 }
