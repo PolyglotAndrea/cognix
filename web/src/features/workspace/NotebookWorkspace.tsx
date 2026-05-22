@@ -4,6 +4,7 @@ import { SourcesPanel } from './SourcesPanel'
 import { SimpleMode } from './SimpleMode'
 import { StudioPanel } from './StudioPanel'
 import { useWorkspaceStore } from './store'
+import { CognixAssistantConversation } from './assistant/CognixAssistantConversation'
 
 export function NotebookWorkspace({
   workspaceId,
@@ -18,6 +19,7 @@ export function NotebookWorkspace({
     autoSubmit?: boolean
   } | null>(null)
   const notebookSources = useWorkspaceStore((state) => state.notebookSources)
+  const assistantUiEnabled = import.meta.env.VITE_COGNIX_ASSISTANT_UI === 'true'
 
   const handleStudioIntent = (intent: string) => {
     const sourceLabel =
@@ -48,12 +50,19 @@ export function NotebookWorkspace({
             </div>
           </div>
           <div className="min-h-0 flex-1">
-            <SimpleMode
-              workspaceId={workspaceId}
-              onSwitchToAdvanced={onSwitchToAdvanced}
-              requestedIntent={requestedIntent}
-              embedded
-            />
+            {assistantUiEnabled ? (
+              <CognixAssistantConversation
+                workspaceId={workspaceId}
+                requestedIntent={requestedIntent}
+              />
+            ) : (
+              <SimpleMode
+                workspaceId={workspaceId}
+                onSwitchToAdvanced={onSwitchToAdvanced}
+                requestedIntent={requestedIntent}
+                embedded
+              />
+            )}
           </div>
         </section>
 
