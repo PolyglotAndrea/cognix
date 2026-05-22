@@ -67,6 +67,9 @@ async def approval_suggestions(
 
     current_text = _approval_text(current)
     current_tokens = _tokens(current_text)
+    from cognix.local.home import CognixHome
+    from cognix.memory.facts import AtomicFactStore
+
     rows = store.list_all(
         workspace_id=current.workspace_id,
         include_resolved=True,
@@ -101,6 +104,22 @@ async def approval_suggestions(
                 created_at=item.created_at,
             )
         )
+    fact_store = AtomicFactStore(CognixHome.default().ensure().state_db)
+    for fact in await fact_store.search(current_text, workspace_id=current.workspace_id, limit=5):
+        response = fact.value.strip()
+        if not response or response in seen:
+            continue
+        seen.add(response)
+        suggestions.append(
+            ApprovalSuggestion(
+                approval_id=fact.id,
+                response=response,
+                reason=f"Stable fact: {fact.compact()}",
+                score=round(8.0 + fact.confidence, 4),
+                created_at=fact.updated_at,
+                source="atomic_fact",
+            )
+        )
     suggestions.sort(key=lambda row: row.score, reverse=True)
     return suggestions[: max(1, min(limit, 10))]
 
@@ -110,9 +129,12 @@ async def approve_request(
     approval_id: str,
     user: CurrentUser = Depends(require_agents_write),
 ) -> dict:
-    approval = ApprovalStore().approve(approval_id)
+    store = ApprovalStore()
+    approval = store.approve(approval_id)
     if not approval:
         raise HTTPException(404, "Approval not found")
+    if approval.kind == "memory_write":
+        approval = await _persist_memory_write_approval(store, approval)
     return approval.__dict__
 
 
@@ -122,9 +144,12 @@ async def respond_request(
     body: ApprovalResponseBody,
     user: CurrentUser = Depends(require_agents_write),
 ) -> dict:
-    approval = ApprovalStore().respond(approval_id, body.response)
+    store = ApprovalStore()
+    approval = store.respond(approval_id, body.response)
     if not approval:
         raise HTTPException(404, "Approval not found")
+    if approval.kind == "memory_write":
+        approval = await _persist_memory_write_approval(store, approval)
     return approval.__dict__
 
 
@@ -150,6 +175,9 @@ async def resume_approval(
     approval = ApprovalStore().get(approval_id)
     if not approval:
         raise HTTPException(404, "Approval not found")
+    if approval.kind == "memory_write":
+        approval = await _persist_memory_write_approval(ApprovalStore(), approval)
+        return {"approval_id": approval_id, "result": approval.result}
 
     if approval.metadata.get("runtime") == "claude-agent-sdk":
         from cognix.claude.runtime import ClaudeAgentRuntime
@@ -183,6 +211,14 @@ async def resume_and_continue(
     approval = ApprovalStore().get(approval_id)
     if not approval:
         raise HTTPException(404, "Approval not found")
+    if approval.kind == "memory_write":
+        approval = await _persist_memory_write_approval(ApprovalStore(), approval)
+        return {
+            "approval_id": approval_id,
+            "runtime": "memory",
+            "content": approval.result,
+            "events": [{"type": "memory.write.completed", "data": approval.__dict__}],
+        }
 
     if approval.metadata.get("source") == "plan_apply":
         from cognix.planner.service import PlannerService
@@ -267,6 +303,19 @@ async def resume_and_continue_stream(
     approval = ApprovalStore().get(approval_id)
     if not approval:
         raise HTTPException(404, "Approval not found")
+    if approval.kind == "memory_write":
+        approval = await _persist_memory_write_approval(ApprovalStore(), approval)
+
+        async def memory_event_generator():
+            yield encode_sse_event(
+                AgentEvent(
+                    "memory.write.completed",
+                    {"approval_id": approval_id, "result": approval.result},
+                )
+            )
+            yield encode_sse_event(AgentEvent("done", {"finish_reason": "stop"}))
+
+        return StreamingResponse(memory_event_generator(), media_type="text/event-stream")
 
     if approval.metadata.get("source") == "plan_apply":
 
@@ -356,6 +405,8 @@ def _tokens(text: str) -> set[str]:
 
 
 def _approval_similarity(*, current_tokens: set[str], current, candidate) -> float:
+    from cognix.memory.vector import cosine_similarity, text_vector
+
     candidate_tokens = _tokens(_approval_text(candidate))
     score = 0.0
     if current.tool_name and candidate.tool_name == current.tool_name:
@@ -370,9 +421,74 @@ def _approval_similarity(*, current_tokens: set[str], current, candidate) -> flo
         overlap = len(current_tokens & candidate_tokens)
         union = len(current_tokens | candidate_tokens)
         score += (overlap / union) * 10
+    score += (
+        cosine_similarity(text_vector(_approval_text(current)), text_vector(_approval_text(candidate)))
+        * 8
+    )
     if "目标入口" in candidate.response or "登录方式" in candidate.response:
         score += 1.0
     return score
+
+
+async def _persist_memory_write_approval(store: ApprovalStore, approval) -> object:
+    """Persist a previously gated memory write after human approval."""
+    if approval.status == "completed" and approval.result:
+        return approval
+
+    from cognix.local.home import CognixHome
+    from cognix.memory.extractor import MemoryExtractor
+    from cognix.memory.facts import AtomicFactStore
+    from cognix.memory.pipeline import ColdMemoryStore
+
+    home = CognixHome.default().ensure()
+    user_message = str(approval.arguments.get("user_message") or "")
+    assistant_message = str(approval.arguments.get("assistant_message") or "")
+    content = f"User: {user_message}\nAssistant: {assistant_message}".strip()
+    if not user_message.strip():
+        raise HTTPException(400, "Memory write approval is missing user_message")
+
+    record = await ColdMemoryStore(home.state_db).remember(
+        content,
+        workspace_id=approval.workspace_id,
+        scope="agent",
+        kind="conversation",
+        summary=content[:700],
+        metadata={
+            "agent_id": approval.agent_id,
+            "approval_id": approval.id,
+            "source": "memory_write_approval",
+        },
+        importance=0.65,
+    )
+
+    fact_store = AtomicFactStore(home.state_db)
+    facts = MemoryExtractor().extract(
+        user_message,
+        assistant_message,
+        workspace_id=approval.workspace_id,
+        metadata={"agent_id": approval.agent_id, "approval_id": approval.id},
+    )
+    saved_facts = []
+    for fact in facts:
+        saved = await fact_store.upsert(
+            workspace_id=approval.workspace_id,
+            entity_type=fact.entity_type,
+            entity_id=fact.entity_id,
+            key=fact.key,
+            value=fact.value,
+            confidence=fact.confidence,
+            source="memory_write_approval",
+            source_ref=record.id,
+            metadata={**fact.metadata, "agent_id": approval.agent_id, "approval_id": approval.id},
+        )
+        saved_facts.append(saved.id)
+
+    result = (
+        f"Memory persisted after approval. cold_memory_id={record.id}; "
+        f"atomic_facts={len(saved_facts)}"
+    )
+    completed = store.complete(approval.id, result)
+    return completed or approval
 
 
 @router.post("/{approval_id}/resume/stream")

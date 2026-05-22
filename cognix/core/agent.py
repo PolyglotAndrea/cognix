@@ -1064,18 +1064,17 @@ class Agent:
         # Memory write approval gate for restricted permission modes
         if self.permission_mode in ("ask", "plan") and self.workspace_id:
             try:
-                from cognix.local.approvals import ApprovalKind, create_approval_request
+                from cognix.local.approvals import ApprovalStore
 
-                await create_approval_request(
+                ApprovalStore().create(
                     workspace_id=self.workspace_id,
-                    kind=ApprovalKind.MEMORY_WRITE,
+                    kind="memory_write",
                     tool_name="memory.write",
-                    request_args={
+                    arguments={
                         "user_message": user_message[:200],
                         "assistant_message": assistant_message[:200],
                     },
                     agent_id=self.id,
-                    policy_decision="ask",
                     access_level="ask",
                     reason=f"Agent {self.name} wants to persist conversation to memory",
                 )

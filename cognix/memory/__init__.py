@@ -10,8 +10,10 @@ from cognix.memory.pipeline import (
     HotMemory,
     ProceduralMemory,
 )
+from cognix.memory.query_rewrite import QueryRewriter, RewrittenQuery
 from cognix.memory.router import MemoryRouter, MessageCategory
 from cognix.memory.vault import MemoryVault
+from cognix.memory.vector import cosine_similarity, text_vector
 
 __all__ = [
     "AtomicFact",
@@ -27,4 +29,8 @@ __all__ = [
     "MemoryVault",
     "MessageCategory",
     "ProceduralMemory",
+    "QueryRewriter",
+    "RewrittenQuery",
+    "cosine_similarity",
+    "text_vector",
 ]

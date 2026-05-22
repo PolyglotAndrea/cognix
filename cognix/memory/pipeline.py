@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -16,6 +17,8 @@ import aiosqlite
 from cognix.local.home import CognixHome
 from cognix.local.workspace import WorkspaceManager
 from cognix.memory.facts import AtomicFact, AtomicFactStore
+from cognix.memory.query_rewrite import QueryRewriter
+from cognix.memory.vector import cosine_similarity, text_vector
 
 
 @dataclass
@@ -49,6 +52,10 @@ class ColdMemoryRecord:
     kind: str = "message"
     metadata: dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    importance: float = 0.5
+    access_count: int = 0
+    last_accessed_at: str = ""
+    embedding: list[float] = field(default_factory=list)
 
     def compact(self, max_chars: int = 700) -> str:
         text = self.summary or self.content
@@ -216,13 +223,27 @@ class ColdMemoryStore:
                     content TEXT NOT NULL,
                     summary TEXT NOT NULL DEFAULT '',
                     metadata_json TEXT NOT NULL DEFAULT '{}',
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL,
+                    importance REAL NOT NULL DEFAULT 0.5,
+                    access_count INTEGER NOT NULL DEFAULT 0,
+                    last_accessed_at TEXT NOT NULL DEFAULT '',
+                    embedding_json TEXT NOT NULL DEFAULT '[]'
                 )
             """)
             await db.execute("""
                 CREATE VIRTUAL TABLE IF NOT EXISTS cold_memory_fts
                 USING fts5(id UNINDEXED, content, summary)
             """)
+            for stmt in (
+                "ALTER TABLE cold_memory ADD COLUMN importance REAL NOT NULL DEFAULT 0.5",
+                "ALTER TABLE cold_memory ADD COLUMN access_count INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE cold_memory ADD COLUMN last_accessed_at TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE cold_memory ADD COLUMN embedding_json TEXT NOT NULL DEFAULT '[]'",
+            ):
+                try:
+                    await db.execute(stmt)
+                except Exception:
+                    pass
             await db.commit()
         self._initialized = True
 
@@ -232,8 +253,9 @@ class ColdMemoryStore:
             await db.execute(
                 """
                 INSERT OR REPLACE INTO cold_memory (
-                    id, workspace_id, scope, kind, content, summary, metadata_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    id, workspace_id, scope, kind, content, summary, metadata_json, created_at,
+                    importance, access_count, last_accessed_at, embedding_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.id,
@@ -244,6 +266,10 @@ class ColdMemoryStore:
                     record.summary,
                     json.dumps(record.metadata, ensure_ascii=False),
                     record.created_at,
+                    record.importance,
+                    record.access_count,
+                    record.last_accessed_at,
+                    json.dumps(record.embedding or text_vector(record.summary or record.content)),
                 ),
             )
             await db.execute("DELETE FROM cold_memory_fts WHERE id = ?", (record.id,))
@@ -262,6 +288,7 @@ class ColdMemoryStore:
         kind: str = "message",
         summary: str = "",
         metadata: dict[str, Any] | None = None,
+        importance: float = 0.5,
     ) -> ColdMemoryRecord:
         record = ColdMemoryRecord(
             id=uuid.uuid4().hex,
@@ -271,6 +298,8 @@ class ColdMemoryStore:
             content=content,
             summary=summary,
             metadata=metadata or {},
+            importance=importance,
+            embedding=text_vector(summary or content),
         )
         await self.add(record)
         try:
@@ -291,15 +320,29 @@ class ColdMemoryStore:
         limit: int = 5,
     ) -> list[ColdMemoryRecord]:
         await self.init()
-        normalized = self._fts_query(query)
+        rewritten = await QueryRewriter(AtomicFactStore(self.db_path)).rewrite(
+            query,
+            workspace_id=workspace_id,
+        )
+        search_query = rewritten.rewritten
+        normalized = self._fts_query(search_query)
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
+            rows: list[aiosqlite.Row] = []
             if normalized:
                 rows = await self._search_fts(db, normalized, workspace_id, limit)
                 if rows:
-                    return [self._row_to_record(row) for row in rows]
-            rows = await self._search_like(db, query, workspace_id, limit)
-            return [self._row_to_record(row) for row in rows]
+                    records = [self._row_to_record(row) for row in rows]
+                    ranked = self._rank_records(records, search_query)
+                    await self._mark_accessed(db, [record.id for record in ranked])
+                    return ranked[:limit]
+            rows = await self._search_like(db, search_query, workspace_id, limit)
+            records = [self._row_to_record(row) for row in rows]
+            vector_records = await self._search_vector(db, search_query, workspace_id, limit)
+            merged = {record.id: record for record in [*records, *vector_records]}
+            ranked = self._rank_records(list(merged.values()), search_query)
+            await self._mark_accessed(db, [record.id for record in ranked[:limit]])
+            return ranked[:limit]
 
     async def _search_fts(
         self,
@@ -362,7 +405,67 @@ class ColdMemoryStore:
             summary=row["summary"],
             metadata=json.loads(row["metadata_json"] or "{}"),
             created_at=row["created_at"],
+            importance=float(row["importance"] or 0.5),
+            access_count=int(row["access_count"] or 0),
+            last_accessed_at=row["last_accessed_at"] or "",
+            embedding=json.loads(row["embedding_json"] or "[]"),
         )
+
+    async def _search_vector(
+        self,
+        db: aiosqlite.Connection,
+        query: str,
+        workspace_id: str | None,
+        limit: int,
+    ) -> list[ColdMemoryRecord]:
+        where = ""
+        params: list[Any] = []
+        if workspace_id:
+            where = "WHERE (workspace_id = ? OR workspace_id IS NULL)"
+            params.append(workspace_id)
+        params.append(max(limit * 8, 40))
+        cursor = await db.execute(
+            f"SELECT * FROM cold_memory {where} ORDER BY created_at DESC LIMIT ?",
+            params,
+        )
+        candidates = [self._row_to_record(row) for row in await cursor.fetchall()]
+        return self._rank_records(candidates, query)[:limit]
+
+    @staticmethod
+    def _rank_records(records: list[ColdMemoryRecord], query: str) -> list[ColdMemoryRecord]:
+        query_vector = text_vector(query)
+        now = datetime.now(UTC)
+
+        def score(record: ColdMemoryRecord) -> float:
+            vector_score = cosine_similarity(query_vector, record.embedding or text_vector(record.compact()))
+            try:
+                age_days = max(
+                    0.0,
+                    (now - datetime.fromisoformat(record.created_at)).total_seconds() / 86400,
+                )
+            except Exception:
+                age_days = 0.0
+            decay = math.exp(-age_days / 90)
+            access_boost = min(0.2, record.access_count * 0.02)
+            return vector_score * 0.65 + record.importance * 0.25 + decay * 0.08 + access_boost
+
+        return sorted(records, key=score, reverse=True)
+
+    @staticmethod
+    async def _mark_accessed(db: aiosqlite.Connection, ids: list[str]) -> None:
+        if not ids:
+            return
+        now = datetime.now(UTC).isoformat()
+        for memory_id in ids:
+            await db.execute(
+                """
+                UPDATE cold_memory
+                SET access_count = access_count + 1, last_accessed_at = ?
+                WHERE id = ?
+                """,
+                (now, memory_id),
+            )
+        await db.commit()
 
     async def compress(
         self,

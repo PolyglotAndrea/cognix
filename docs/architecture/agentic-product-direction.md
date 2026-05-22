@@ -483,17 +483,24 @@ Initial implementation status:
   context.
 - `ContextBuilder` injects atomic facts as `Stable Facts` before cold episodic
   recall, keeping high-value context low-token and updateable.
-- Agent memory writes now respect `permission_mode=ask|plan`: a memory-write
-  approval is created and durable memory persistence is blocked until a later
-  approved write path is implemented.
+- Agent memory writes now respect `permission_mode=ask|plan`: a `memory_write`
+  approval is created, durable memory persistence is blocked, and approval
+  resume persists the cold memory plus extracted atomic facts.
+- Query rewrite expands short/coreference-heavy queries with stable facts before
+  memory retrieval, improving cases such as "上次那个入口".
+- Cold memory now stores local hashed vectors, importance, access count, and
+  last-access timestamps. Search ranking combines vector similarity,
+  importance, recency decay, and access boost.
+- HITL answer suggestions now combine recent approval history, local vector
+  similarity, and atomic facts.
 - `/api/v1/memory/facts` can list and upsert atomic facts. `/memory/remember`
   can also extract facts while storing cold memory.
 
 Next evaluation point:
 
-- Add vector retrieval only after the atomic fact layer is producing useful
-  memory candidates. The first vector target should be episodic cold memory and
-  approval-answer suggestions, not stable KV facts.
+- The current vector layer is dependency-free hashed vectors. Replace it with
+  sqlite-vec, pgvector, or provider embeddings only after observing real recall
+  gaps in cold memory and HITL suggestions.
 - Add graph storage only if cross-entity relationship traversal becomes a core
   workflow, for example user -> workspace -> system -> recurring task ->
   artifact lineage. Until then, SQLite facts plus source attribution are enough.
@@ -695,9 +702,12 @@ Initial implementation status:
 Initial implementation status:
 
 - Atomic fact storage, deterministic extraction, context injection, manual fact
-  APIs, and memory-write blocking for restricted permission modes are in place.
-- Remaining work: approved memory-write resume path, vector-backed similarity,
-  decay/importance scoring, query rewrite, and artifact-to-memory approval UI.
+  APIs, memory-write blocking and approved resume persistence are in place.
+- Query rewrite, cold-memory vector fallback, decay/importance scoring, and
+  atomic-fact HITL suggestions are in place.
+- Remaining work: artifact-to-memory approval UI, model-backed extraction,
+  explicit conflict review for sensitive facts, and optional external vector or
+  graph storage after usage data justifies it.
 
 ### Phase 8: Multi-Language
 

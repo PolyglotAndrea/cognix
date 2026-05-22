@@ -5,8 +5,10 @@ from __future__ import annotations
 import pytest
 
 from cognix.core.agent import Agent
+from cognix.local.approvals import ApprovalStore
 from cognix.local.home import CognixHome
 from cognix.local.workspace import WorkspaceManager
+from cognix.memory.query_rewrite import QueryRewriter
 from cognix.memory.extractor import MemoryExtractor
 from cognix.memory.facts import AtomicFactStore
 from cognix.memory.pipeline import ColdMemoryStore, ContextBuilder
@@ -177,3 +179,73 @@ async def test_agent_memory_write_approval_blocks_persistence(tmp_path, monkeypa
     store = ColdMemoryStore(CognixHome.default().ensure().state_db)
     results = await store.search("markdown-report", workspace_id="ws-test")
     assert results == []
+
+
+@pytest.mark.asyncio
+async def test_memory_write_approval_persists_after_approval(tmp_path, monkeypatch):
+    monkeypatch.setenv("COGNIX_HOME", str(tmp_path / ".cognix"))
+    from cognix.api.routes.approvals import _persist_memory_write_approval
+
+    store = ApprovalStore(CognixHome.default().ensure())
+    approval = store.create(
+        agent_id="agent-1",
+        workspace_id="ws-test",
+        kind="memory_write",
+        tool_name="memory.write",
+        arguments={
+            "user_message": "默认输出格式是 markdown-report。林客入口：https://example.com/tickets",
+            "assistant_message": "好的，我会记住。",
+        },
+        access_level="ask",
+        reason="Persist memory",
+    )
+    approved = store.approve(approval.id)
+
+    completed = await _persist_memory_write_approval(store, approved)
+
+    assert completed.status == "completed"
+    cold = await ColdMemoryStore(CognixHome.default().ensure().state_db).search(
+        "markdown-report",
+        workspace_id="ws-test",
+    )
+    facts = await AtomicFactStore(CognixHome.default().ensure().state_db).search(
+        "林客入口",
+        workspace_id="ws-test",
+    )
+    assert cold
+    assert any(fact.key == "entry_url" for fact in facts)
+
+
+@pytest.mark.asyncio
+async def test_query_rewrite_expands_coreference_with_atomic_facts(tmp_path):
+    home = CognixHome(tmp_path / ".cognix").ensure()
+    workspace = WorkspaceManager(home).create("Rewrite")
+    store = AtomicFactStore(home.state_db)
+    await store.upsert(
+        workspace_id=workspace.id,
+        entity_type="workspace_resource",
+        entity_id="linke",
+        key="entry_url",
+        value="https://example.com/tickets",
+    )
+
+    rewritten = await QueryRewriter(store).rewrite("打开上次那个入口", workspace_id=workspace.id)
+
+    assert "https://example.com/tickets" in rewritten.rewritten
+
+
+@pytest.mark.asyncio
+async def test_cold_memory_vector_fallback_finds_related_text(tmp_path):
+    home = CognixHome(tmp_path / ".cognix").ensure()
+    workspace = WorkspaceManager(home).create("Vector")
+    store = ColdMemoryStore(home.state_db)
+    await store.remember(
+        "LinKe coupon export uses the tickets data page.",
+        workspace_id=workspace.id,
+        summary="LinKe coupon export entry",
+        importance=0.9,
+    )
+
+    results = await store.search("券码导出入口", workspace_id=workspace.id)
+
+    assert results
