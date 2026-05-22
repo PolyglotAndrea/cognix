@@ -5,6 +5,7 @@ import {
 } from 'lucide-react'
 import { api } from '@/shared/api/client'
 import { ArtifactPanel } from './ArtifactPanel'
+import { useWorkspaceStore } from './store'
 
 interface ApprovalRequest {
   id: string
@@ -21,14 +22,21 @@ export function StudioPanel({
   workspaceId: string
   onCreateFromStudio: (intent: string) => void
 }) {
+  const activeChatId = useWorkspaceStore((state) => state.activeNotebookChatId)
   const { data: approvals = [] } = useQuery<ApprovalRequest[]>({
-    queryKey: ['approvals', workspaceId],
+    queryKey: ['approvals', workspaceId, activeChatId],
     queryFn: () =>
       api
-        .get('/approvals', { params: { workspace_id: workspaceId, include_resolved: true } })
+        .get('/approvals', {
+          params: {
+            workspace_id: workspaceId,
+            chat_id: activeChatId,
+            include_resolved: false,
+          },
+        })
         .then((r) => r.data),
-    enabled: !!workspaceId,
-    refetchInterval: 5000,
+    enabled: !!workspaceId && !!activeChatId,
+    refetchOnWindowFocus: false,
   })
   const pendingApprovals = approvals.filter((approval) => approval.status === 'pending')
 
