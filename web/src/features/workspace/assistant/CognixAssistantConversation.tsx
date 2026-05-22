@@ -8,7 +8,7 @@ import {
   useMessage,
 } from '@assistant-ui/react'
 import type { AppendMessage, ThreadMessageLike } from '@assistant-ui/react'
-import { Send, Sparkles } from 'lucide-react'
+import { CheckCircle2, Circle, Loader2, Send, Sparkles } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/shared/api/client'
 import { useAuthStore } from '@/features/auth/store'
@@ -41,6 +41,28 @@ type AssistantMessage = ThreadMessageLike & {
   role: 'system' | 'user' | 'assistant'
   content: string
   createdAt: Date
+}
+
+interface LoadingStep {
+  id: string
+  label: string
+  status: 'pending' | 'running' | 'done' | 'failed'
+}
+
+interface LoadingState {
+  title: string
+  detail: string
+  steps: LoadingStep[]
+}
+
+const defaultLoadingState: LoadingState = {
+  title: 'Understanding your request',
+  detail: 'Cognix is preparing workspace context and checking available capabilities.',
+  steps: [
+    { id: 'intent', label: 'Understand intent', status: 'running' },
+    { id: 'context', label: 'Load workspace context', status: 'pending' },
+    { id: 'execute', label: 'Generate response', status: 'pending' },
+  ],
 }
 
 const sessionTitleFromIntent = (text: string) => {
@@ -103,6 +125,8 @@ function CognixAssistantMessage() {
     .filter(Boolean)
     .join('\n\n')
   const isUser = message.role === 'user'
+  const loading = message.metadata.custom?.loading as LoadingState | undefined
+  const isLoading = !isUser && message.status?.type === 'running' && !text.trim()
 
   return (
     <MessagePrimitive.Root
@@ -120,11 +144,69 @@ function CognixAssistantMessage() {
         </div>
         {isUser ? (
           <div className="whitespace-pre-wrap">{text}</div>
+        ) : isLoading ? (
+          <ThinkingCard loading={loading || defaultLoadingState} />
         ) : (
           <RichMessage content={text || ' '} compact />
         )}
       </div>
     </MessagePrimitive.Root>
+  )
+}
+
+function ThinkingCard({ loading }: { loading: LoadingState }) {
+  return (
+    <div className="min-w-[320px] max-w-[520px] py-1">
+      <div className="flex items-start gap-3">
+        <div className="mt-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+          <Loader2 className="h-4 w-4 animate-spin" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-black text-foreground">{loading.title}</div>
+          <div className="mt-1 text-xs leading-5 text-muted-foreground">{loading.detail}</div>
+          <div className="mt-3 grid gap-2">
+            {loading.steps.slice(0, 4).map((step) => {
+              const active = step.status === 'running'
+              const done = step.status === 'done'
+              const failed = step.status === 'failed'
+              return (
+                <div
+                  key={step.id}
+                  className="flex items-center gap-2 rounded-xl border border-border/60 bg-background/60 px-3 py-2"
+                >
+                  {done ? (
+                    <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
+                  ) : active ? (
+                    <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
+                  ) : failed ? (
+                    <Circle className="h-3.5 w-3.5 shrink-0 fill-rose-500 text-rose-500" />
+                  ) : (
+                    <Circle className="h-3.5 w-3.5 shrink-0 text-muted-foreground/50" />
+                  )}
+                  <span
+                    className={`truncate text-[11px] font-bold ${
+                      active
+                        ? 'text-primary'
+                        : failed
+                        ? 'text-rose-600'
+                        : done
+                        ? 'text-foreground'
+                        : 'text-muted-foreground'
+                    }`}
+                  >
+                    {step.label}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+          <div className="mt-3 flex items-center gap-1.5 text-[10px] font-black uppercase tracking-widest text-primary">
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
+            Thinking
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -252,7 +334,7 @@ export function CognixAssistantConversation({
         content: '',
         createdAt: new Date(),
         status: { type: 'running' },
-        metadata: { custom: { local: true } },
+        metadata: { custom: { local: true, loading: defaultLoadingState } },
       }
       setMessages((current) => [...current, userMessage, assistantMessage])
 
@@ -316,12 +398,88 @@ export function CognixAssistantConversation({
             if (!jsonStr || jsonStr === '[DONE]') continue
             try {
               const event = JSON.parse(jsonStr)
-              if (event.type === 'delta' || event.delta) {
+              if (event.type === 'status') {
+                const nextLoading: LoadingState = {
+                  title:
+                    event.stage === 'executing'
+                      ? 'Generating the response'
+                      : event.stage === 'saved'
+                      ? 'Saving the result'
+                      : 'Preparing the workspace',
+                  detail:
+                    event.message ||
+                    'Cognix is preparing the model, workspace context, and selected sources.',
+                  steps: defaultLoadingState.steps.map((step) => {
+                    if (event.stage === 'executing') {
+                      return step.id === 'execute'
+                        ? { ...step, status: 'running' }
+                        : { ...step, status: 'done' }
+                    }
+                    if (event.stage === 'saved') return { ...step, status: 'done' }
+                    return step
+                  }),
+                }
+                setMessages((current) =>
+                  current.map((message) =>
+                    message.id === assistantId
+                      ? {
+                          ...message,
+                          metadata: {
+                            ...message.metadata,
+                            custom: { ...message.metadata?.custom, loading: nextLoading },
+                          },
+                        }
+                      : message,
+                  ),
+                )
+              } else if (event.type === 'todo' && Array.isArray(event.items)) {
+                const nextLoading: LoadingState = {
+                  title: 'Working through the request',
+                  detail: 'Cognix is resolving context, provider, and execution steps.',
+                  steps: event.items.map((item: Partial<LoadingStep>, index: number) => ({
+                    id: item.id || `step-${index}`,
+                    label: item.label || `Step ${index + 1}`,
+                    status: item.status || 'pending',
+                  })),
+                }
+                setMessages((current) =>
+                  current.map((message) =>
+                    message.id === assistantId
+                      ? {
+                          ...message,
+                          metadata: {
+                            ...message.metadata,
+                            custom: { ...message.metadata?.custom, loading: nextLoading },
+                          },
+                        }
+                      : message,
+                  ),
+                )
+              } else if (event.type === 'delta' || event.delta) {
                 assistantContent += event.delta || event.data?.delta || ''
                 setMessages((current) =>
                   current.map((message) =>
                     message.id === assistantId
-                      ? { ...message, content: assistantContent, status: { type: 'running' } }
+                      ? {
+                          ...message,
+                          content: assistantContent,
+                          status: { type: 'running' },
+                          metadata: {
+                            ...message.metadata,
+                            custom: {
+                              ...message.metadata?.custom,
+                              loading: {
+                                title: 'Writing the response',
+                                detail: 'The first tokens are streaming in now.',
+                                steps: [
+                                  { id: 'intent', label: 'Understand intent', status: 'done' },
+                                  { id: 'context', label: 'Load workspace context', status: 'done' },
+                                  { id: 'execute', label: 'Generate response', status: 'running' },
+                                ],
+                              },
+                            },
+                          },
+                        }
                       : message,
                   ),
                 )
