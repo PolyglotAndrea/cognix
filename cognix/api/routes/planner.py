@@ -23,6 +23,7 @@ router = APIRouter(prefix="/api/v1/workspaces", tags=["planner"])
 class CreatePlanRequest(BaseModel):
     intent: str
     chat_id: str | None = None
+    run_id: str | None = None
 
 
 class PlanActionRequest(BaseModel):
@@ -48,7 +49,13 @@ async def create_plan(
         raise HTTPException(404, "Workspace not found")
 
     service = PlannerService()
-    plan = await service.create_plan(workspace_id, body.intent, user.id, chat_id=body.chat_id)
+    plan = await service.create_plan(
+        workspace_id,
+        body.intent,
+        user.id,
+        chat_id=body.chat_id,
+        run_id=body.run_id,
+    )
     return plan.to_dict()
 
 

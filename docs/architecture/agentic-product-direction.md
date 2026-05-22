@@ -588,6 +588,17 @@ P2 gaps:
 - UI shows user message, Cognix intent summary, confirm/edit buttons.
 - Refresh should restore the same run state.
 
+Initial implementation status:
+
+- `ConversationRun` local storage has been introduced under each workspace.
+- Workspace APIs can create, list, fetch, and update run snapshots.
+- Simple Mode creates a run when the user sends an intent and updates it through
+  context resolution, plan proposal, approval, execution, completion, failure,
+  and missing-input states.
+- Full intent-confirm/edit UI is still pending; the current implementation
+  auto-confirms the raw user intent so later phases can build on durable run
+  state first.
+
 ### Phase 2: Typed Input and Approval Flow
 
 - Replace free-text approval prompts with typed fields and validation.

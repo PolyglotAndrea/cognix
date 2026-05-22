@@ -86,6 +86,16 @@ interface ApprovalSuggestion {
   source: string
 }
 
+interface ConversationRun {
+  id: string
+  state: string
+  chat_id: string
+  plan_id?: string
+  artifact_ids?: string[]
+  intent?: Record<string, unknown>
+  updated_at?: string
+}
+
 export function SimpleMode({
   workspaceId,
   onSwitchToAdvanced,
@@ -140,6 +150,20 @@ export function SimpleMode({
           !approval.result)),
   )
 
+  const { data: latestRun } = useQuery<ConversationRun | null>({
+    queryKey: ['conversation-run-latest', workspaceId, activeChatId],
+    queryFn: () =>
+      api
+        .get(`/workspaces/${workspaceId}/runs/latest`, { params: { chat_id: activeChatId } })
+        .then((r) => r.data)
+        .catch((error) => {
+          if (error?.response?.status === 404) return null
+          throw error
+        }),
+    enabled: !!workspaceId && !!activeChatId,
+    refetchOnWindowFocus: false,
+  })
+
   const respondApprovalMutation = useMutation({
     mutationFn: async ({
       approval,
@@ -176,6 +200,8 @@ export function SimpleMode({
 
       if (data?.plan_id) {
         const result = data as ApplyResult
+        const runId = latestRun?.plan_id === result.plan_id ? latestRun.id : null
+        await updateRun(runId, runPatchFromApplyResult(result)).catch(() => null)
         const failed = result.status === 'failed'
         const needsInput =
           result.status === 'needs_input' || Boolean(result.approval_ids?.length)
@@ -339,6 +365,31 @@ export function SimpleMode({
     return `\n\nSelected workspace sources:\n${lines}`
   }
 
+  const browserLocale = () => {
+    if (typeof navigator === 'undefined') return ''
+    return navigator.language || ''
+  }
+
+  const browserTimezone = () => {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone || ''
+    } catch {
+      return ''
+    }
+  }
+
+  const updateRun = async (
+    runId: string | null | undefined,
+    patch: Record<string, unknown>,
+  ) => {
+    if (!runId) return null
+    const updated = await api
+      .patch(`/workspaces/${workspaceId}/runs/${runId}`, patch)
+      .then((r) => r.data as ConversationRun)
+    queryClient.invalidateQueries({ queryKey: ['conversation-run-latest', workspaceId, activeChatId] })
+    return updated
+  }
+
   const handleSend = async (override?: string) => {
     const currentInput = override ?? input
     if (!currentInput.trim() || streaming) return
@@ -352,6 +403,30 @@ export function SimpleMode({
     } catch {
       setMessages((prev) => [...prev, { role: 'assistant', content: 'Failed to initialize chat session.' }])
       return
+    }
+
+    let runId: string | null = null
+    try {
+      const run = await api
+        .post(`/workspaces/${workspaceId}/runs`, {
+          chat_id: chatId,
+          raw_intent: userMsg,
+          locale: browserLocale(),
+          timezone: browserTimezone(),
+          state: 'intent_received',
+          sources: notebookSources,
+          metadata: { surface: 'simple_mode' },
+        })
+        .then((r) => r.data as ConversationRun)
+      runId = run.id
+      await updateRun(runId, {
+        state: 'context_resolving',
+        intent: { confirmed: true, summary: userMsg },
+        event_type: 'run.intent_confirmed',
+        event_data: { summary: userMsg },
+      })
+    } catch (err) {
+      console.error('Failed to initialize conversation run:', err)
     }
 
     // Persist user intent message
@@ -381,8 +456,39 @@ export function SimpleMode({
       const planRes = await api.post(`/workspaces/${workspaceId}/plans`, {
         intent: plannerIntent,
         chat_id: chatId,
+        run_id: runId,
       })
       const plan = planRes.data as WorkspacePlan
+      await updateRun(runId, {
+        state: 'plan_proposed',
+        plan_id: plan.id,
+        intent: {
+          summary: plan.summary,
+          intent_type: plan.intent_type,
+          execution_mode: plan.execution_mode,
+          confirmed: true,
+        },
+        capabilities: [
+          ...(plan.recommended_skills || []).map((skill: any) => ({
+            id: skill.name || skill.id || 'skill',
+            kind: 'skill',
+            selected: true,
+          })),
+          ...(plan.recommended_mcp_tools || []).map((tool: any) => ({
+            id: tool.name || tool.id || 'mcp_tool',
+            kind: 'mcp_tool',
+            selected: true,
+          })),
+        ],
+        promotion_candidates: {
+          task: plan.execution_mode === 'scheduled' || plan.execution_mode === 'long_running',
+          source: Boolean(plan.expected_artifacts?.length),
+          skill: Boolean(plan.recommended_skills?.length),
+          memory: true,
+        },
+        event_type: 'run.plan_proposed',
+        event_data: { plan_id: plan.id, summary: plan.summary },
+      })
 
       // Save plan message persistently
       await api.post(`/workspaces/${workspaceId}/chats/${chatId}/messages/raw`, {
@@ -405,6 +511,11 @@ export function SimpleMode({
       })
     } catch (err: any) {
       const errMsg = err?.response?.data?.detail?.reason || err?.message || 'Failed to generate plan.'
+      await updateRun(runId, {
+        state: 'failed',
+        event_type: 'run.failed',
+        event_data: { error: errMsg },
+      }).catch(() => null)
       setMessages((prev) => {
         const updated = [...prev]
         updated[updated.length - 1] = {
@@ -421,6 +532,12 @@ export function SimpleMode({
   const handleConfirmPlan = async (plan: WorkspacePlan, initialResponse?: string) => {
     if (streaming || !activeChatId) return
     setStreaming(true)
+    const runId = latestRun?.plan_id === plan.id ? latestRun.id : null
+    await updateRun(runId, {
+      state: 'approved',
+      event_type: 'run.approved',
+      event_data: { plan_id: plan.id },
+    }).catch(() => null)
 
     // Add executing checklist placeholder
     setMessages((prev) => {
@@ -442,6 +559,12 @@ export function SimpleMode({
     let finalApplyResultFromStream: ApplyResult | null = null
 
     try {
+      await updateRun(runId, {
+        state: 'running',
+        event_type: 'run.started',
+        event_data: { plan_id: plan.id },
+      }).catch(() => null)
+
       if (initialResponse?.trim()) {
         const applyRes = await api.post(`/workspaces/${workspaceId}/plans/${plan.id}/apply`)
         let finalApplyResult = applyRes.data as ApplyResult
@@ -453,6 +576,7 @@ export function SimpleMode({
           finalApplyResult = resumeRes.data as ApplyResult
         }
         const resultContent = resultContentFromApplyResult(finalApplyResult)
+        await updateRun(runId, runPatchFromApplyResult(finalApplyResult)).catch(() => null)
 
         await api.post(`/workspaces/${workspaceId}/chats/${activeChatId}/messages/raw`, {
           role: 'assistant',
@@ -647,6 +771,7 @@ export function SimpleMode({
         : needsInput
         ? `I need a bit more information before continuing.\n\n${finalResultText}\n\nOpen Needs Input on the right and provide the requested details.`
         : `Execution completed.\n\n${finalResultText}`
+      await updateRun(runId, runPatchFromApplyResult(finalApplyResult)).catch(() => null)
 
       // Save raw final result to backend
       await api.post(`/workspaces/${workspaceId}/chats/${activeChatId}/messages/raw`, {
@@ -689,6 +814,11 @@ export function SimpleMode({
       }
     } catch (err: any) {
       const errMsg = err?.message || 'Plan execution failed.'
+      await updateRun(runId, {
+        state: 'failed',
+        event_type: 'run.failed',
+        event_data: { plan_id: plan.id, error: errMsg },
+      }).catch(() => null)
       setMessages((prev) =>
         prev.map((msg) => {
           if (msg.role === 'executing' && msg.plan?.id === plan.id) {
@@ -713,6 +843,12 @@ export function SimpleMode({
     if (streaming || !activeChatId) return
     try {
       await api.post(`/workspaces/${workspaceId}/plans/${plan.id}/reject`)
+      const runId = latestRun?.plan_id === plan.id ? latestRun.id : null
+      await updateRun(runId, {
+        state: 'closed',
+        event_type: 'run.closed',
+        event_data: { plan_id: plan.id, reason: 'plan_rejected' },
+      }).catch(() => null)
       
       // Update persistent chat
       await api.post(`/workspaces/${workspaceId}/chats/${activeChatId}/messages/raw`, {
@@ -766,6 +902,22 @@ export function SimpleMode({
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-6 sm:px-6 sm:py-8 space-y-6 max-w-4xl mx-auto w-full scrollbar-thin">
+        {latestRun && (
+          <div className="mx-auto flex w-full max-w-3xl items-center justify-between rounded-2xl border border-border/70 bg-card/80 px-4 py-3 shadow-sm">
+            <div>
+              <div className="text-[10px] font-black uppercase tracking-widest text-muted-foreground">
+                Conversation Run
+              </div>
+              <div className="mt-0.5 text-sm font-bold text-foreground">
+                {runStateLabel(latestRun.state)}
+              </div>
+            </div>
+            <span className="rounded-full border border-primary/20 bg-primary/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-primary">
+              {latestRun.state}
+            </span>
+          </div>
+        )}
+
         {messages.length === 0 && (
           <div className="flex flex-col items-center justify-center h-[70%] text-center max-w-md mx-auto">
             <div className="w-16 h-16 rounded-3xl bg-primary/10 flex items-center justify-center mb-5 animate-pulse">
@@ -1267,6 +1419,59 @@ function resultContentFromApplyResult(result: ApplyResult) {
     return `I need a bit more information before continuing.\n\n${stepSummary || executionText}`
   }
   return `Execution completed.\n\n${stepSummary || executionText || 'The task completed.'}`
+}
+
+function runPatchFromApplyResult(result: ApplyResult) {
+  const failed = result.status === 'failed'
+  const needsInput = result.status === 'needs_input' || Boolean(result.approval_ids?.length)
+  const artifacts = result.artifacts || []
+  const state = failed ? 'failed' : needsInput ? 'needs_input' : 'completed'
+  return {
+    state,
+    artifact_ids: artifacts,
+    promotion_candidates: {
+      task:
+        result.plan?.execution_mode === 'scheduled' ||
+        result.plan?.execution_mode === 'long_running',
+      source: artifacts.length > 0,
+      skill: false,
+      memory: artifacts.length > 0,
+    },
+    event_type: failed
+      ? 'run.failed'
+      : needsInput
+      ? 'run.input_requested'
+      : 'run.completed',
+    event_data: {
+      plan_id: result.plan_id,
+      artifacts,
+      approval_ids: result.approval_ids || [],
+      status: result.status,
+    },
+  }
+}
+
+function runStateLabel(state: string) {
+  const labels: Record<string, string> = {
+    intent_received: '已收到目标',
+    intent_confirming: '正在确认意图',
+    context_resolving: '正在匹配上下文和能力',
+    needs_input: '等待补充信息',
+    plan_proposed: '已生成建议方案',
+    plan_revision_requested: '正在调整方案',
+    approved: '已确认执行',
+    running: '正在执行',
+    blocked: '执行被阻塞',
+    completed: '已完成',
+    failed: '执行失败',
+    reviewing_output: '等待复盘输出',
+    promoted_to_task: '已转为长期任务',
+    promoted_to_source: '已转为输入源',
+    promoted_to_skill: '已转为技能',
+    memory_write_pending: '等待记忆写入确认',
+    closed: '已关闭',
+  }
+  return labels[state] || state
 }
 
 function cleanPlanText(value: string) {

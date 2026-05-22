@@ -26,6 +26,7 @@ from cognix.core.streaming import encode_sse_event
 from cognix.local.attachments import AttachmentStore, ParsedAttachment
 from cognix.local.chat import AttachmentRef, ChatMessage, ChatStore
 from cognix.local.files import WorkspaceFileStore
+from cognix.local.runs import ConversationRunStore
 from cognix.local.workflows import WorkspaceWorkflowStore
 from cognix.local.workspace import WorkspaceManager
 from cognix.local.workspace_config import WorkspaceConfigStore
@@ -183,6 +184,31 @@ class AppendRawMessageRequest(BaseModel):
     role: str
     content: str
     metadata: dict = Field(default_factory=dict)
+
+
+class CreateConversationRunRequest(BaseModel):
+    chat_id: str
+    raw_intent: str
+    locale: str = ""
+    timezone: str = ""
+    state: str = "intent_received"
+    sources: list[dict] = Field(default_factory=list)
+    metadata: dict = Field(default_factory=dict)
+
+
+class UpdateConversationRunRequest(BaseModel):
+    state: str | None = None
+    intent: dict | None = None
+    sources: list[dict] | None = None
+    capabilities: list[dict] | None = None
+    requirements: list[dict] | None = None
+    plan_id: str | None = None
+    execution_id: str | None = None
+    artifact_ids: list[str] | None = None
+    promotion_candidates: dict | None = None
+    metadata: dict | None = None
+    event_type: str | None = None
+    event_data: dict = Field(default_factory=dict)
 
 
 @router.get("")
@@ -1046,6 +1072,113 @@ async def update_chat(
     except FileNotFoundError:
         raise HTTPException(404, "Chat not found") from None
     return chat.__dict__
+
+
+@router.delete("/{workspace_id}/chats/{chat_id}", status_code=204)
+async def delete_chat(
+    workspace_id: str,
+    chat_id: str,
+    user: CurrentUser = Depends(require_agents_write),
+) -> None:
+    store = _chat_store(workspace_id)
+    try:
+        store.delete(chat_id)
+    except FileNotFoundError:
+        raise HTTPException(404, "Chat not found") from None
+
+
+@router.get("/{workspace_id}/runs")
+async def list_conversation_runs(
+    workspace_id: str,
+    chat_id: str | None = None,
+    limit: int = 50,
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    store = ConversationRunStore(workspace_id)
+    return [run.to_dict() for run in store.list_all(chat_id=chat_id, limit=limit)]
+
+
+@router.post("/{workspace_id}/runs", status_code=201)
+async def create_conversation_run(
+    workspace_id: str,
+    body: CreateConversationRunRequest,
+    user: CurrentUser = Depends(require_agents_write),
+) -> dict:
+    chat_store = _chat_store(workspace_id)
+    if not chat_store.get(body.chat_id):
+        raise HTTPException(404, "Chat not found")
+    store = ConversationRunStore(workspace_id)
+    try:
+        run = store.create(
+            chat_id=body.chat_id,
+            user_id=user.id,
+            raw_intent=body.raw_intent,
+            locale=body.locale,
+            timezone=body.timezone,
+            sources=body.sources,
+            metadata=body.metadata,
+            state=body.state,
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    return run.to_dict()
+
+
+@router.get("/{workspace_id}/runs/latest")
+async def get_latest_conversation_run(
+    workspace_id: str,
+    chat_id: str | None = None,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    store = ConversationRunStore(workspace_id)
+    run = store.latest(chat_id=chat_id)
+    if not run:
+        raise HTTPException(404, "Conversation run not found")
+    return run.to_dict()
+
+
+@router.get("/{workspace_id}/runs/{run_id}")
+async def get_conversation_run(
+    workspace_id: str,
+    run_id: str,
+    user: CurrentUser = Depends(get_current_user),
+) -> dict:
+    store = ConversationRunStore(workspace_id)
+    run = store.get(run_id)
+    if not run:
+        raise HTTPException(404, "Conversation run not found")
+    return run.to_dict()
+
+
+@router.patch("/{workspace_id}/runs/{run_id}")
+async def update_conversation_run(
+    workspace_id: str,
+    run_id: str,
+    body: UpdateConversationRunRequest,
+    user: CurrentUser = Depends(require_agents_write),
+) -> dict:
+    store = ConversationRunStore(workspace_id)
+    try:
+        run = store.update(
+            run_id,
+            state=body.state,
+            intent=body.intent,
+            sources=body.sources,
+            capabilities=body.capabilities,
+            requirements=body.requirements,
+            plan_id=body.plan_id,
+            execution_id=body.execution_id,
+            artifact_ids=body.artifact_ids,
+            promotion_candidates=body.promotion_candidates,
+            metadata=body.metadata,
+            event_type=body.event_type,
+            event_data=body.event_data,
+        )
+    except FileNotFoundError:
+        raise HTTPException(404, "Conversation run not found") from None
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    return run.to_dict()
 
 
 @router.get("/{workspace_id}/chats/{chat_id}/messages")

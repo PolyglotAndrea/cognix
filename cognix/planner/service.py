@@ -185,6 +185,7 @@ class PlannerService:
         user_intent: str,
         user_id: str,
         chat_id: str | None = None,
+        run_id: str | None = None,
     ) -> WorkspacePlan:
         """Analyze user intent and produce a structured plan."""
         self._cleanup_old_plans()
@@ -193,6 +194,8 @@ class PlannerService:
         context = await self._build_workspace_context(workspace_id, user_id)
         if chat_id:
             context["chat_id"] = chat_id
+        if run_id:
+            context["run_id"] = run_id
 
         # Call LLM to generate plan
         plan_json = await self._generate_plan_json(user_intent, context, workspace_id)
@@ -206,9 +209,14 @@ class PlannerService:
                 type="intent.received",
                 stage="intent",
                 status="received",
-                run_id=plan_id,
+                run_id=run_id or plan_id,
                 plan_id=plan_id,
-                data={"intent": user_intent, "user_id": user_id, "chat_id": chat_id or ""},
+                data={
+                    "intent": user_intent,
+                    "user_id": user_id,
+                    "chat_id": chat_id or "",
+                    "run_id": run_id or "",
+                },
             )
         )
 
@@ -251,7 +259,7 @@ class PlannerService:
                 type="plan.proposed",
                 stage="plan",
                 status="proposed",
-                run_id=plan_id,
+                run_id=run_id or plan_id,
                 plan_id=plan_id,
                 data={"summary": plan.summary, "steps": [step.to_dict() for step in steps]},
             )
@@ -1229,6 +1237,7 @@ class PlannerService:
         return {
             "session": {
                 "chat_id": context.get("chat_id", ""),
+                "run_id": context.get("run_id", ""),
             },
             "provider": context.get("provider", {}),
             "enabled_skills": context.get("enabled_skills", []),
