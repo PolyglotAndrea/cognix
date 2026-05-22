@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
 import type { ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -93,7 +93,21 @@ interface ConversationRun {
   plan_id?: string
   artifact_ids?: string[]
   intent?: Record<string, unknown>
+  requirements?: RunRequirement[]
   updated_at?: string
+}
+
+interface RunRequirement {
+  id: string
+  label: string
+  kind: string
+  required: boolean
+  status: 'pending' | 'answered' | 'skipped'
+  approval_id?: string
+  step_id?: string
+  prompt?: string
+  reason?: string
+  value?: string
 }
 
 export function SimpleMode({
@@ -148,6 +162,10 @@ export function SimpleMode({
         (approval.metadata?.source === 'plan_apply' &&
           approval.status === 'approved' &&
           !approval.result)),
+  )
+  const pendingRequirements = useMemo(
+    () => pendingQuestions.map(requirementFromApproval),
+    [pendingQuestions],
   )
 
   const { data: latestRun } = useQuery<ConversationRun | null>({
@@ -390,6 +408,25 @@ export function SimpleMode({
     return updated
   }
 
+  useEffect(() => {
+    if (!latestRun?.id || pendingRequirements.length === 0) return
+    if (
+      latestRun.state === 'needs_input' &&
+      sameRequirements(latestRun.requirements || [], pendingRequirements)
+    ) {
+      return
+    }
+    void updateRun(latestRun.id, {
+      state: 'needs_input',
+      requirements: pendingRequirements,
+      event_type: 'run.input_requested',
+      event_data: {
+        approval_ids: pendingRequirements.map((item) => item.approval_id).filter(Boolean),
+      },
+    }).catch((error) => console.warn('Failed to sync run requirements:', error))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [latestRun?.id, latestRun?.state, pendingRequirements])
+
   const handleSend = async (override?: string) => {
     const currentInput = override ?? input
     if (!currentInput.trim() || streaming) return
@@ -459,8 +496,9 @@ export function SimpleMode({
         run_id: runId,
       })
       const plan = planRes.data as WorkspacePlan
+      const planRequirements = requirementsFromPlan(plan)
       await updateRun(runId, {
-        state: 'plan_proposed',
+        state: planRequirements.length > 0 ? 'needs_input' : 'plan_proposed',
         plan_id: plan.id,
         intent: {
           summary: plan.summary,
@@ -486,7 +524,8 @@ export function SimpleMode({
           skill: Boolean(plan.recommended_skills?.length),
           memory: true,
         },
-        event_type: 'run.plan_proposed',
+        requirements: planRequirements.length > 0 ? planRequirements : undefined,
+        event_type: planRequirements.length > 0 ? 'run.input_requested' : 'run.plan_proposed',
         event_data: { plan_id: plan.id, summary: plan.summary },
       })
 
@@ -533,8 +572,12 @@ export function SimpleMode({
     if (streaming || !activeChatId) return
     setStreaming(true)
     const runId = latestRun?.plan_id === plan.id ? latestRun.id : null
+    const answeredRequirements = initialResponse?.trim()
+      ? markRequirementsAnswered(latestRun?.requirements || [], initialResponse.trim())
+      : undefined
     await updateRun(runId, {
       state: 'approved',
+      requirements: answeredRequirements,
       event_type: 'run.approved',
       event_data: { plan_id: plan.id },
     }).catch(() => null)
@@ -1309,9 +1352,21 @@ export function SimpleMode({
             approval={approval}
             allApprovals={approvals}
             busy={respondApprovalMutation.isPending}
-            onSubmit={(response) =>
+            onSubmit={(response) => {
+              if (latestRun?.id) {
+                void updateRun(latestRun.id, {
+                  state: 'running',
+                  requirements: markRequirementAnswered(
+                    latestRun.requirements || [],
+                    approval.id,
+                    response,
+                  ),
+                  event_type: 'run.input_answered',
+                  event_data: { approval_id: approval.id },
+                }).catch((error) => console.warn('Failed to mark requirement answered:', error))
+              }
               respondApprovalMutation.mutate({ approval, response })
-            }
+            }}
           />
         ))}
         <div ref={messagesEndRef} />
@@ -1419,6 +1474,98 @@ function resultContentFromApplyResult(result: ApplyResult) {
     return `I need a bit more information before continuing.\n\n${stepSummary || executionText}`
   }
   return `Execution completed.\n\n${stepSummary || executionText || 'The task completed.'}`
+}
+
+function requirementFromApproval(approval: ApprovalRequest): RunRequirement {
+  const prompt =
+    approval.reason ||
+    String(approval.arguments?.question || approval.metadata?.question || '') ||
+    'Cognix needs more information before it can continue.'
+  return {
+    id: `approval:${approval.id}`,
+    approval_id: approval.id,
+    kind: approval.kind || 'question',
+    label: requirementLabel(prompt),
+    prompt,
+    reason: prompt,
+    required: true,
+    status: approval.response ? 'answered' : 'pending',
+    value: approval.response || '',
+  }
+}
+
+function requirementsFromPlan(plan: WorkspacePlan): RunRequirement[] {
+  return plan.steps
+    .filter((step) => step.action === 'request_input')
+    .map((step) => {
+      const prompt = cleanPlanText(
+        String(step.params?.question || step.description || '请补充继续执行所需的信息。'),
+      )
+      return {
+        id: `step:${step.id}`,
+        step_id: step.id,
+        kind: 'missing_input',
+        label: requirementLabel(prompt),
+        prompt,
+        reason: cleanPlanText(String(step.params?.reason || '')),
+        required: true,
+        status: 'pending',
+        value: '',
+      }
+    })
+}
+
+function requirementLabel(prompt: string) {
+  if (/url|网址|入口|后台|链接/i.test(prompt)) return '目标入口 URL'
+  if (/授权|批准|approval|permission/i.test(prompt)) return '授权确认'
+  if (/登录|验证码|扫码|二次验证/i.test(prompt)) return '登录方式'
+  if (/字段|field/i.test(prompt)) return '输出字段'
+  if (/范围|时间|日期|scope/i.test(prompt)) return '数据范围'
+  return '补充信息'
+}
+
+function markRequirementAnswered(
+  requirements: RunRequirement[],
+  approvalId: string,
+  response: string,
+) {
+  if (requirements.length === 0) {
+    return [
+      {
+        id: `approval:${approvalId}`,
+        approval_id: approvalId,
+        kind: 'question',
+        label: '补充信息',
+        required: true,
+        status: 'answered' as const,
+        value: response,
+      },
+    ]
+  }
+  return requirements.map((item) =>
+    item.approval_id === approvalId || item.id === `approval:${approvalId}`
+      ? { ...item, status: 'answered' as const, value: response }
+      : item,
+  )
+}
+
+function markRequirementsAnswered(requirements: RunRequirement[], response: string) {
+  return requirements.map((item) =>
+    item.status === 'pending' ? { ...item, status: 'answered' as const, value: response } : item,
+  )
+}
+
+function sameRequirements(a: RunRequirement[], b: RunRequirement[]) {
+  if (a.length !== b.length) return false
+  return a.every((item, index) => {
+    const other = b[index]
+    return (
+      item.id === other.id &&
+      item.status === other.status &&
+      item.value === other.value &&
+      item.prompt === other.prompt
+    )
+  })
 }
 
 function runPatchFromApplyResult(result: ApplyResult) {

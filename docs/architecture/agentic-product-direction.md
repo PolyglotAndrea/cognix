@@ -608,6 +608,15 @@ Initial implementation status:
 - Answering a requirement should resume the same run, not create a duplicate
   approval or task.
 
+Initial implementation status:
+
+- Pending approval questions are mirrored into `ConversationRun.requirements`.
+- Planner `request_input` steps are stored as run requirements before execution.
+- Submitting a typed missing-input form marks the matching requirement as
+  `answered` before the existing resume flow continues.
+- Approval answer suggestions already use recent approval history; later work
+  should add vector-backed memory and artifact-derived suggestions.
+
 ### Phase 3: Plan Proposal Contract
 
 - Normalize Planner output into user-facing cards:
