@@ -1129,11 +1129,11 @@ async def get_latest_conversation_run(
     workspace_id: str,
     chat_id: str | None = None,
     user: CurrentUser = Depends(get_current_user),
-) -> dict:
+) -> dict | None:
     store = ConversationRunStore(workspace_id)
     run = store.latest(chat_id=chat_id)
     if not run:
-        raise HTTPException(404, "Conversation run not found")
+        return None
     return run.to_dict()
 
 
