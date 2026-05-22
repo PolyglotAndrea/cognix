@@ -1003,6 +1003,7 @@ class Agent:
                     message,
                     workspace_id=self.workspace_id,
                     include_hot_memory=memory_options.get("include_hot_memory", True),
+                    include_atomic_memory=memory_options.get("include_atomic_memory", True),
                     include_cold_memory=memory_options.get("include_cold_memory", True),
                     include_skills=memory_options.get("include_skills", True),
                     include_deep_memory=memory_options.get("include_deep_memory", False),
@@ -1080,6 +1081,7 @@ class Agent:
                 )
             except Exception:
                 logger.warning("Failed to create memory write approval", exc_info=True)
+            return
 
         key = f"conversation:{uuid.uuid4().hex[:12]}"
         value = {
@@ -1106,6 +1108,33 @@ class Agent:
             )
         except Exception:
             logger.exception("Cold memory write failed for agent %s", self.id)
+
+        try:
+            from cognix.local.home import CognixHome
+            from cognix.memory.extractor import MemoryExtractor
+            from cognix.memory.facts import AtomicFactStore
+
+            facts = MemoryExtractor().extract(
+                user_message,
+                assistant_message,
+                workspace_id=self.workspace_id,
+                metadata={"agent_id": self.id, "agent_name": self.name},
+            )
+            fact_store = AtomicFactStore(CognixHome.default().ensure().state_db)
+            for fact in facts:
+                await fact_store.upsert(
+                    workspace_id=self.workspace_id,
+                    entity_type=fact.entity_type,
+                    entity_id=fact.entity_id,
+                    key=fact.key,
+                    value=fact.value,
+                    confidence=fact.confidence,
+                    source="agent_exchange",
+                    source_ref=key,
+                    metadata={**fact.metadata, "agent_id": self.id, "agent_name": self.name},
+                )
+        except Exception:
+            logger.exception("Atomic memory extraction failed for agent %s", self.id)
 
     async def _emit(self, event: str, data: dict[str, Any]) -> None:
         if self._event_bus:

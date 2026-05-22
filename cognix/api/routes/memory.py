@@ -8,6 +8,8 @@ from pydantic import BaseModel, Field
 from cognix.auth.dependencies import CurrentUser, get_current_user, require_agents_write
 from cognix.local.home import CognixHome
 from cognix.local.workspace import WorkspaceManager
+from cognix.memory.extractor import MemoryExtractor
+from cognix.memory.facts import AtomicFactStore
 from cognix.memory.pipeline import ColdMemoryStore, ContextBuilder
 
 router = APIRouter(prefix="/api/v1/memory", tags=["memory"])
@@ -30,6 +32,7 @@ class RememberRequest(BaseModel):
     kind: str = "message"
     summary: str = ""
     metadata: dict = Field(default_factory=dict)
+    extract_facts: bool = True
 
 
 class SearchMemoryRequest(BaseModel):
@@ -38,9 +41,22 @@ class SearchMemoryRequest(BaseModel):
     limit: int = 10
 
 
+class UpsertFactRequest(BaseModel):
+    workspace_id: str | None = None
+    entity_type: str = "workspace"
+    entity_id: str = "default"
+    key: str
+    value: str
+    confidence: float = 0.8
+    source: str = "manual"
+    source_ref: str = ""
+    metadata: dict = Field(default_factory=dict)
+
+
 class ContextPreviewRequest(BaseModel):
     message: str
     workspace_id: str | None = None
+    include_atomic_memory: bool = True
     include_skills: bool = True
     include_deep_memory: bool = False
     token_budget: int = 8000
@@ -123,9 +139,33 @@ async def remember(
         summary=body.summary,
         metadata=body.metadata,
     )
+    extracted = []
+    if body.extract_facts:
+        fact_store = AtomicFactStore(home.state_db)
+        for fact in MemoryExtractor().extract(
+            body.content,
+            workspace_id=body.workspace_id,
+            metadata=body.metadata,
+        ):
+            saved = await fact_store.upsert(
+                workspace_id=body.workspace_id,
+                entity_type=fact.entity_type,
+                entity_id=fact.entity_id,
+                key=fact.key,
+                value=fact.value,
+                confidence=fact.confidence,
+                source="memory_remember",
+                source_ref=record.id,
+                metadata={**fact.metadata, **body.metadata},
+            )
+            extracted.append(saved.to_dict())
     from cognix.memory.vault import MemoryVault
 
-    return {**record.__dict__, "vault_path": str(MemoryVault(home).record_path(record))}
+    return {
+        **record.__dict__,
+        "vault_path": str(MemoryVault(home).record_path(record)),
+        "atomic_facts": extracted,
+    }
 
 
 @router.post("/search")
@@ -142,6 +182,42 @@ async def search_memory(
     return [record.__dict__ for record in records]
 
 
+@router.get("/facts")
+async def list_facts(
+    workspace_id: str | None = None,
+    entity_type: str | None = None,
+    limit: int = 50,
+    user: CurrentUser = Depends(get_current_user),
+) -> list[dict]:
+    home = CognixHome.default().ensure()
+    facts = await AtomicFactStore(home.state_db).list_active(
+        workspace_id=workspace_id,
+        entity_type=entity_type,
+        limit=limit,
+    )
+    return [fact.to_dict() for fact in facts]
+
+
+@router.post("/facts", status_code=201)
+async def upsert_fact(
+    body: UpsertFactRequest,
+    user: CurrentUser = Depends(require_agents_write),
+) -> dict:
+    home = CognixHome.default().ensure()
+    fact = await AtomicFactStore(home.state_db).upsert(
+        workspace_id=body.workspace_id,
+        entity_type=body.entity_type,
+        entity_id=body.entity_id,
+        key=body.key,
+        value=body.value,
+        confidence=body.confidence,
+        source=body.source,
+        source_ref=body.source_ref,
+        metadata=body.metadata,
+    )
+    return fact.to_dict()
+
+
 @router.post("/context-preview")
 async def context_preview(
     body: ContextPreviewRequest,
@@ -150,6 +226,7 @@ async def context_preview(
     pack = await ContextBuilder().build(
         body.message,
         workspace_id=body.workspace_id,
+        include_atomic_memory=body.include_atomic_memory,
         include_skills=body.include_skills,
         include_deep_memory=body.include_deep_memory,
         token_budget=body.token_budget,
@@ -158,6 +235,7 @@ async def context_preview(
     rendered = pack.render_system_context()
     return {
         "rendered": rendered,
+        "atomic_facts": [fact.to_dict() for fact in pack.atomic_facts],
         "cold_memories": [record.__dict__ for record in pack.cold_memories],
         "procedural_memories": [memory.__dict__ for memory in pack.procedural_memories],
         "token_budget": pack.token_budget,

@@ -15,6 +15,7 @@ import aiosqlite
 
 from cognix.local.home import CognixHome
 from cognix.local.workspace import WorkspaceManager
+from cognix.memory.facts import AtomicFact, AtomicFactStore
 
 
 @dataclass
@@ -72,6 +73,7 @@ class ContextPack:
     """Assembled context ready to feed a chat model or execution worker."""
 
     hot_memory: HotMemory
+    atomic_facts: list[AtomicFact] = field(default_factory=list)
     cold_memories: list[ColdMemoryRecord] = field(default_factory=list)
     procedural_memories: list[ProceduralMemory] = field(default_factory=list)
     deep_memory: str = ""
@@ -92,6 +94,13 @@ class ContextPack:
             hot_tokens = count_tokens(hot, model)
             usage["hot"] = hot_tokens
             sections.append("# Hot Memory\n" + hot)
+
+        # Atomic facts are compact and updateable; keep them ahead of episodic recall.
+        if self.atomic_facts:
+            facts_text = "\n".join(f"- {fact.compact()}" for fact in self.atomic_facts)
+            facts_tokens = count_tokens(facts_text, model)
+            usage["atomic_facts"] = facts_tokens
+            sections.append("# Stable Facts\n" + facts_text)
 
         # Procedural memory (second priority)
         if self.procedural_memories:
@@ -151,6 +160,16 @@ class ContextPack:
                     "type": "hot",
                     "name": "workspace/MEMORY.md",
                     "chars": len(self.hot_memory.workspace_memory),
+                }
+            )
+        for fact in self.atomic_facts:
+            sources.append(
+                {
+                    "type": "atomic_fact",
+                    "id": fact.id,
+                    "key": fact.key,
+                    "chars": len(fact.value),
+                    "updated_at": fact.updated_at,
                 }
             )
         for m in self.cold_memories:
@@ -443,6 +462,7 @@ class ContextBuilder:
         self.home = (home or CognixHome.default()).ensure()
         self.workspace_manager = WorkspaceManager(self.home)
         self.cold_store = ColdMemoryStore(self.home.state_db)
+        self.fact_store = AtomicFactStore(self.home.state_db)
 
     async def build(
         self,
@@ -450,6 +470,7 @@ class ContextBuilder:
         *,
         workspace_id: str | None = None,
         include_hot_memory: bool = True,
+        include_atomic_memory: bool = True,
         include_cold_memory: bool = True,
         include_skills: bool = True,
         include_deep_memory: bool = False,
@@ -461,6 +482,7 @@ class ContextBuilder:
         from cognix.memory.token_counter import count_tokens
 
         hot = self.load_hot_memory(workspace_id=workspace_id) if include_hot_memory else HotMemory()
+        facts: list[AtomicFact] = []
         cold: list[ColdMemoryRecord] = []
         skills: list[ProceduralMemory] = []
         deep = deep_memory
@@ -480,6 +502,7 @@ class ContextBuilder:
                 }
             )
             include_cold_memory = include_cold_memory and "cold" in routes
+            include_atomic_memory = include_atomic_memory and "atomic" in routes
             include_skills = include_skills and "procedural" in routes
             include_deep_memory = include_deep_memory and "deep" in routes
 
@@ -488,6 +511,7 @@ class ContextBuilder:
                 user_message,
                 workspace_id=workspace_id,
                 hot=hot,
+                include_atomic_memory=include_atomic_memory,
                 include_cold_memory=include_cold_memory,
                 include_skills=include_skills,
                 include_deep_memory=include_deep_memory,
@@ -499,6 +523,16 @@ class ContextBuilder:
 
         if routing_strategy == "greedy":
             # Greedy: include everything, let render_system_context truncate
+            if include_atomic_memory:
+                facts = await self.fact_store.search(
+                    user_message,
+                    workspace_id=workspace_id,
+                    limit=8,
+                )
+                for fact in facts:
+                    source_details.append(
+                        {"source": "atomic_fact", "memory_id": fact.id, "key": fact.key}
+                    )
             if include_cold_memory:
                 cold = await self.cold_store.search(
                     user_message,
@@ -532,6 +566,22 @@ class ContextBuilder:
             if hot_text:
                 used += count_tokens(hot_text, model)
                 source_details.append({"source": "hot_memory"})
+
+            # Atomic facts (highest signal after hot memory)
+            if include_atomic_memory and used < token_budget:
+                all_facts = await self.fact_store.search(
+                    user_message,
+                    workspace_id=workspace_id,
+                    limit=8,
+                )
+                for fact in all_facts:
+                    fact_tokens = count_tokens(fact.compact(), model)
+                    if used + fact_tokens <= token_budget:
+                        facts.append(fact)
+                        used += fact_tokens
+                        source_details.append(
+                            {"source": "atomic_fact", "memory_id": fact.id, "key": fact.key}
+                        )
 
             # Procedural memory (second priority)
             if include_skills and used < token_budget:
@@ -579,6 +629,7 @@ class ContextBuilder:
 
         return ContextPack(
             hot_memory=hot,
+            atomic_facts=facts,
             cold_memories=cold,
             procedural_memories=skills,
             deep_memory=deep,
@@ -592,6 +643,7 @@ class ContextBuilder:
         *,
         workspace_id: str | None,
         hot: HotMemory,
+        include_atomic_memory: bool,
         include_cold_memory: bool,
         include_skills: bool,
         include_deep_memory: bool,
@@ -608,6 +660,11 @@ class ContextBuilder:
             if include_skills
             else []
         )
+        fact_candidates = (
+            await self.fact_store.search(user_message, workspace_id=workspace_id, limit=8)
+            if include_atomic_memory
+            else []
+        )
         cold_candidates = (
             await self.cold_store.search(user_message, workspace_id=workspace_id, limit=8)
             if include_cold_memory
@@ -617,6 +674,7 @@ class ContextBuilder:
 
         available = {
             "hot": count_tokens(hot.render(), model),
+            "atomic_facts": sum(count_tokens(fact.compact(), model) for fact in fact_candidates),
             "procedural": sum(count_tokens(s.compact(), model) for s in skill_candidates),
             "cold": sum(count_tokens(m.compact(), model) for m in cold_candidates),
             "deep": count_tokens(deep.strip(), model),
@@ -633,6 +691,12 @@ class ContextBuilder:
             model=model,
             compact=lambda item: item.compact(),
         )
+        facts = self._select_by_budget(
+            fact_candidates,
+            allocations.get("atomic_facts", 0),
+            model=model,
+            compact=lambda item: item.compact(),
+        )
         cold = self._select_by_budget(
             cold_candidates,
             allocations.get("cold", 0),
@@ -642,6 +706,11 @@ class ContextBuilder:
         if skills:
             source_details.extend(
                 {"source": "procedural", "memory_id": skill.name} for skill in skills
+            )
+        if facts:
+            source_details.extend(
+                {"source": "atomic_fact", "memory_id": fact.id, "key": fact.key}
+                for fact in facts
             )
         if cold:
             source_details.extend(
@@ -661,6 +730,7 @@ class ContextBuilder:
 
         return ContextPack(
             hot_memory=hot,
+            atomic_facts=facts,
             cold_memories=cold,
             procedural_memories=skills,
             deep_memory=deep,

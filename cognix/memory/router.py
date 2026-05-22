@@ -30,9 +30,9 @@ _FACTUAL_PATTERNS = re.compile(
 
 # Default route mapping per category.
 _CATEGORY_ROUTES: dict[MessageCategory, list[str]] = {
-    MessageCategory.FACTUAL: ["hot", "deep"],
-    MessageCategory.EPISODIC: ["hot", "cold"],
-    MessageCategory.PROCEDURAL: ["hot", "procedural"],
+    MessageCategory.FACTUAL: ["hot", "atomic", "deep"],
+    MessageCategory.EPISODIC: ["hot", "atomic", "cold"],
+    MessageCategory.PROCEDURAL: ["hot", "atomic", "procedural"],
 }
 
 # Messages shorter than this threshold are unlikely to be worth persisting.

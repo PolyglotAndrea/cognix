@@ -439,6 +439,11 @@ appendix.
 Required services:
 
 - `MemoryRouter`: decides hot, cold, procedural, and deep memory retrieval.
+- `AtomicFactStore`: stores compact, updateable facts as the single source of
+  truth for preferences, defaults, URLs, login context, and stable workspace
+  state.
+- `MemoryExtractor`: filters noisy chat into high-confidence atomic facts before
+  writing durable memory.
 - `ContextBudgetManager`: enforces max context and compression strategy.
 - `SourceAttributionService`: records which source influenced the plan/output.
 - `MemoryWriteApproval`: asks before writing long-term preferences or sensitive
@@ -467,6 +472,31 @@ Retrieval order:
 
 Vector retrieval is useful here, but should not be the first dependency. Start
 with structured recent answer reuse, then add embeddings for semantic matching.
+
+Initial implementation status:
+
+- `AtomicFactStore` has been added on top of SQLite. It updates facts by
+  superseding the prior active value for the same `entity_type/entity_id/key`
+  instead of accumulating conflicting rows.
+- `MemoryExtractor` now extracts deterministic high-confidence facts such as
+  URLs, output defaults, preferences, authorization statements, and login
+  context.
+- `ContextBuilder` injects atomic facts as `Stable Facts` before cold episodic
+  recall, keeping high-value context low-token and updateable.
+- Agent memory writes now respect `permission_mode=ask|plan`: a memory-write
+  approval is created and durable memory persistence is blocked until a later
+  approved write path is implemented.
+- `/api/v1/memory/facts` can list and upsert atomic facts. `/memory/remember`
+  can also extract facts while storing cold memory.
+
+Next evaluation point:
+
+- Add vector retrieval only after the atomic fact layer is producing useful
+  memory candidates. The first vector target should be episodic cold memory and
+  approval-answer suggestions, not stable KV facts.
+- Add graph storage only if cross-entity relationship traversal becomes a core
+  workflow, for example user -> workspace -> system -> recurring task ->
+  artifact lineage. Until then, SQLite facts plus source attribution are enough.
 
 ## 10. Multi-Agent and Hermes Direction
 
@@ -656,10 +686,18 @@ Initial implementation status:
 
 ### Phase 7: Memory and Self-Evolution
 
+- Add AtomicFactStore and MemoryExtractor.
 - Add MemoryRouter and ContextBudgetManager.
 - Add source attribution.
 - Add artifact-to-playbook-to-skill confirmation flow.
 - Add memory write approval for durable preferences and SOPs.
+
+Initial implementation status:
+
+- Atomic fact storage, deterministic extraction, context injection, manual fact
+  APIs, and memory-write blocking for restricted permission modes are in place.
+- Remaining work: approved memory-write resume path, vector-backed similarity,
+  decay/importance scoring, query rewrite, and artifact-to-memory approval UI.
 
 ### Phase 8: Multi-Language
 

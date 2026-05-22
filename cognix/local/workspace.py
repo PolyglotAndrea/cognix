@@ -72,6 +72,7 @@ class WorkspaceManager:
                 "context": {
                     "max_history_messages": 20,
                     "include_hot_memory": True,
+                    "include_atomic_memory": True,
                     "include_cold_memory": True,
                     "include_skills": True,
                     "include_deep_memory": False,
